@@ -1,59 +1,64 @@
 #pragma once
-/* INCLUDE FILE */
 
-/*
-Bolt specific includes
-*/
+// Bolt.hpp is the minimal public umbrella for the core contract only.
+// Explicit compatibility path: define BOLT_ALL_MODULES before including this header
+// to restore the legacy wide umbrella for full-module consumers.
 
 // Collections
-#include "Collections/Vec2.hpp"
 #include "Collections/Color.hpp"
+#include "Collections/Mat2.hpp"
+#include "Collections/Vec2.hpp"
 #include "Collections/Vec4.hpp"
 #include "Collections/Viewport.hpp"
-#include "Collections/Mat2.hpp"
-
-// Components
-#include "Components/Components.hpp"
 
 // Core
-#include "Core/Application.hpp"
-#include "Core/Input.hpp"
-#include "Core/KeyCodes.hpp"
-#include "Core/Time.hpp"
-
-// Debug
-#include "Core/Log.hpp"
+#include "Core/ApplicationConfig.hpp"
 #include "Core/Assert.hpp"
+#include "Core/Base.hpp"
 #include "Core/Exceptions.hpp"
+#include "Core/Export.hpp"
+#include "Core/Log.hpp"
+#include "Core/Time.hpp"
+#include "Core/Version.hpp"
 
-// Graphics
-#include "Graphics/Texture2D.hpp"
-#include "Graphics/TextureHandle.hpp"
-#include "Graphics/TextureManager.hpp"
-#include "Graphics/Gizmo.hpp"
+#if defined(BOLT_ALL_MODULES)
+    // Components
+    #include "Components/Components.hpp"
 
-// Math
-#include "Math/Common.hpp"
+    // Core module entry points
+    #include "Core/Application.hpp"
+    #include "Core/Input.hpp"
+    #include "Core/KeyCodes.hpp"
 
-// Physics
-#include "Physics/Collision2D.hpp"
-#include "Physics/PhysicsUtility.hpp"
-#include "Physics/Box2DWorld.hpp"
-#include "Physics/Physics2D.hpp"
+    // Graphics
+    #include "Graphics/Gizmo.hpp"
+    #include "Graphics/Texture2D.hpp"
+    #include "Graphics/TextureHandle.hpp"
+    #include "Graphics/TextureManager.hpp"
 
-// Audio
-#include "Audio/Audio.hpp"
-#include "Audio/AudioManager.hpp"
-#include "Audio/AudioHandle.hpp"
+    // Math
+    #include "Math/Common.hpp"
 
-// Scene
-#include "Scene/Scene.hpp"
-#include "Scene/SceneManager.hpp"
-#include "Scene/Entity.hpp"
-#include "Scene/EntityHandle.hpp"
+    // Physics
+    #include "Physics/Box2DWorld.hpp"
+    #include "Physics/Collision2D.hpp"
+    #include "Physics/Physics2D.hpp"
+    #include "Physics/PhysicsUtility.hpp"
 
-// Events
-#include "Events/Events.hpp"
+    // Audio
+    #include "Audio/Audio.hpp"
+    #include "Audio/AudioHandle.hpp"
+    #include "Audio/AudioManager.hpp"
 
-// Utils
-#include "Utils/StringHelper.hpp"
+    // Scene
+    #include "Scene/Entity.hpp"
+    #include "Scene/EntityHandle.hpp"
+    #include "Scene/Scene.hpp"
+    #include "Scene/SceneManager.hpp"
+
+    // Events
+    #include "Events/Events.hpp"
+
+    // Utils
+    #include "Utils/StringHelper.hpp"
+#endif
