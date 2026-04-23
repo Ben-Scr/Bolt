@@ -39,6 +39,11 @@ namespace Bolt {
 				Shutdown(false);
 				return;
 			}
+			catch (...) {
+				BT_ERROR_TAG("Application", "Initialization failed with unknown exception");
+				Shutdown(false);
+				return;
+			}
 			BT_INFO_TAG("Application", "Full Initialization took " + StringHelper::ToString(timer));
 
 			try {
@@ -46,6 +51,11 @@ namespace Bolt {
 			}
 			catch (const std::exception& e) {
 				BT_ERROR_TAG("Application", std::string("Start failed: ") + e.what());
+				Shutdown();
+				return;
+			}
+			catch (...) {
+				BT_ERROR_TAG("Application", "Start failed with unknown exception");
 				Shutdown();
 				return;
 			}
@@ -60,7 +70,7 @@ namespace Bolt {
 				auto now = Clock::now();
 
 				// Info: CPU idling for fps cap if vsync is disabled, or for paused frame cap.
-				if (targetFps > 0.0f && (!m_Window->IsVsync() || m_IsPaused))
+				if (targetFps > 0.0f && (!m_Window->IsVsync() || IsEnginePaused()))
 				{
 					auto const nextFrameTime = m_LastFrameTime + targetFrameTime;
 					auto const idleStart = Clock::now();
@@ -82,37 +92,40 @@ namespace Bolt {
 					deltaTime = 0.0f;
 				}
 
-				m_Time.Update(deltaTime);
+				try {
+					m_Time.Update(deltaTime);
 
-				m_FixedUpdateAccumulator += m_Time.GetDeltaTime();
-				while (m_FixedUpdateAccumulator >= m_Time.GetUnscaledFixedDeltaTime()) {
-					try {
-						if (!m_IsPaused && !m_IsPlaymodePaused) {
+					m_FixedUpdateAccumulator += m_Time.GetDeltaTime();
+					while (m_FixedUpdateAccumulator >= m_Time.GetUnscaledFixedDeltaTime()) {
+						if (!IsEnginePaused() && !m_IsPlaymodePaused) {
 							BeginFixedFrame();
 							for (const auto& layer : m_LayerStack) {
 								layer->OnFixedUpdate(*this, m_Time.GetFixedDeltaTime());
 							}
 							EndFixedFrame();
 						}
-					}
-					catch (const std::exception& e) {
-						BT_ERROR_TAG("FixedUpdate", e.what());
-						m_ShouldQuit = true;
-						break;
+
+						m_FixedUpdateAccumulator -= m_Time.GetUnscaledFixedDeltaTime();
 					}
 
-					m_FixedUpdateAccumulator -= m_Time.GetUnscaledFixedDeltaTime();
+					BeginFrame();
+					EndFrame();
+					TryCompleteQuitRequest();
+
+					glfwPollEvents();
+					TryCompleteQuitRequest();
+
+					m_LastFrameTime = frameStart;
+					m_Time.AdvanceFrameCount();
 				}
-
-				BeginFrame();
-				EndFrame();
-				TryCompleteQuitRequest();
-
-				glfwPollEvents();
-				TryCompleteQuitRequest();
-
-				m_LastFrameTime = frameStart;
-				m_Time.AdvanceFrameCount();
+				catch (const std::exception& e) {
+					BT_ERROR_TAG("Application", "Unhandled frame exception: {}", e.what());
+					m_ShouldQuit = true;
+				}
+				catch (...) {
+					BT_ERROR_TAG("Application", "Unhandled frame exception: unknown exception");
+					m_ShouldQuit = true;
+				}
 			}
 
 			Shutdown();
@@ -214,7 +227,7 @@ namespace Bolt {
 	void Application::BeginFrame() {
 		CoreInput();
 
-		if (!m_IsPaused) {
+		if (!IsEnginePaused()) {
 			bool gameplayActive = m_IsPlaying && !m_IsPlaymodePaused;
 
 			if (gameplayActive && m_Configuration.EnableAudio) 
@@ -251,7 +264,7 @@ namespace Bolt {
 	}
 
 	void Application::EndFrame() {
-		if (!m_IsPaused) {
+		if (!IsEnginePaused()) {
 			RenderPipelineOnly();
 		}
 
@@ -268,12 +281,7 @@ namespace Bolt {
 			});
 
 		dispatcher.Dispatch<WindowResizeEvent>([this](WindowResizeEvent& e) {
-			if (e.GetWidth() == 0 || e.GetHeight() == 0) {
-				m_IsPaused = true;
-			}
-			else {
-				m_IsPaused = false;
-			}
+			m_IsMinimized = e.GetWidth() == 0 || e.GetHeight() == 0;
 			return false;
 			});
 
@@ -416,6 +424,10 @@ namespace Bolt {
 		m_FixedUpdateAccumulator = 0;
 	}
 
+	void Application::RefreshBackgroundPauseState() {
+		m_IsBackgroundPaused = !m_RunInBackground && !m_WindowHasFocus;
+	}
+
 	void Application::Shutdown(bool invokeOnQuit) {
 		if (invokeOnQuit) {
 			try {
@@ -466,7 +478,11 @@ namespace Bolt {
 		m_QuitRequested = false;
 		m_QuitRequestFrame = -1;
 		m_IsPaused = false;
+		m_IsBackgroundPaused = false;
+		m_IsMinimized = false;
+		m_WindowHasFocus = true;
 		m_IsPlaymodePaused = false;
+		m_IsGameInputEnabled = true;
 		m_FixedUpdateAccumulator = 0.0;
 		m_PendingFileDrops.clear();
 	}

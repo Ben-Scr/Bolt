@@ -24,7 +24,7 @@ namespace Bolt {
 			if (!m_Manager)
 				ImGui::TextWrapped("No package manager instance.");
 			else
-				ImGui::TextWrapped("Bolt-PackageTool not found. Build it with: dotnet build Bolt-PackageTool -c Release");
+				ImGui::TextWrapped("Bolt-PackageTool could not be resolved or built for the current platform.");
 			return;
 		}
 

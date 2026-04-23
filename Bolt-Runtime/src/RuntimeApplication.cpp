@@ -105,3 +105,5 @@ Bolt::Application* Bolt::CreateApplication() {
 
 	return new RuntimeApplication();
 }
+
+#include <EntryPoint.hpp>

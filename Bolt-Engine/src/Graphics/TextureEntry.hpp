@@ -17,6 +17,9 @@ namespace Bolt {
 		Texture2D Texture;
 		uint16_t Generation = 0;
 		std::string Name;
+		Filter SamplerFilter = Filter::Point;
+		Wrap WrapU = Wrap::Clamp;
+		Wrap WrapV = Wrap::Clamp;
 		bool IsValid = false;
 	};
 

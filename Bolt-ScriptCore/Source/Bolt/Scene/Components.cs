@@ -6,8 +6,8 @@ namespace Bolt
     {
         public string Name
         {
-            get => InternalCalls.NameComponent_GetName(Entity.ID);
-            set => InternalCalls.NameComponent_SetName(Entity.ID, value);
+            get => InternalCalls.NameComponent_GetName(RequireComponent<NameComponent>());
+            set => InternalCalls.NameComponent_SetName(RequireComponent<NameComponent>(), value);
         }
     }
 
@@ -17,14 +17,19 @@ namespace Bolt
     {
         public Vector2 Position
         {
-            get { InternalCalls.Transform2D_GetPosition(Entity.ID, out float x, out float y); return new Vector2(x, y); }
-            set => InternalCalls.Transform2D_SetPosition(Entity.ID, value.X, value.Y);
+            get
+            {
+                ulong entityId = RequireComponent<Transform2DComponent>();
+                InternalCalls.Transform2D_GetPosition(entityId, out float x, out float y);
+                return new Vector2(x, y);
+            }
+            set => InternalCalls.Transform2D_SetPosition(RequireComponent<Transform2DComponent>(), value.X, value.Y);
         }
 
         public float Rotation
         {
-            get => InternalCalls.Transform2D_GetRotation(Entity.ID);
-            set => InternalCalls.Transform2D_SetRotation(Entity.ID, value);
+            get => InternalCalls.Transform2D_GetRotation(RequireComponent<Transform2DComponent>());
+            set => InternalCalls.Transform2D_SetRotation(RequireComponent<Transform2DComponent>(), value);
         }
 
         public float RotationDegrees
@@ -35,8 +40,13 @@ namespace Bolt
 
         public Vector2 Scale
         {
-            get { InternalCalls.Transform2D_GetScale(Entity.ID, out float x, out float y); return new Vector2(x, y); }
-            set => InternalCalls.Transform2D_SetScale(Entity.ID, value.X, value.Y);
+            get
+            {
+                ulong entityId = RequireComponent<Transform2DComponent>();
+                InternalCalls.Transform2D_GetScale(entityId, out float x, out float y);
+                return new Vector2(x, y);
+            }
+            set => InternalCalls.Transform2D_SetScale(RequireComponent<Transform2DComponent>(), value.X, value.Y);
         }
     }
 
@@ -46,30 +56,35 @@ namespace Bolt
     {
         public Vector4 Color
         {
-            get { InternalCalls.SpriteRenderer_GetColor(Entity.ID, out float r, out float g, out float b, out float a); return new Color(r, g, b, a); }
-            set => InternalCalls.SpriteRenderer_SetColor(Entity.ID, value.X, value.Y, value.Z, value.W);
+            get
+            {
+                ulong entityId = RequireComponent<SpriteRendererComponent>();
+                InternalCalls.SpriteRenderer_GetColor(entityId, out float r, out float g, out float b, out float a);
+                return new Color(r, g, b, a);
+            }
+            set => InternalCalls.SpriteRenderer_SetColor(RequireComponent<SpriteRendererComponent>(), value.X, value.Y, value.Z, value.W);
         }
 
         public Texture Texture
         {
             get
             {
-                ulong assetId = InternalCalls.SpriteRenderer_GetTexture(Entity.ID);
+                ulong assetId = InternalCalls.SpriteRenderer_GetTexture(RequireComponent<SpriteRendererComponent>());
                 return Texture.FromAssetUUID(assetId)!;
             }
-            set => InternalCalls.SpriteRenderer_SetTexture(Entity.ID, value?.UUID ?? 0);
+            set => InternalCalls.SpriteRenderer_SetTexture(RequireComponent<SpriteRendererComponent>(), value?.UUID ?? 0);
         }
 
         public int SortingOrder
         {
-            get => InternalCalls.SpriteRenderer_GetSortingOrder(Entity.ID);
-            set => InternalCalls.SpriteRenderer_SetSortingOrder(Entity.ID, value);
+            get => InternalCalls.SpriteRenderer_GetSortingOrder(RequireComponent<SpriteRendererComponent>());
+            set => InternalCalls.SpriteRenderer_SetSortingOrder(RequireComponent<SpriteRendererComponent>(), value);
         }
 
         public int SortingLayer
         {
-            get => InternalCalls.SpriteRenderer_GetSortingLayer(Entity.ID);
-            set => InternalCalls.SpriteRenderer_SetSortingLayer(Entity.ID, value);
+            get => InternalCalls.SpriteRenderer_GetSortingLayer(RequireComponent<SpriteRendererComponent>());
+            set => InternalCalls.SpriteRenderer_SetSortingLayer(RequireComponent<SpriteRendererComponent>(), value);
         }
     }
 
@@ -79,30 +94,36 @@ namespace Bolt
     {
         public float OrthographicSize
         {
-            get => InternalCalls.Camera2D_GetOrthographicSize(Entity.ID);
-            set => InternalCalls.Camera2D_SetOrthographicSize(Entity.ID, value);
+            get => InternalCalls.Camera2D_GetOrthographicSize(RequireComponent<Camera2DComponent>());
+            set => InternalCalls.Camera2D_SetOrthographicSize(RequireComponent<Camera2DComponent>(), value);
         }
 
         public float Zoom
         {
-            get => InternalCalls.Camera2D_GetZoom(Entity.ID);
-            set => InternalCalls.Camera2D_SetZoom(Entity.ID, value);
+            get => InternalCalls.Camera2D_GetZoom(RequireComponent<Camera2DComponent>());
+            set => InternalCalls.Camera2D_SetZoom(RequireComponent<Camera2DComponent>(), value);
         }
 
         public Vector4 ClearColor
         {
-            get { InternalCalls.Camera2D_GetClearColor(Entity.ID, out float r, out float g, out float b, out float a); return new Color(r, g, b, a); }
-            set => InternalCalls.Camera2D_SetClearColor(Entity.ID, value.X, value.Y, value.Z, value.W);
+            get
+            {
+                ulong entityId = RequireComponent<Camera2DComponent>();
+                InternalCalls.Camera2D_GetClearColor(entityId, out float r, out float g, out float b, out float a);
+                return new Color(r, g, b, a);
+            }
+            set => InternalCalls.Camera2D_SetClearColor(RequireComponent<Camera2DComponent>(), value.X, value.Y, value.Z, value.W);
         }
 
         public Vector2 ScreenToWorld(Vector2 screenPos)
         {
-            InternalCalls.Camera2D_ScreenToWorld(Entity.ID, screenPos.X, screenPos.Y, out float wx, out float wy);
+            ulong entityId = RequireComponent<Camera2DComponent>();
+            InternalCalls.Camera2D_ScreenToWorld(entityId, screenPos.X, screenPos.Y, out float wx, out float wy);
             return new Vector2(wx, wy);
         }
 
-        public float ViewportWidth => InternalCalls.Camera2D_GetViewportWidth(Entity.ID);
-        public float ViewportHeight => InternalCalls.Camera2D_GetViewportHeight(Entity.ID);
+        public float ViewportWidth => InternalCalls.Camera2D_GetViewportWidth(RequireComponent<Camera2DComponent>());
+        public float ViewportHeight => InternalCalls.Camera2D_GetViewportHeight(RequireComponent<Camera2DComponent>());
     }
 
     // ── Rigidbody2DComponent ────────────────────────────────────────────
@@ -113,39 +134,44 @@ namespace Bolt
     {
         public Vector2 LinearVelocity
         {
-            get { InternalCalls.Rigidbody2D_GetLinearVelocity(Entity.ID, out float x, out float y); return new Vector2(x, y); }
-            set => InternalCalls.Rigidbody2D_SetLinearVelocity(Entity.ID, value.X, value.Y);
+            get
+            {
+                ulong entityId = RequireComponent<Rigidbody2DComponent>();
+                InternalCalls.Rigidbody2D_GetLinearVelocity(entityId, out float x, out float y);
+                return new Vector2(x, y);
+            }
+            set => InternalCalls.Rigidbody2D_SetLinearVelocity(RequireComponent<Rigidbody2DComponent>(), value.X, value.Y);
         }
 
         public float AngularVelocity
         {
-            get => InternalCalls.Rigidbody2D_GetAngularVelocity(Entity.ID);
-            set => InternalCalls.Rigidbody2D_SetAngularVelocity(Entity.ID, value);
+            get => InternalCalls.Rigidbody2D_GetAngularVelocity(RequireComponent<Rigidbody2DComponent>());
+            set => InternalCalls.Rigidbody2D_SetAngularVelocity(RequireComponent<Rigidbody2DComponent>(), value);
         }
 
         public BodyType BodyType
         {
-            get => (BodyType)InternalCalls.Rigidbody2D_GetBodyType(Entity.ID);
-            set => InternalCalls.Rigidbody2D_SetBodyType(Entity.ID, (int)value);
+            get => (BodyType)InternalCalls.Rigidbody2D_GetBodyType(RequireComponent<Rigidbody2DComponent>());
+            set => InternalCalls.Rigidbody2D_SetBodyType(RequireComponent<Rigidbody2DComponent>(), (int)value);
         }
 
         public float GravityScale
         {
-            get => InternalCalls.Rigidbody2D_GetGravityScale(Entity.ID);
-            set => InternalCalls.Rigidbody2D_SetGravityScale(Entity.ID, value);
+            get => InternalCalls.Rigidbody2D_GetGravityScale(RequireComponent<Rigidbody2DComponent>());
+            set => InternalCalls.Rigidbody2D_SetGravityScale(RequireComponent<Rigidbody2DComponent>(), value);
         }
 
         public float Mass
         {
-            get => InternalCalls.Rigidbody2D_GetMass(Entity.ID);
-            set => InternalCalls.Rigidbody2D_SetMass(Entity.ID, value);
+            get => InternalCalls.Rigidbody2D_GetMass(RequireComponent<Rigidbody2DComponent>());
+            set => InternalCalls.Rigidbody2D_SetMass(RequireComponent<Rigidbody2DComponent>(), value);
         }
 
         public void ApplyForce(Vector2 force, bool wake = true)
-            => InternalCalls.Rigidbody2D_ApplyForce(Entity.ID, force.X, force.Y, wake);
+            => InternalCalls.Rigidbody2D_ApplyForce(RequireComponent<Rigidbody2DComponent>(), force.X, force.Y, wake);
 
         public void ApplyImpulse(Vector2 impulse, bool wake = true)
-            => InternalCalls.Rigidbody2D_ApplyImpulse(Entity.ID, impulse.X, impulse.Y, wake);
+            => InternalCalls.Rigidbody2D_ApplyImpulse(RequireComponent<Rigidbody2DComponent>(), impulse.X, impulse.Y, wake);
     }
 
     // ── BoxCollider2DComponent ──────────────────────────────────────────
@@ -154,17 +180,27 @@ namespace Bolt
     {
         public Vector2 Scale
         {
-            get { InternalCalls.BoxCollider2D_GetScale(Entity.ID, out float x, out float y); return new Vector2(x, y); }
+            get
+            {
+                ulong entityId = RequireComponent<BoxCollider2DComponent>();
+                InternalCalls.BoxCollider2D_GetScale(entityId, out float x, out float y);
+                return new Vector2(x, y);
+            }
         }
 
         public Vector2 Center
         {
-            get { InternalCalls.BoxCollider2D_GetCenter(Entity.ID, out float x, out float y); return new Vector2(x, y); }
+            get
+            {
+                ulong entityId = RequireComponent<BoxCollider2DComponent>();
+                InternalCalls.BoxCollider2D_GetCenter(entityId, out float x, out float y);
+                return new Vector2(x, y);
+            }
         }
 
         public bool Enabled
         {
-            set => InternalCalls.BoxCollider2D_SetEnabled(Entity.ID, value);
+            set => InternalCalls.BoxCollider2D_SetEnabled(RequireComponent<BoxCollider2DComponent>(), value);
         }
     }
 
@@ -174,29 +210,29 @@ namespace Bolt
     {
         public float Volume
         {
-            get => InternalCalls.AudioSource_GetVolume(Entity.ID);
-            set => InternalCalls.AudioSource_SetVolume(Entity.ID, value);
+            get => InternalCalls.AudioSource_GetVolume(RequireComponent<AudioSourceComponent>());
+            set => InternalCalls.AudioSource_SetVolume(RequireComponent<AudioSourceComponent>(), value);
         }
 
         public float Pitch
         {
-            get => InternalCalls.AudioSource_GetPitch(Entity.ID);
-            set => InternalCalls.AudioSource_SetPitch(Entity.ID, value);
+            get => InternalCalls.AudioSource_GetPitch(RequireComponent<AudioSourceComponent>());
+            set => InternalCalls.AudioSource_SetPitch(RequireComponent<AudioSourceComponent>(), value);
         }
 
         public bool Loop
         {
-            get => InternalCalls.AudioSource_GetLoop(Entity.ID);
-            set => InternalCalls.AudioSource_SetLoop(Entity.ID, value);
+            get => InternalCalls.AudioSource_GetLoop(RequireComponent<AudioSourceComponent>());
+            set => InternalCalls.AudioSource_SetLoop(RequireComponent<AudioSourceComponent>(), value);
         }
 
-        public bool IsPlaying => InternalCalls.AudioSource_IsPlaying(Entity.ID);
-        public bool IsPaused => InternalCalls.AudioSource_IsPaused(Entity.ID);
+        public bool IsPlaying => InternalCalls.AudioSource_IsPlaying(RequireComponent<AudioSourceComponent>());
+        public bool IsPaused => InternalCalls.AudioSource_IsPaused(RequireComponent<AudioSourceComponent>());
 
-        public void Play() => InternalCalls.AudioSource_Play(Entity.ID);
-        public void Pause() => InternalCalls.AudioSource_Pause(Entity.ID);
-        public void Stop() => InternalCalls.AudioSource_Stop(Entity.ID);
-        public void Resume() => InternalCalls.AudioSource_Resume(Entity.ID);
+        public void Play() => InternalCalls.AudioSource_Play(RequireComponent<AudioSourceComponent>());
+        public void Pause() => InternalCalls.AudioSource_Pause(RequireComponent<AudioSourceComponent>());
+        public void Stop() => InternalCalls.AudioSource_Stop(RequireComponent<AudioSourceComponent>());
+        public void Resume() => InternalCalls.AudioSource_Resume(RequireComponent<AudioSourceComponent>());
     }
 
     // ── ParticleSystem2DComponent ─────────────────────────────────────────
@@ -205,46 +241,51 @@ namespace Bolt
     {
         public bool PlayOnAwake
         {
-            get => InternalCalls.ParticleSystem2D_GetPlayOnAwake(Entity.ID);
-            set => InternalCalls.ParticleSystem2D_SetPlayOnAwake(Entity.ID, value);
+            get => InternalCalls.ParticleSystem2D_GetPlayOnAwake(RequireComponent<ParticleSystem2DComponent>());
+            set => InternalCalls.ParticleSystem2D_SetPlayOnAwake(RequireComponent<ParticleSystem2DComponent>(), value);
         }
 
-        public bool IsPlaying => InternalCalls.ParticleSystem2D_IsPlaying(Entity.ID);
+        public bool IsPlaying => InternalCalls.ParticleSystem2D_IsPlaying(RequireComponent<ParticleSystem2DComponent>());
 
         public Vector4 Color
         {
-            get { InternalCalls.ParticleSystem2D_GetColor(Entity.ID, out float r, out float g, out float b, out float a); return new Color(r, g, b, a); }
-            set => InternalCalls.ParticleSystem2D_SetColor(Entity.ID, value.X, value.Y, value.Z, value.W);
+            get
+            {
+                ulong entityId = RequireComponent<ParticleSystem2DComponent>();
+                InternalCalls.ParticleSystem2D_GetColor(entityId, out float r, out float g, out float b, out float a);
+                return new Color(r, g, b, a);
+            }
+            set => InternalCalls.ParticleSystem2D_SetColor(RequireComponent<ParticleSystem2DComponent>(), value.X, value.Y, value.Z, value.W);
         }
 
         public float LifeTime
         {
-            get => InternalCalls.ParticleSystem2D_GetLifeTime(Entity.ID);
-            set => InternalCalls.ParticleSystem2D_SetLifeTime(Entity.ID, value);
+            get => InternalCalls.ParticleSystem2D_GetLifeTime(RequireComponent<ParticleSystem2DComponent>());
+            set => InternalCalls.ParticleSystem2D_SetLifeTime(RequireComponent<ParticleSystem2DComponent>(), value);
         }
 
         public float Speed
         {
-            get => InternalCalls.ParticleSystem2D_GetSpeed(Entity.ID);
-            set => InternalCalls.ParticleSystem2D_SetSpeed(Entity.ID, value);
+            get => InternalCalls.ParticleSystem2D_GetSpeed(RequireComponent<ParticleSystem2DComponent>());
+            set => InternalCalls.ParticleSystem2D_SetSpeed(RequireComponent<ParticleSystem2DComponent>(), value);
         }
 
         public float Scale
         {
-            get => InternalCalls.ParticleSystem2D_GetScale(Entity.ID);
-            set => InternalCalls.ParticleSystem2D_SetScale(Entity.ID, value);
+            get => InternalCalls.ParticleSystem2D_GetScale(RequireComponent<ParticleSystem2DComponent>());
+            set => InternalCalls.ParticleSystem2D_SetScale(RequireComponent<ParticleSystem2DComponent>(), value);
         }
 
         public int EmitOverTime
         {
-            get => InternalCalls.ParticleSystem2D_GetEmitOverTime(Entity.ID);
-            set => InternalCalls.ParticleSystem2D_SetEmitOverTime(Entity.ID, value);
+            get => InternalCalls.ParticleSystem2D_GetEmitOverTime(RequireComponent<ParticleSystem2DComponent>());
+            set => InternalCalls.ParticleSystem2D_SetEmitOverTime(RequireComponent<ParticleSystem2DComponent>(), value);
         }
 
-        public void Play() => InternalCalls.ParticleSystem2D_Play(Entity.ID);
-        public void Pause() => InternalCalls.ParticleSystem2D_Pause(Entity.ID);
-        public void Stop() => InternalCalls.ParticleSystem2D_Stop(Entity.ID);
-        public void Emit(int count) => InternalCalls.ParticleSystem2D_Emit(Entity.ID, count);
+        public void Play() => InternalCalls.ParticleSystem2D_Play(RequireComponent<ParticleSystem2DComponent>());
+        public void Pause() => InternalCalls.ParticleSystem2D_Pause(RequireComponent<ParticleSystem2DComponent>());
+        public void Stop() => InternalCalls.ParticleSystem2D_Stop(RequireComponent<ParticleSystem2DComponent>());
+        public void Emit(int count) => InternalCalls.ParticleSystem2D_Emit(RequireComponent<ParticleSystem2DComponent>(), count);
     }
 
     // ── Bolt-Physics Components ─────────────────────────────────────────
@@ -258,26 +299,31 @@ namespace Bolt
     {
         public BoltBodyType BodyType
         {
-            get => (BoltBodyType)InternalCalls.BoltBody2D_GetBodyType(Entity.ID);
-            set => InternalCalls.BoltBody2D_SetBodyType(Entity.ID, (int)value);
+            get => (BoltBodyType)InternalCalls.BoltBody2D_GetBodyType(RequireComponent<BoltBody2DComponent>());
+            set => InternalCalls.BoltBody2D_SetBodyType(RequireComponent<BoltBody2DComponent>(), (int)value);
         }
 
         public float Mass
         {
-            get => InternalCalls.BoltBody2D_GetMass(Entity.ID);
-            set => InternalCalls.BoltBody2D_SetMass(Entity.ID, value);
+            get => InternalCalls.BoltBody2D_GetMass(RequireComponent<BoltBody2DComponent>());
+            set => InternalCalls.BoltBody2D_SetMass(RequireComponent<BoltBody2DComponent>(), value);
         }
 
         public bool UseGravity
         {
-            get => InternalCalls.BoltBody2D_GetUseGravity(Entity.ID);
-            set => InternalCalls.BoltBody2D_SetUseGravity(Entity.ID, value);
+            get => InternalCalls.BoltBody2D_GetUseGravity(RequireComponent<BoltBody2DComponent>());
+            set => InternalCalls.BoltBody2D_SetUseGravity(RequireComponent<BoltBody2DComponent>(), value);
         }
 
         public Vector2 Velocity
         {
-            get { InternalCalls.BoltBody2D_GetVelocity(Entity.ID, out float x, out float y); return new Vector2(x, y); }
-            set => InternalCalls.BoltBody2D_SetVelocity(Entity.ID, value.X, value.Y);
+            get
+            {
+                ulong entityId = RequireComponent<BoltBody2DComponent>();
+                InternalCalls.BoltBody2D_GetVelocity(entityId, out float x, out float y);
+                return new Vector2(x, y);
+            }
+            set => InternalCalls.BoltBody2D_SetVelocity(RequireComponent<BoltBody2DComponent>(), value.X, value.Y);
         }
     }
 
@@ -285,8 +331,13 @@ namespace Bolt
     {
         public Vector2 HalfExtents
         {
-            get { InternalCalls.BoltBoxCollider2D_GetHalfExtents(Entity.ID, out float x, out float y); return new Vector2(x, y); }
-            set => InternalCalls.BoltBoxCollider2D_SetHalfExtents(Entity.ID, value.X, value.Y);
+            get
+            {
+                ulong entityId = RequireComponent<BoltBoxCollider2DComponent>();
+                InternalCalls.BoltBoxCollider2D_GetHalfExtents(entityId, out float x, out float y);
+                return new Vector2(x, y);
+            }
+            set => InternalCalls.BoltBoxCollider2D_SetHalfExtents(RequireComponent<BoltBoxCollider2DComponent>(), value.X, value.Y);
         }
     }
 
@@ -294,8 +345,8 @@ namespace Bolt
     {
         public float Radius
         {
-            get => InternalCalls.BoltCircleCollider2D_GetRadius(Entity.ID);
-            set => InternalCalls.BoltCircleCollider2D_SetRadius(Entity.ID, value);
+            get => InternalCalls.BoltCircleCollider2D_GetRadius(RequireComponent<BoltCircleCollider2DComponent>());
+            set => InternalCalls.BoltCircleCollider2D_SetRadius(RequireComponent<BoltCircleCollider2DComponent>(), value);
         }
     }
 }

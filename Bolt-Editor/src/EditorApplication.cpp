@@ -117,3 +117,5 @@ Bolt::Application* Bolt::CreateApplication() {
 
 	return new EditorApplication();
 }
+
+#include <EntryPoint.hpp>

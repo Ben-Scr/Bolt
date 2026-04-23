@@ -19,12 +19,6 @@ namespace Bolt {
 			Scripts.emplace_back(className);
 		}
 
-		void RemoveScript(size_t index) {
-			if (index < Scripts.size()) {
-				Scripts.erase(Scripts.begin() + static_cast<ptrdiff_t>(index));
-			}
-		}
-
 		bool HasScript(const std::string& className) const {
 			for (const auto& s : Scripts) {
 				if (s.GetClassName() == className) return true;

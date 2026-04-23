@@ -3,6 +3,8 @@
 #include "Serialization/Json.hpp"
 #include "Utils/Process.hpp"
 
+#include <filesystem>
+
 namespace Bolt {
 
 	NuGetSource::NuGetSource(const std::string& toolExePath)
@@ -11,7 +13,10 @@ namespace Bolt {
 
 	std::string NuGetSource::RunTool(const std::vector<std::string>& args) const {
 		std::vector<std::string> command;
-		command.reserve(args.size() + 1);
+		command.reserve(args.size() + 2);
+		if (std::filesystem::path(m_ToolExePath).extension() == ".dll") {
+			command.push_back("dotnet");
+		}
 		command.push_back(m_ToolExePath);
 		command.insert(command.end(), args.begin(), args.end());
 

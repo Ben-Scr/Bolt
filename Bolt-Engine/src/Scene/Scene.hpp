@@ -3,6 +3,8 @@
 #include "Scene/ISystem.hpp"
 #include "Core/Export.hpp"
 #include "Core/UUID.hpp"
+#include <functional>
+#include <string_view>
 #include <unordered_set>
 
 namespace Bolt {
@@ -191,6 +193,7 @@ namespace Bolt {
 		void OnBoxCollider2DComponentConstruct(entt::registry& registry, EntityHandle entity);
 		void OnBoxCollider2DComponentDestroy(entt::registry& registry, EntityHandle entity);
 		void OnAudioSourceComponentDestroy(entt::registry& registry, EntityHandle entity);
+		void OnScriptComponentDestroy(entt::registry& registry, EntityHandle entity);
 
 		void OnCamera2DComponentConstruct(entt::registry& registry, EntityHandle entity);
 		void OnCamera2DComponentDestruct(entt::registry& registry, EntityHandle entity);
@@ -213,30 +216,15 @@ namespace Bolt {
 		void ApplyEntityEnabledState(entt::registry& registry, EntityHandle entity, bool enabled);
 		void RefreshMainCameraSelection(entt::registry& registry, EntityHandle preferred = entt::null, EntityHandle excluded = entt::null);
 
-		void AwakeSystems();
-		void StartSystems();
+		void RunLifecycleSystems(const std::function<void(ISystem&)>& func, size_t* enteredSystemCount = nullptr);
+		void AwakeSystems(size_t* enteredSystemCount = nullptr);
+		void StartSystems(size_t* enteredSystemCount = nullptr);
 		void UpdateSystems();
 		void FixedUpdateSystems();
 		void OnGuiSystems();
 		void DestroyScene();
-
-		void ForeachEnabledSystem(const std::function<void(ISystem&)>& func) {
-			for (size_t i = 0; i < m_Systems.size(); ++i) {
-				ISystem& system = *m_Systems[i];
-				if (system.IsEnabled())
-				{
-					try {
-						func(system);
-					}
-					catch (const std::exception& e) {
-						BT_CORE_ERROR_TAG("Scene", "System error: {}", e.what());
-					}
-					catch (...) {
-						BT_CORE_ERROR_TAG("Scene", "Unknown system error");
-					}
-				}
-			}
-		}
+		void DestroyScene(size_t enabledSystemCount);
+		void ForeachEnabledSystem(std::string_view phase, const std::function<void(ISystem&)>& func);
 
 		entt::registry m_Registry;
 		std::vector<std::unique_ptr<ISystem>> m_Systems;

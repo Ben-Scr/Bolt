@@ -12,10 +12,10 @@ namespace Bolt
             Entity = new Entity(id);
         }
 
-        private protected Entity? FindEntityByName(string name) => Entity.FindByName(name);
+        protected Entity? FindEntityByName(string name) => Entity.FindByName(name);
 
-        private protected T? GetComponent<T>() where T : Component, new() => Entity.GetComponent<T>();
-        private protected T? AddComponent<T>() where T : Component, new() => Entity.AddComponent<T>(); 
+        protected T? GetComponent<T>() where T : Component, new() => Entity.GetComponent<T>();
+        protected T? AddComponent<T>() where T : Component, new() => Entity.AddComponent<T>(); 
 
         protected Entity Create(string name = "") => Entity.Create(name);
 

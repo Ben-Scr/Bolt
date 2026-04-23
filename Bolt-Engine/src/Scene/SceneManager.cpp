@@ -49,13 +49,13 @@ namespace Bolt {
 		RegisterCoreComponents();
 		InitializeStartupScenes();
 
-		if (m_LoadedScenes.empty()) {
-			auto& firstPair = *m_SceneDefinitions.begin();
-			if (LoadScene(firstPair.first).expired()) {
-				BT_CORE_ERROR_TAG("SceneManager", "Failed to load fallback scene '{}'", firstPair.first);
+		if (m_LoadedScenes.empty() && !m_SceneDefinitionOrder.empty()) {
+			const std::string& fallbackScene = m_SceneDefinitionOrder.front();
+			if (LoadScene(fallbackScene).expired()) {
+				BT_CORE_ERROR_TAG("SceneManager", "Failed to load fallback scene '{}'", fallbackScene);
 			}
 			else {
-				BT_CORE_WARN_TAG("SceneManager", "Loaded fallback scene '{}'", firstPair.first);
+				BT_CORE_WARN_TAG("SceneManager", "Loaded fallback scene '{}'", fallbackScene);
 			}
 		}
 	}
@@ -67,6 +67,7 @@ namespace Bolt {
 	void SceneManager::Shutdown() {
 		UnloadAllScenes(true);
 		m_SceneDefinitions.clear();
+		m_SceneDefinitionOrder.clear();
 		m_ActiveScene = nullptr;
 		m_IsInitialized = false;
 	}
@@ -78,6 +79,7 @@ namespace Bolt {
 			return *it->second;
 		}
 
+		m_SceneDefinitionOrder.push_back(name);
 		SceneDefinition& definition = *it->second;
 		AddStandardSceneSystems(definition);
 		return definition;
@@ -92,7 +94,12 @@ namespace Bolt {
 		return LoadSceneInternal(name, true);
 	}
 
-	std::shared_ptr<Scene> SceneManager::LoadSceneInternal(const std::string& name, bool additive, SceneSetupCallback setupCallback) {
+	std::shared_ptr<Scene> SceneManager::LoadSceneInternal(
+		const std::string& name,
+		bool additive,
+		SceneSetupCallback setupCallback,
+		bool makeActive,
+		std::optional<size_t> insertIndex) {
 		if (!m_IsInitialized) {
 			BT_CORE_ERROR_TAG("SceneManager", "LoadScene called before SceneManager initialization");
 			return {};
@@ -123,14 +130,43 @@ namespace Bolt {
 			if (app) app->DispatchEvent(e);
 		}
 
-		newScene->m_IsLoaded = true;
-		if (!m_ActiveScene) {
-			m_ActiveScene = newScene.get();
+		const bool shouldActivate = makeActive || !m_ActiveScene || !additive;
+		size_t awakenedSystemCount = 0;
+		try {
+			newScene->AwakeSystems(&awakenedSystemCount);
+			newScene->StartSystems();
 		}
-		newScene->AwakeSystems();
-		newScene->StartSystems();
-		m_LoadedScenes.push_back(newScene);
-		if (!additive) {
+		catch (const std::exception& e) {
+			BT_CORE_ERROR_TAG("SceneManager", "Failed to start scene '{}': {}", name, e.what());
+			try {
+				RollbackSceneLoad(newScene, awakenedSystemCount);
+			}
+			catch (const std::exception& rollbackException) {
+				BT_CORE_ERROR_TAG("SceneManager", "Failed to roll back scene '{}': {}", name, rollbackException.what());
+			}
+			catch (...) {
+				BT_CORE_ERROR_TAG("SceneManager", "Failed to roll back scene '{}'", name);
+			}
+			return {};
+		}
+		catch (...) {
+			BT_CORE_ERROR_TAG("SceneManager", "Failed to start scene '{}'", name);
+			try {
+				RollbackSceneLoad(newScene, awakenedSystemCount);
+			}
+			catch (const std::exception& rollbackException) {
+				BT_CORE_ERROR_TAG("SceneManager", "Failed to roll back scene '{}': {}", name, rollbackException.what());
+			}
+			catch (...) {
+				BT_CORE_ERROR_TAG("SceneManager", "Failed to roll back scene '{}'", name);
+			}
+			return {};
+		}
+
+		newScene->m_IsLoaded = true;
+		const size_t targetIndex = std::min(insertIndex.value_or(m_LoadedScenes.size()), m_LoadedScenes.size());
+		m_LoadedScenes.insert(m_LoadedScenes.begin() + static_cast<std::ptrdiff_t>(targetIndex), newScene);
+		if (shouldActivate) {
 			m_ActiveScene = newScene.get();
 		}
 
@@ -145,12 +181,14 @@ namespace Bolt {
 	}
 
 	std::weak_ptr<Scene> SceneManager::ReloadScene(const std::string& name) {
-		std::shared_ptr<Scene> scene = GetLoadedScene(name).lock();
-		if (!scene) {
+		auto it = FindLoadedSceneIterator(name);
+		if (it == m_LoadedScenes.end()) {
 			BT_CORE_WARN_TAG("SceneManager", "ReloadScene: scene '{}' is not loaded", name);
 			return {};
 		}
 
+		const size_t reloadIndex = static_cast<size_t>(std::distance(m_LoadedScenes.begin(), it));
+		std::shared_ptr<Scene> scene = *it;
 		const bool wasActive = m_ActiveScene == scene.get();
 		const bool wasDirty = scene->IsDirty();
 		Json::Value snapshotRoot = SceneSerializer::SerializeScene(*scene);
@@ -166,8 +204,8 @@ namespace Bolt {
 			return scene;
 		}
 
-		UnloadScene(name);
-		std::shared_ptr<Scene> reloaded = LoadSceneInternal(name, !wasActive, [&snapshotRoot, wasDirty](Scene& restoredScene) {
+		ReleaseScene(it);
+		std::shared_ptr<Scene> reloaded = LoadSceneInternal(name, true, [&snapshotRoot, wasDirty](Scene& restoredScene) {
 			if (!SceneSerializer::DeserializeScene(restoredScene, snapshotRoot)) {
 				BT_CORE_ERROR_TAG("SceneManager", "ReloadScene: failed to restore snapshot for '{}'", restoredScene.GetName());
 				return;
@@ -179,8 +217,63 @@ namespace Bolt {
 			else {
 				restoredScene.ClearDirty();
 			}
-		});
+		}, wasActive, reloadIndex);
 		return reloaded;
+	}
+
+	void SceneManager::RollbackSceneLoad(const std::shared_ptr<Scene>& scene, size_t awakenedSystemCount) {
+		if (!scene) {
+			return;
+		}
+
+		const std::string sceneName = scene->GetName();
+
+		try {
+			ScenePreStopEvent e(sceneName);
+			Application* app = Application::GetInstance();
+			if (app) app->DispatchEvent(e);
+		}
+		catch (const std::exception& e) {
+			BT_CORE_ERROR_TAG("SceneManager", "Rollback pre-stop event failed for '{}': {}", sceneName, e.what());
+		}
+		catch (...) {
+			BT_CORE_ERROR_TAG("SceneManager", "Rollback pre-stop event failed for '{}'", sceneName);
+		}
+
+		if (scene->m_Definition) {
+			for (const auto& callback : scene->m_Definition->m_UnloadCallbacks) {
+				try {
+					callback(*scene);
+				}
+				catch (const std::exception& e) {
+					BT_CORE_ERROR_TAG("SceneManager", "Rollback unload callback failed for '{}': {}", sceneName, e.what());
+				}
+				catch (...) {
+					BT_CORE_ERROR_TAG("SceneManager", "Rollback unload callback failed for '{}'", sceneName);
+				}
+			}
+		}
+
+		scene->m_IsLoaded = false;
+		scene->DestroyScene(awakenedSystemCount);
+		scene->ClearEntities();
+
+		if (m_ActiveScene == scene.get()) {
+			m_ActiveScene = nullptr;
+		}
+		RefreshActiveScene();
+
+		try {
+			ScenePostStopEvent e(sceneName);
+			Application* app = Application::GetInstance();
+			if (app) app->DispatchEvent(e);
+		}
+		catch (const std::exception& e) {
+			BT_CORE_ERROR_TAG("SceneManager", "Rollback post-stop event failed for '{}': {}", sceneName, e.what());
+		}
+		catch (...) {
+			BT_CORE_ERROR_TAG("SceneManager", "Rollback post-stop event failed for '{}'", sceneName);
+		}
 	}
 
 	void SceneManager::UnloadScene(const std::string& name) {
@@ -202,20 +295,50 @@ namespace Bolt {
 		Scene& scene = *(*it);
 		const std::string sceneName = scene.GetName();
 
-		{
+		try {
 			ScenePreStopEvent e(sceneName);
 			Application* app = Application::GetInstance();
 			if (app) app->DispatchEvent(e);
 		}
+		catch (const std::exception& e) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene pre-stop event failed for '{}': {}", sceneName, e.what());
+		}
+		catch (...) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene pre-stop event failed for '{}'", sceneName);
+		}
 
 		if (scene.m_Definition) {
 			for (const auto& callback : scene.m_Definition->m_UnloadCallbacks) {
-				callback(scene);
+				try {
+					callback(scene);
+				}
+				catch (const std::exception& e) {
+					BT_CORE_ERROR_TAG("SceneManager", "Scene unload callback failed for '{}': {}", sceneName, e.what());
+				}
+				catch (...) {
+					BT_CORE_ERROR_TAG("SceneManager", "Scene unload callback failed for '{}'", sceneName);
+				}
 			}
 		}
 		scene.m_IsLoaded = false;
-		scene.DestroyScene();
-		scene.ClearEntities();
+		try {
+			scene.DestroyScene();
+		}
+		catch (const std::exception& e) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene destroy failed for '{}': {}", sceneName, e.what());
+		}
+		catch (...) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene destroy failed for '{}'", sceneName);
+		}
+		try {
+			scene.ClearEntities();
+		}
+		catch (const std::exception& e) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene entity cleanup failed for '{}': {}", sceneName, e.what());
+		}
+		catch (...) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene entity cleanup failed for '{}'", sceneName);
+		}
 
 		if (m_ActiveScene == &scene) {
 			m_ActiveScene = nullptr;
@@ -223,10 +346,16 @@ namespace Bolt {
 		m_LoadedScenes.erase(it);
 		RefreshActiveScene();
 
-		{
+		try {
 			ScenePostStopEvent e(sceneName);
 			Application* app = Application::GetInstance();
 			if (app) app->DispatchEvent(e);
+		}
+		catch (const std::exception& e) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene post-stop event failed for '{}': {}", sceneName, e.what());
+		}
+		catch (...) {
+			BT_CORE_ERROR_TAG("SceneManager", "Scene post-stop event failed for '{}'", sceneName);
 		}
 	}
 
@@ -293,12 +422,7 @@ namespace Bolt {
 	}
 
 	std::vector<std::string> SceneManager::GetRegisteredSceneNames() const {
-		std::vector<std::string> names;
-		names.reserve(m_SceneDefinitions.size());
-		for (const auto& [name, definition] : m_SceneDefinitions) {
-			names.push_back(name);
-		}
-		return names;
+		return m_SceneDefinitionOrder;
 	}
 	std::vector<std::string> SceneManager::GetLoadedSceneNames() const {
 		std::vector<std::string> names;
@@ -322,7 +446,13 @@ namespace Bolt {
 	}
 
 	void SceneManager::InitializeStartupScenes() {
-		for (const auto& [name, definition] : m_SceneDefinitions) {
+		for (const std::string& name : m_SceneDefinitionOrder) {
+			auto definitionIt = m_SceneDefinitions.find(name);
+			if (definitionIt == m_SceneDefinitions.end()) {
+				continue;
+			}
+
+			SceneDefinition* definition = definitionIt->second.get();
 			if (!definition->IsStartupScene()) {
 				continue;
 			}

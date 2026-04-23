@@ -67,18 +67,15 @@ namespace Bolt {
 
 	void Window::FocusCallback(GLFWwindow* window, int focused) {
 		Window* win = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+		Application::SetWindowFocused(static_cast<bool>(focused));
 
 		if ((bool)focused) {
-			Application::Pause(false);
 			if (win && win->m_EventCallback) {
 				WindowFocusEvent e;
 				win->m_EventCallback(e);
 			}
 		}
 		else {
-			if (!Application::GetRunInBackground())
-				Application::Pause(true);
-
 			if (win && win->m_EventCallback) {
 				WindowLostFocusEvent e;
 				win->m_EventCallback(e);

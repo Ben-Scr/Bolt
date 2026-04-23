@@ -11,9 +11,14 @@
 #include "Gui/PackageManagerPanel.hpp"
 #include "Packages/PackageManager.hpp"
 #include "Editor/EditorCamera.hpp"
+#include "Graphics/Texture2D.hpp"
 
 
+#include <filesystem>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <chrono>
 
@@ -30,6 +35,17 @@ namespace Bolt {
 		struct LogEntry {
 			std::string Message;
 			Log::Level Level;
+		};
+
+		struct LogDispatchState {
+			std::mutex Mutex;
+			std::vector<LogEntry> PendingEntries;
+		};
+
+		struct PreviewTextureEntry {
+			std::string CanonicalPath;
+			std::unique_ptr<Texture2D> Texture;
+			std::uint64_t LastTouchTick = 0;
 		};
 
 		struct ViewportFBO {
@@ -60,17 +76,37 @@ namespace Bolt {
 		void RenderPackageManagerPanel();
 		void RenderAssetInspector();
 		void RestoreEditorSceneAfterPlaymode();
+		void SelectEntity(EntityHandle entity);
+		void ClearEntitySelection();
+		void DrainPendingLogEntries();
+		void AppendLogEntry(LogEntry entry);
+		void ClearLogEntries();
+		void FocusSelectedEntity(Scene& scene);
+		void DuplicateSelectedEntity(Scene& scene);
+		void DeleteSelectedEntity(Scene& scene);
+		void BeginRenameSelectedEntity(Scene& scene);
+		bool HasEntityShortcutFocus() const;
+		void DrawEditorComponentGizmos(Scene& scene);
+		const Texture2D* GetPreviewTexture(const std::filesystem::path& path);
+		void TrimPreviewTextureCache();
+		void ClearPreviewTextureCache();
 
 		void RenderSceneIntoFBO(ViewportFBO& fbo, Scene& scene,
 			const glm::mat4& vp, const AABB& viewportAABB,
-			bool withGizmos, const Color& clearColor = Color::Background());
+			bool withGizmos, bool sharedGizmosOnly = false,
+			const Color& clearColor = Color::Background());
 
 		EntityHandle m_SelectedEntity = entt::null;
 		EventId m_LogSubscriptionId{};
 		std::vector<LogEntry> m_LogEntries;
+		std::shared_ptr<LogDispatchState> m_LogDispatchState;
 		bool m_ShowLogInfo = true;
 		bool m_ShowLogWarn = true;
 		bool m_ShowLogError = true;
+		std::vector<PreviewTextureEntry> m_PreviewTextureCache;
+		std::unordered_map<std::string, size_t> m_PreviewTextureLookup;
+		std::uint64_t m_PreviewTextureTick = 0;
+		static constexpr size_t kMaxPreviewTextures = 16;
 
 		// Entity ordering for hierarchy drag-reorder
 		std::vector<entt::entity> m_EntityOrder;
@@ -86,10 +122,13 @@ namespace Bolt {
 
 		bool m_IsGameViewActive = false;
 		bool m_IsEditorViewActive = false;
+		bool m_IsEntitiesPanelFocused = false;
+		bool m_IsInspectorPanelFocused = false;
 
 		ViewportFBO m_GameViewFBO;
 		bool m_IsGameViewHovered = false;
 		bool m_IsGameViewFocused = false;
+		int m_GameViewAspectPresetIndex = 0;
 
 		Viewport m_EditorViewport{ 1, 1 };
 		bool m_IsViewportHovered = false;

@@ -44,3 +44,5 @@ public:
 Bolt::Application* Bolt::CreateApplication() {
 	return new LauncherApplication();
 }
+
+#include <EntryPoint.hpp>

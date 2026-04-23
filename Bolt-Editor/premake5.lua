@@ -20,14 +20,14 @@ project "Bolt-Editor"
 
     UseDependencySet(Dependency.EditorRuntimeCommon)
     includedirs { "src" }
+    postbuildcommands { CopyBoltAssets }
 
     filter "system:windows"
         buildoptions { "/utf-8" }
         systemversion "latest"
         defines { "BT_PLATFORM_WINDOWS" }
         postbuildcommands {
-            CopyBoltAssets,
-            '{COPYFILE} "%{wks.location}External/dotnet/lib/nethost.dll" "%{cfg.targetdir}/nethost.dll"'
+            '{COPYFILE} "' .. path.join(ROOT_DIR, "External/dotnet/lib/nethost.dll") .. '" "%{cfg.targetdir}/nethost.dll"'
         }
 
     filter "system:linux"

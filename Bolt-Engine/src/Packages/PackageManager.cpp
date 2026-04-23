@@ -5,23 +5,266 @@
 #include "Serialization/File.hpp"
 #include "Utils/Process.hpp"
 
+#include <cereal/macros.hpp>
+#include <cereal/external/rapidxml/rapidxml.hpp>
+
 #include <fstream>
-#include <regex>
 #include <filesystem>
 
 namespace Bolt {
+	namespace {
+		namespace rapidxml = cereal::rapidxml;
 
-	void PackageManager::Initialize(const std::string& toolExePath) {
-		// Build candidate paths — always try canonical resolution
-		auto exeDir = std::filesystem::path(Path::ExecutableDir());
-		std::vector<std::filesystem::path> candidates = {
-			std::filesystem::path(toolExePath),
-			exeDir / ".." / ".." / ".." / "Bolt-PackageTool" / "bin" / "Release" / "net9.0" / "Bolt-PackageTool.exe",
-			exeDir / "Bolt-PackageTool.exe"
+		struct XmlFileDocument {
+			std::string Buffer;
+			rapidxml::xml_document<> Document;
 		};
 
+		std::string Trim(std::string_view value) {
+			const size_t start = value.find_first_not_of(" \t\r\n");
+			if (start == std::string_view::npos) {
+				return {};
+			}
+
+			const size_t end = value.find_last_not_of(" \t\r\n");
+			return std::string(value.substr(start, end - start + 1));
+		}
+
+		bool LoadXmlDocument(const std::filesystem::path& path, XmlFileDocument& document) {
+			std::ifstream input(path);
+			if (!input.is_open()) {
+				return false;
+			}
+
+			document.Buffer.assign((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+			document.Buffer.push_back('\0');
+			document.Document.clear();
+
+			try {
+				document.Document.parse<rapidxml::parse_non_destructive>(&document.Buffer[0]);
+				return true;
+			}
+			catch (const rapidxml::parse_error& e) {
+				BT_CORE_WARN_TAG("PackageManager", "Failed to parse XML '{}': {}", path.string(), e.what());
+				return false;
+			}
+		}
+
+		std::string GetAttributeValue(const rapidxml::xml_node<>* node, const char* attributeName) {
+			if (!node) {
+				return {};
+			}
+
+			if (const auto* attribute = node->first_attribute(attributeName)) {
+				return Trim(attribute->value());
+			}
+
+			return {};
+		}
+
+		std::string GetFirstChildValue(const rapidxml::xml_node<>* node, const char* childName) {
+			if (!node) {
+				return {};
+			}
+
+			if (const auto* child = node->first_node(childName)) {
+				return Trim(child->value());
+			}
+
+			return {};
+		}
+
+		std::string GetItemIdentity(const rapidxml::xml_node<>* node) {
+			std::string identity = GetAttributeValue(node, "Include");
+			if (!identity.empty()) {
+				return identity;
+			}
+
+			return GetAttributeValue(node, "Update");
+		}
+
+		std::string GetPackageVersion(const rapidxml::xml_node<>* node) {
+			std::string version = GetAttributeValue(node, "Version");
+			if (!version.empty()) {
+				return version;
+			}
+
+			version = GetAttributeValue(node, "VersionOverride");
+			if (!version.empty()) {
+				return version;
+			}
+
+			version = GetFirstChildValue(node, "Version");
+			if (!version.empty()) {
+				return version;
+			}
+
+			return GetFirstChildValue(node, "VersionOverride");
+		}
+
+		std::string GetSimpleAssemblyName(std::string identity) {
+			const size_t commaPos = identity.find(',');
+			if (commaPos != std::string::npos) {
+				identity = identity.substr(0, commaPos);
+			}
+
+			return Trim(identity);
+		}
+
+		std::unordered_map<std::string, std::string> LoadCentralPackageVersions(const std::filesystem::path& csprojPath) {
+			std::unordered_map<std::string, std::string> versions;
+			std::vector<std::filesystem::path> propsFiles;
+
+			std::filesystem::path currentDirectory = csprojPath.parent_path();
+			while (!currentDirectory.empty()) {
+				const std::filesystem::path propsPath = currentDirectory / "Directory.Packages.props";
+				if (std::filesystem::exists(propsPath)) {
+					propsFiles.push_back(propsPath);
+				}
+
+				const std::filesystem::path parent = currentDirectory.parent_path();
+				if (parent == currentDirectory) {
+					break;
+				}
+
+				currentDirectory = parent;
+			}
+
+			for (auto it = propsFiles.rbegin(); it != propsFiles.rend(); ++it) {
+				XmlFileDocument propsDocument;
+				if (!LoadXmlDocument(*it, propsDocument)) {
+					continue;
+				}
+
+				const rapidxml::xml_node<>* root = propsDocument.Document.first_node("Project");
+				if (!root) {
+					continue;
+				}
+
+				for (const auto* itemGroup = root->first_node("ItemGroup"); itemGroup; itemGroup = itemGroup->next_sibling("ItemGroup")) {
+					for (const auto* node = itemGroup->first_node("PackageVersion"); node; node = node->next_sibling("PackageVersion")) {
+						const std::string packageId = GetItemIdentity(node);
+						if (packageId.empty()) {
+							continue;
+						}
+
+						const std::string version = GetPackageVersion(node);
+						if (!version.empty()) {
+							versions[packageId] = version;
+						}
+					}
+				}
+			}
+
+			return versions;
+		}
+
+		void AddOrUpdateInstalledPackage(std::vector<PackageInfo>& installed, PackageInfo info) {
+			for (auto& existing : installed) {
+				if (existing.Id != info.Id || existing.SourceType != info.SourceType) {
+					continue;
+				}
+
+				if (existing.Version.empty() && !info.Version.empty()) {
+					existing.Version = info.Version;
+					existing.InstalledVersion = info.Version;
+				}
+				return;
+			}
+
+			installed.push_back(std::move(info));
+		}
+
+		std::string GetPackageToolExecutableName() {
+#if defined(BT_PLATFORM_WINDOWS)
+			return "Bolt-PackageTool.exe";
+#else
+			return "Bolt-PackageTool";
+#endif
+		}
+
+		std::vector<std::string> GetPreferredPackageToolConfigurations() {
+			return {
+				BoltProject::GetActiveBuildConfiguration(),
+				"Release",
+				"Debug",
+				"Dist"
+			};
+		}
+
+		std::vector<std::filesystem::path> GetPackageToolCandidates(
+			const std::filesystem::path& executableDirectory,
+			const std::filesystem::path& explicitPath) {
+			std::vector<std::filesystem::path> candidates;
+			if (!explicitPath.empty()) {
+				candidates.push_back(explicitPath);
+			}
+
+			const std::filesystem::path projectDirectory = executableDirectory / ".." / ".." / ".." / "Bolt-PackageTool";
+			for (const std::string& configuration : GetPreferredPackageToolConfigurations()) {
+				const std::filesystem::path outputDirectory = projectDirectory / "bin" / configuration / "net9.0";
+				candidates.push_back(outputDirectory / GetPackageToolExecutableName());
+				candidates.push_back(outputDirectory / "Bolt-PackageTool.dll");
+			}
+
+			candidates.push_back(executableDirectory / GetPackageToolExecutableName());
+			candidates.push_back(executableDirectory / "Bolt-PackageTool.dll");
+			return candidates;
+		}
+
+		PackageOperationResult RestoreAndRebuildProject(const std::string& csprojPath) {
+			if (csprojPath.empty()) {
+				return { false, "No project loaded" };
+			}
+
+			Process::Result restoreResult = Process::Run({
+				"dotnet",
+				"restore",
+				csprojPath,
+				"--nologo",
+				"-v", "q"
+			});
+			if (!restoreResult.Succeeded()) {
+				BT_CORE_ERROR_TAG("PackageManager", "dotnet restore failed (exit code {})", restoreResult.ExitCode);
+				if (!restoreResult.Output.empty()) {
+					BT_CORE_ERROR_TAG("PackageManager", "{}", restoreResult.Output);
+				}
+				return { false, "dotnet restore failed" };
+			}
+
+			Process::Result buildResult = Process::Run({
+				"dotnet",
+				"build",
+				csprojPath,
+				"-c", BoltProject::GetActiveBuildConfiguration(),
+				"--nologo",
+				"-v", "q",
+				"-p:DefineConstants=" + BoltProject::BuildManagedDefineConstants("BOLT_EDITOR")
+			});
+			if (!buildResult.Succeeded()) {
+				BT_CORE_ERROR_TAG("PackageManager", "dotnet build failed (exit code {})", buildResult.ExitCode);
+				if (!buildResult.Output.empty()) {
+					BT_CORE_ERROR_TAG("PackageManager", "{}", buildResult.Output);
+				}
+				return { false, "dotnet build failed" };
+			}
+
+			BT_CORE_INFO_TAG("PackageManager", "Restore and rebuild complete");
+			return { true, "Build succeeded" };
+		}
+	}
+
+	void PackageManager::Initialize(const std::string& toolExePath) {
+		m_SharedState->IsReady.store(false, std::memory_order_release);
+		m_SharedState->NeedsReload.store(false, std::memory_order_release);
+		m_ToolExePath.clear();
+
+		// Build candidate paths — always try canonical resolution
+		auto exeDir = std::filesystem::path(Path::ExecutableDir());
+		std::vector<std::filesystem::path> candidates = GetPackageToolCandidates(exeDir, std::filesystem::path(toolExePath));
+
 		for (const auto& candidate : candidates) {
-			if (std::filesystem::exists(candidate)) {
+			if (!candidate.empty() && std::filesystem::exists(candidate)) {
 				m_ToolExePath = std::filesystem::canonical(candidate).string();
 				BT_CORE_INFO_TAG("PackageManager", "Found package tool at {}", m_ToolExePath);
 				break;
@@ -29,7 +272,7 @@ namespace Bolt {
 		}
 
 		if (!m_ToolExePath.empty() && std::filesystem::exists(m_ToolExePath)) {
-			m_IsReady = true;
+			m_SharedState->IsReady.store(true, std::memory_order_release);
 			BT_CORE_INFO_TAG("PackageManager", "Package manager initialized");
 		}
 		else {
@@ -38,20 +281,26 @@ namespace Bolt {
 			auto projectDir = exeDir / ".." / ".." / ".." / "Bolt-PackageTool";
 			if (std::filesystem::exists(projectDir / "Bolt-PackageTool.csproj")) {
 				BT_CORE_INFO_TAG("PackageManager", "Building package tool...");
+				const std::string buildConfiguration = BoltProject::GetActiveBuildConfiguration();
 				const Process::Result buildResult = Process::Run({
 					"dotnet",
 					"build",
 					projectDir.string(),
-					"-c", "Release",
+					"-c", buildConfiguration,
 					"--nologo",
 					"-v", "q"
 				});
 				if (buildResult.Succeeded()) {
-					auto builtPath = projectDir / "bin" / "Release" / "net9.0" / "Bolt-PackageTool.exe";
-					if (std::filesystem::exists(builtPath)) {
-						m_ToolExePath = std::filesystem::canonical(builtPath).string();
-						m_IsReady = true;
-						BT_CORE_INFO_TAG("PackageManager", "Package tool built and ready");
+					for (const auto& candidate : GetPackageToolCandidates(exeDir, {})) {
+						if (!candidate.empty() && std::filesystem::exists(candidate)) {
+							m_ToolExePath = std::filesystem::canonical(candidate).string();
+							m_SharedState->IsReady.store(true, std::memory_order_release);
+							BT_CORE_INFO_TAG("PackageManager", "Package tool built and ready");
+							break;
+						}
+					}
+					if (!m_SharedState->IsReady.load(std::memory_order_acquire)) {
+						BT_CORE_WARN_TAG("PackageManager", "Package tool build succeeded, but no runnable artifact was found");
 					}
 				}
 				else {
@@ -68,18 +317,27 @@ namespace Bolt {
 	}
 
 	void PackageManager::Shutdown() {
+		m_SharedState->NeedsReload.store(false, std::memory_order_release);
+		m_SharedState->IsReady.store(false, std::memory_order_release);
 		m_Sources.clear();
-		m_IsReady = false;
 	}
 
 	void PackageManager::AddSource(std::unique_ptr<PackageSource> source) {
-		m_Sources.push_back(std::move(source));
+		if (!source) {
+			return;
+		}
+
+		m_Sources.emplace_back(std::move(source));
 	}
 
 	PackageSource* PackageManager::GetSource(int index) {
+		return GetSourceHandle(index).get();
+	}
+
+	std::shared_ptr<PackageSource> PackageManager::GetSourceHandle(int index) const {
 		if (index < 0 || index >= static_cast<int>(m_Sources.size()))
-			return nullptr;
-		return m_Sources[index].get();
+			return {};
+		return m_Sources[static_cast<size_t>(index)];
 	}
 
 	std::string PackageManager::GetCsprojPath() const {
@@ -90,7 +348,7 @@ namespace Bolt {
 	std::future<std::vector<PackageInfo>> PackageManager::SearchAsync(int sourceIndex,
 		const std::string& query, int take) {
 
-		auto* source = GetSource(sourceIndex);
+		std::shared_ptr<PackageSource> source = GetSourceHandle(sourceIndex);
 		if (!source) {
 			return std::async(std::launch::deferred, []() -> std::vector<PackageInfo> { return {}; });
 		}
@@ -98,7 +356,7 @@ namespace Bolt {
 		// Mark installed packages
 		auto installed = GetInstalledPackages();
 
-		return std::async(std::launch::async, [source, query, take, installed]() -> std::vector<PackageInfo> {
+		return std::async(std::launch::async, [source = std::move(source), query, take, installed = std::move(installed)]() mutable -> std::vector<PackageInfo> {
 			auto results = source->Search(query, take);
 
 			// Cross-reference with installed packages
@@ -118,8 +376,9 @@ namespace Bolt {
 	std::future<PackageOperationResult> PackageManager::InstallAsync(int sourceIndex,
 		const std::string& packageId, const std::string& version) {
 
-		auto* source = GetSource(sourceIndex);
+		std::shared_ptr<PackageSource> source = GetSourceHandle(sourceIndex);
 		std::string csproj = GetCsprojPath();
+		std::shared_ptr<SharedState> sharedState = m_SharedState;
 
 		if (!source || csproj.empty()) {
 			return std::async(std::launch::deferred, []() -> PackageOperationResult {
@@ -127,13 +386,13 @@ namespace Bolt {
 			});
 		}
 
-		return std::async(std::launch::async, [this, source, packageId, version, csproj]() -> PackageOperationResult {
+		return std::async(std::launch::async, [source = std::move(source), packageId, version, csproj, sharedState = std::move(sharedState)]() -> PackageOperationResult {
 			auto result = source->Install(packageId, version, csproj);
 			if (result.Success) {
-				auto rebuild = RestoreAndRebuild();
+				auto rebuild = RestoreAndRebuildProject(csproj);
 				if (!rebuild.Success)
 					return { false, "Install succeeded but rebuild failed: " + rebuild.Message };
-				m_NeedsReload = true;
+				sharedState->NeedsReload.store(true, std::memory_order_release);
 			}
 			return result;
 		});
@@ -142,8 +401,9 @@ namespace Bolt {
 	std::future<PackageOperationResult> PackageManager::RemoveAsync(int sourceIndex,
 		const std::string& packageId) {
 
-		auto* source = GetSource(sourceIndex);
+		std::shared_ptr<PackageSource> source = GetSourceHandle(sourceIndex);
 		std::string csproj = GetCsprojPath();
+		std::shared_ptr<SharedState> sharedState = m_SharedState;
 
 		if (!source || csproj.empty()) {
 			return std::async(std::launch::deferred, []() -> PackageOperationResult {
@@ -151,58 +411,20 @@ namespace Bolt {
 			});
 		}
 
-		return std::async(std::launch::async, [this, source, packageId, csproj]() -> PackageOperationResult {
+		return std::async(std::launch::async, [source = std::move(source), packageId, csproj, sharedState = std::move(sharedState)]() -> PackageOperationResult {
 			auto result = source->Remove(packageId, csproj);
 			if (result.Success) {
-				auto rebuild = RestoreAndRebuild();
+				auto rebuild = RestoreAndRebuildProject(csproj);
 				if (!rebuild.Success)
 					return { false, "Remove succeeded but rebuild failed: " + rebuild.Message };
-				m_NeedsReload = true;
+				sharedState->NeedsReload.store(true, std::memory_order_release);
 			}
 			return result;
 		});
 	}
 
 	PackageOperationResult PackageManager::RestoreAndRebuild() {
-		std::string csproj = GetCsprojPath();
-		if (csproj.empty())
-			return { false, "No project loaded" };
-
-		// Step 1: dotnet restore
-		Process::Result restoreResult = Process::Run({
-			"dotnet",
-			"restore",
-			csproj,
-			"--nologo",
-			"-v", "q"
-		});
-		if (!restoreResult.Succeeded()) {
-			BT_CORE_ERROR_TAG("PackageManager", "dotnet restore failed (exit code {})", restoreResult.ExitCode);
-			if (!restoreResult.Output.empty()) {
-				BT_CORE_ERROR_TAG("PackageManager", "{}", restoreResult.Output);
-			}
-			return { false, "dotnet restore failed" };
-		}
-
-		// Step 2: dotnet build
-		Process::Result buildResult = Process::Run({
-			"dotnet",
-			"build",
-			csproj,
-			"-c", "Release",
-			"--nologo",
-			"-v", "q"
-		});
-		if (!buildResult.Succeeded()) {
-			BT_CORE_ERROR_TAG("PackageManager", "dotnet build failed (exit code {})", buildResult.ExitCode);
-			if (!buildResult.Output.empty()) {
-				BT_CORE_ERROR_TAG("PackageManager", "{}", buildResult.Output);
-			}
-			return { false, "dotnet build failed" };
-		}
-
-		BT_CORE_INFO_TAG("PackageManager", "Restore and rebuild complete");
-		return { true, "Build succeeded" };
+		return RestoreAndRebuildProject(GetCsprojPath());
 	}
 
 	std::vector<PackageInfo> PackageManager::GetInstalledPackages() const {
@@ -212,43 +434,62 @@ namespace Bolt {
 		if (csproj.empty() || !File::Exists(csproj))
 			return installed;
 
-		std::ifstream in(csproj);
-		if (!in.is_open()) return installed;
-		std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-		in.close();
-
-		// Find all PackageReference entries
-		std::regex pkgRegex(R"rx(<PackageReference\s+Include="([^"]+)"\s+Version="([^"]+)")rx");
-		std::sregex_iterator it(content.begin(), content.end(), pkgRegex);
-		std::sregex_iterator end;
-
-		for (; it != end; ++it) {
-			PackageInfo info;
-			info.Id = (*it)[1].str();
-			info.Version = (*it)[2].str();
-			info.IsInstalled = true;
-			info.InstalledVersion = info.Version;
-			info.SourceType = PackageSourceType::NuGet;
-			info.SourceName = "NuGet";
-			installed.push_back(std::move(info));
+		XmlFileDocument projectDocument;
+		if (!LoadXmlDocument(std::filesystem::path(csproj), projectDocument)) {
+			return installed;
 		}
 
-		// Find all Reference entries (DLL engine packages)
-		std::regex refRegex(R"rx(<Reference\s+Include="([^"]+)")rx");
-		std::sregex_iterator rit(content.begin(), content.end(), refRegex);
+		const auto centralPackageVersions = LoadCentralPackageVersions(std::filesystem::path(csproj));
+		const rapidxml::xml_node<>* root = projectDocument.Document.first_node("Project");
+		if (!root) {
+			return installed;
+		}
 
-		for (; rit != end; ++rit) {
-			std::string name = (*rit)[1].str();
-			// Skip system references
-			if (name.find("System") == 0 || name.find("Microsoft") == 0)
-				continue;
+		for (const auto* itemGroup = root->first_node("ItemGroup"); itemGroup; itemGroup = itemGroup->next_sibling("ItemGroup")) {
+			for (const auto* node = itemGroup->first_node(); node; node = node->next_sibling()) {
+				const std::string nodeName = node->name();
+				if (nodeName == "PackageReference") {
+					const std::string packageId = GetItemIdentity(node);
+					if (packageId.empty()) {
+						continue;
+					}
 
-			PackageInfo info;
-			info.Id = name;
-			info.IsInstalled = true;
-			info.SourceType = PackageSourceType::GitHub;
-			info.SourceName = "Engine";
-			installed.push_back(std::move(info));
+					PackageInfo info;
+					info.Id = packageId;
+					info.Version = GetPackageVersion(node);
+					if (info.Version.empty()) {
+						if (const auto it = centralPackageVersions.find(packageId); it != centralPackageVersions.end()) {
+							info.Version = it->second;
+						}
+					}
+					info.IsInstalled = true;
+					info.InstalledVersion = info.Version;
+					info.SourceType = PackageSourceType::NuGet;
+					info.SourceName = "NuGet";
+					AddOrUpdateInstalledPackage(installed, std::move(info));
+					continue;
+				}
+
+				if (nodeName != "Reference") {
+					continue;
+				}
+
+				std::string name = GetSimpleAssemblyName(GetItemIdentity(node));
+				if (name.empty()) {
+					continue;
+				}
+
+				// Skip system references
+				if (name.find("System") == 0 || name.find("Microsoft") == 0)
+					continue;
+
+				PackageInfo info;
+				info.Id = name;
+				info.IsInstalled = true;
+				info.SourceType = PackageSourceType::GitHub;
+				info.SourceName = "Engine";
+				AddOrUpdateInstalledPackage(installed, std::move(info));
+			}
 		}
 
 		return installed;

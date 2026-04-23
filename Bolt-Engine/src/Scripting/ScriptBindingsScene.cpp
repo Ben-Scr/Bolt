@@ -104,56 +104,62 @@ namespace Bolt {
 
 	// ── Input Bindings ──────────────────────────────────────────────────
 
+	static bool CanReadScriptInput()
+	{
+		auto* app = Application::GetInstance();
+		return app && Application::IsGameInputEnabled();
+	}
+
 	static int Bolt_Input_GetKey(int keyCode)
 	{
 		auto* app = Application::GetInstance();
-		return app ? (app->GetInput().GetKey(static_cast<KeyCode>(keyCode)) ? 1 : 0) : 0;
+		return CanReadScriptInput() ? (app->GetInput().GetKey(static_cast<KeyCode>(keyCode)) ? 1 : 0) : 0;
 	}
 
 	static int Bolt_Input_GetKeyDown(int keyCode)
 	{
 		auto* app = Application::GetInstance();
-		return app ? (app->GetInput().GetKeyDown(static_cast<KeyCode>(keyCode)) ? 1 : 0) : 0;
+		return CanReadScriptInput() ? (app->GetInput().GetKeyDown(static_cast<KeyCode>(keyCode)) ? 1 : 0) : 0;
 	}
 
 	static int Bolt_Input_GetKeyUp(int keyCode)
 	{
 		auto* app = Application::GetInstance();
-		return app ? (app->GetInput().GetKeyUp(static_cast<KeyCode>(keyCode)) ? 1 : 0) : 0;
+		return CanReadScriptInput() ? (app->GetInput().GetKeyUp(static_cast<KeyCode>(keyCode)) ? 1 : 0) : 0;
 	}
 
 	static int Bolt_Input_GetMouseButton(int button)
 	{
 		auto* app = Application::GetInstance();
-		return app ? (app->GetInput().GetMouse(static_cast<MouseButton>(button)) ? 1 : 0) : 0;
+		return CanReadScriptInput() ? (app->GetInput().GetMouse(static_cast<MouseButton>(button)) ? 1 : 0) : 0;
 	}
 
 	static int Bolt_Input_GetMouseButtonDown(int button)
 	{
 		auto* app = Application::GetInstance();
-		return app ? (app->GetInput().GetMouseDown(static_cast<MouseButton>(button)) ? 1 : 0) : 0;
+		return CanReadScriptInput() ? (app->GetInput().GetMouseDown(static_cast<MouseButton>(button)) ? 1 : 0) : 0;
 	}
 
 	static void Bolt_Input_GetMousePosition(float* outX, float* outY)
 	{
 		auto* app = Application::GetInstance();
-		if (app) { Vec2 pos = app->GetInput().GetMousePosition(); *outX = pos.x; *outY = pos.y; }
+		if (CanReadScriptInput()) { Vec2 pos = app->GetInput().GetMousePosition(); *outX = pos.x; *outY = pos.y; }
 		else { *outX = 0.0f; *outY = 0.0f; }
 	}
 
 	static void Bolt_Input_GetAxis(float* outX, float* outY) {
 		auto* app = Application::GetInstance();
-		if (app) { Vec2 axis = app->GetInput().GetAxis(); *outX = axis.x; *outY = axis.y; }
+		if (CanReadScriptInput()) { Vec2 axis = app->GetInput().GetAxis(); *outX = axis.x; *outY = axis.y; }
 		else { *outX = 0.0f; *outY = 0.0f; }
 	}
 	static void Bolt_Input_GetMouseDelta(float* outX, float* outY) {
 		auto* app = Application::GetInstance();
-		if (app) { Vec2 delta = app->GetInput().GetMouseDelta(); *outX = delta.x; *outY = delta.y; }
+		if (CanReadScriptInput()) { Vec2 delta = app->GetInput().GetMouseDelta(); *outX = delta.x; *outY = delta.y; }
 		else { *outX = 0.0f; *outY = 0.0f; }
 	}
 	static float Bolt_Input_GetScrollWheelDelta() {
 		auto* app = Application::GetInstance();
-		return app ? app->GetInput().ScrollValue() : 0.0f;
+		return CanReadScriptInput() ? app->GetInput().ScrollValue() : 0.0f;
 	}
 
 	// ── Entity Bindings ─────────────────────────────────────────────────

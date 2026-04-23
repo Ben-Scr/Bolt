@@ -74,10 +74,15 @@ namespace Bolt {
 		void SetName(const std::string& s) { m_Name = s; }
 		static void SetTargetFramerate(float framerate) { if (s_Instance) s_Instance->m_TargetFramerate = framerate; }
 		static void SetForceSingleInstance(bool value) { if (s_Instance) s_Instance->m_ForceSingleInstance = value; }
-		static void SetRunInBackground(bool value) { if (s_Instance) s_Instance->m_RunInBackground = value; }
+		static void SetRunInBackground(bool value) {
+			if (s_Instance) {
+				s_Instance->m_RunInBackground = value;
+				s_Instance->RefreshBackgroundPauseState();
+			}
+		}
 
 		const std::string& GetName() { return m_Name; }
-		static float GetTargetFramerate() { return s_Instance ? (s_Instance->m_IsPaused ? k_PausedTargetFrameRate : s_Instance->m_TargetFramerate) : 0.0f; }
+		static float GetTargetFramerate() { return s_Instance ? (s_Instance->IsEnginePaused() ? k_PausedTargetFrameRate : s_Instance->m_TargetFramerate) : 0.0f; }
 		static bool GetForceSingleInstance() { return s_Instance ? s_Instance->m_ForceSingleInstance : false; }
 		static bool GetRunInBackground() { return s_Instance ? s_Instance->m_RunInBackground : false; }
 		static Window* GetWindow() { return s_Instance ? s_Instance->m_Window.get() : nullptr; }
@@ -98,11 +103,13 @@ namespace Bolt {
 		static void Quit();
 		static void Pause(bool paused) { if (s_Instance) s_Instance->m_IsPaused = paused; }
 		static void Reload() { if (s_Instance) { s_Instance->m_ShouldQuit = true; s_Instance->m_CanReload = true; } };
-		static bool IsPaused() { return s_Instance ? s_Instance->m_IsPaused : false; }
+		static bool IsPaused() { return s_Instance ? s_Instance->IsEnginePaused() : false; }
 
 		/// Pauses only gameplay (scene updates, physics, audio) while keeping the editor responsive.
 		static void SetPlaymodePaused(bool paused) { if (s_Instance) s_Instance->m_IsPlaymodePaused = paused; }
 		static bool IsPlaymodePaused() { return s_Instance ? s_Instance->m_IsPlaymodePaused : false; }
+		static void SetGameInputEnabled(bool enabled) { if (s_Instance) s_Instance->m_IsGameInputEnabled = enabled; }
+		static bool IsGameInputEnabled() { return s_Instance ? s_Instance->m_IsGameInputEnabled : true; }
 
 		/// Signals a quit request that can be intercepted (e.g. to show a save dialog).
 		static void RequestQuit();
@@ -165,8 +172,12 @@ namespace Bolt {
 		bool m_ShouldQuit = false;
 		bool m_CanReload = false;
 		bool m_IsPaused = false;
+		bool m_IsBackgroundPaused = false;
+		bool m_IsMinimized = false;
+		bool m_WindowHasFocus = true;
 		bool m_IsPlaying = true;
 		bool m_IsPlaymodePaused = false;
+		bool m_IsGameInputEnabled = true;
 		bool m_QuitRequested = false;
 		int m_QuitRequestFrame = -1;
 
@@ -186,6 +197,8 @@ namespace Bolt {
 		void Initialize();
 		void Shutdown(bool invokeOnQuit = true);
 		void DispatchEvent(BoltEvent& event);
+		void RefreshBackgroundPauseState();
+		bool IsEnginePaused() const { return m_IsPaused || m_IsBackgroundPaused || m_IsMinimized; }
 		void CoreInput();
 		void ResetTimePoints();
 		void TryCompleteQuitRequest();
@@ -194,6 +207,12 @@ namespace Bolt {
 		void EndFixedFrame();
 		void EndFrame();
 		void RenderPipelineOnly();
+		static void SetWindowFocused(bool focused) {
+			if (s_Instance) {
+				s_Instance->m_WindowHasFocus = focused;
+				s_Instance->RefreshBackgroundPauseState();
+			}
+		}
 	};
 
 	// To be defined in client

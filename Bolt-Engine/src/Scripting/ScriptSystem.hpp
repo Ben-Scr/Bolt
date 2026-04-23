@@ -1,15 +1,17 @@
 #pragma once
+#include "Scene/Entity.hpp"
 #include "Scene/ISystem.hpp"
 #include "Scripting/NativeScriptHost.hpp"
 #include "Serialization/FileWatcher.hpp"
 #include "Core/Export.hpp"
 #include "Utils/Process.hpp"
 #include <string>
-#include <future>
+#include <memory>
 #include <cstddef>
 #include <chrono>
 
 namespace Bolt {
+	struct ScriptSystemProcessTaskState;
 
 	class BOLT_API ScriptSystem : public ISystem {
 	public:
@@ -17,6 +19,8 @@ namespace Bolt {
 		void Update(Scene& scene) override;
 		void OnGui(Scene& scene) override;
 		void OnDestroy(Scene& scene) override;
+		static bool RemoveScript(Entity entity, size_t index);
+		static void RemoveAllScripts(Entity entity);
 
 		void SetCoreAssemblyPath(const std::string& path) { m_CoreAssemblyPath = path; }
 		void SetUserAssemblyPath(const std::string& path) { m_UserAssemblyPath = path; }
@@ -43,17 +47,13 @@ namespace Bolt {
 
 		// C# hot-reload
 		static inline FileWatcher m_ScriptWatcher;
-		static inline bool m_IsRebuilding = false;
-		static inline std::future<Process::Result> m_RebuildFuture;
-		static inline std::chrono::steady_clock::time_point m_RebuildStartTime;
+		static inline std::shared_ptr<ScriptSystemProcessTaskState> m_RebuildTask;
 
 		// C++ native scripts
 		static inline NativeScriptHost m_NativeHost;
 		static inline FileWatcher m_NativeWatcher;
 		static inline std::string m_NativeDLLPath;
-		static inline bool m_IsRebuildingNative = false;
-		static inline std::future<Process::Result> m_NativeRebuildFuture;
-		static inline std::chrono::steady_clock::time_point m_NativeRebuildStartTime;
+		static inline std::shared_ptr<ScriptSystemProcessTaskState> m_NativeRebuildTask;
 	};
 
 } // namespace Bolt

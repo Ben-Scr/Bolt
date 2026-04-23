@@ -8,6 +8,8 @@
 #include "Scene/Scene.hpp"
 #include "Components/General/Transform2DComponent.hpp"
 
+#include <chrono>
+
 #if defined(BT_PLATFORM_WINDOWS)
 #include <windows.h>
 #elif defined(BT_PLATFORM_LINUX)
@@ -69,67 +71,147 @@ namespace Bolt {
 		API_GetRotation, API_SetRotation
 	};
 
+	namespace {
+		using NativeCreateFn = NativeScript* (*)(const char*);
+		using NativeDestroyFn = void (*)(NativeScript*);
+		using NativeInitFn = void (*)(void* engineAPI);
+
+		std::filesystem::path NormalizeLibraryPath(const std::string& dllPath)
+		{
+			std::error_code ec;
+			const std::filesystem::path sourcePath = std::filesystem::path(dllPath);
+			if (std::filesystem::exists(sourcePath, ec)) {
+				const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(sourcePath, ec);
+				if (!ec) {
+					return canonicalPath;
+				}
+			}
+
+			return sourcePath.lexically_normal();
+		}
+
+		std::filesystem::path CreateShadowCopyPath(const std::filesystem::path& sourcePath)
+		{
+			std::error_code ec;
+			std::filesystem::path shadowDirectory = std::filesystem::temp_directory_path(ec);
+			if (ec || shadowDirectory.empty()) {
+				shadowDirectory = sourcePath.parent_path();
+			}
+
+			shadowDirectory /= "BoltNativeScriptHost";
+			std::filesystem::create_directories(shadowDirectory, ec);
+
+			const auto uniqueStamp = std::chrono::steady_clock::now().time_since_epoch().count();
+			return shadowDirectory / (sourcePath.stem().string() + "-" + std::to_string(uniqueStamp) + sourcePath.extension().string());
+		}
+
+		void UnloadLibraryHandle(void* dllHandle)
+		{
+#if defined(BT_PLATFORM_WINDOWS)
+			if (dllHandle) {
+				FreeLibrary(static_cast<HMODULE>(dllHandle));
+			}
+#elif defined(BT_PLATFORM_LINUX)
+			if (dllHandle) {
+				dlclose(dllHandle);
+			}
+#else
+			(void)dllHandle;
+#endif
+		}
+
+		void RemoveShadowCopy(const std::filesystem::path& shadowPath)
+		{
+			if (shadowPath.empty()) {
+				return;
+			}
+
+			std::error_code ec;
+			std::filesystem::remove(shadowPath, ec);
+		}
+	}
+
 	bool NativeScriptHost::LoadDLL(const std::string& dllPath)
 	{
-		if (m_DllHandle) UnloadDLL();
-		m_DllPath = dllPath;
+		const std::filesystem::path sourcePath = NormalizeLibraryPath(dllPath);
+		if (!std::filesystem::exists(sourcePath))
+		{
+			BT_CORE_ERROR_TAG("NativeScriptHost", "Failed to load DLL: {}", sourcePath.string());
+			return false;
+		}
+
+		const std::filesystem::path shadowPath = CreateShadowCopyPath(sourcePath);
+		std::error_code copyError;
+		std::filesystem::copy_file(sourcePath, shadowPath, std::filesystem::copy_options::overwrite_existing, copyError);
+		if (copyError)
+		{
+			BT_CORE_ERROR_TAG("NativeScriptHost", "Failed to create DLL shadow copy '{}': {}", shadowPath.string(), copyError.message());
+			return false;
+		}
+
+		void* newDllHandle = nullptr;
 
 #if defined(BT_PLATFORM_WINDOWS)
-		m_DllHandle = static_cast<void*>(LoadLibraryA(dllPath.c_str()));
-		if (!m_DllHandle)
+		newDllHandle = static_cast<void*>(LoadLibraryA(shadowPath.string().c_str()));
+		if (!newDllHandle)
 		{
-			BT_CORE_ERROR_TAG("NativeScriptHost", "Failed to load DLL: {}", dllPath);
+			BT_CORE_ERROR_TAG("NativeScriptHost", "Failed to load DLL: {}", sourcePath.string());
+			RemoveShadowCopy(shadowPath);
 			return false;
 		}
 #elif defined(BT_PLATFORM_LINUX)
 		dlerror();
-		m_DllHandle = dlopen(dllPath.c_str(), RTLD_NOW);
-		if (!m_DllHandle)
+		newDllHandle = dlopen(shadowPath.string().c_str(), RTLD_NOW);
+		if (!newDllHandle)
 		{
 			const char* error = dlerror();
-			BT_CORE_ERROR_TAG("NativeScriptHost", "Failed to load shared library '{}': {}", dllPath, error ? error : "unknown error");
+			BT_CORE_ERROR_TAG("NativeScriptHost", "Failed to load shared library '{}': {}", sourcePath.string(), error ? error : "unknown error");
+			RemoveShadowCopy(shadowPath);
 			return false;
 		}
 #else
 		BT_CORE_ERROR_TAG("NativeScriptHost", "Native scripts are not supported on this platform");
+		RemoveShadowCopy(shadowPath);
 		return false;
 #endif
 
-		auto getSymbol = [this](const char* name) -> void* {
+		auto getSymbol = [newDllHandle](const char* name) -> void* {
 #if defined(BT_PLATFORM_WINDOWS)
-			return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(m_DllHandle), name));
+			return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(newDllHandle), name));
 #elif defined(BT_PLATFORM_LINUX)
 			dlerror();
-			return dlsym(m_DllHandle, name);
+			return dlsym(newDllHandle, name);
 #else
 			return nullptr;
 #endif
 		};
 
-		m_CreateFn = reinterpret_cast<CreateFn>(getSymbol("BoltCreateScript"));
-		m_DestroyFn = reinterpret_cast<DestroyFn>(getSymbol("BoltDestroyScript"));
+		NativeCreateFn newCreateFn = reinterpret_cast<NativeCreateFn>(getSymbol("BoltCreateScript"));
+		NativeDestroyFn newDestroyFn = reinterpret_cast<NativeDestroyFn>(getSymbol("BoltDestroyScript"));
 
-		if (!m_CreateFn || !m_DestroyFn)
+		if (!newCreateFn || !newDestroyFn)
 		{
 			BT_CORE_ERROR_TAG("NativeScriptHost",
-				"DLL missing BoltCreateScript/BoltDestroyScript: {}", dllPath);
-#if defined(BT_PLATFORM_WINDOWS)
-			FreeLibrary(static_cast<HMODULE>(m_DllHandle));
-#elif defined(BT_PLATFORM_LINUX)
-			dlclose(m_DllHandle);
-#endif
-			m_DllHandle = nullptr;
-			m_CreateFn = nullptr;
-			m_DestroyFn = nullptr;
+				"DLL missing BoltCreateScript/BoltDestroyScript: {}", sourcePath.string());
+			UnloadLibraryHandle(newDllHandle);
+			RemoveShadowCopy(shadowPath);
 			return false;
 		}
 
 		// Pass engine API to the DLL so scripts can call engine functions
-		auto initFn = reinterpret_cast<InitFn>(getSymbol("BoltInitialize"));
+		NativeInitFn initFn = reinterpret_cast<NativeInitFn>(getSymbol("BoltInitialize"));
 		if (initFn)
 			initFn(&s_EngineAPI);
 
-		BT_CORE_INFO_TAG("NativeScriptHost", "Loaded native script DLL: {}", dllPath);
+		UnloadDLL();
+
+		m_DllHandle = newDllHandle;
+		m_CreateFn = newCreateFn;
+		m_DestroyFn = newDestroyFn;
+		m_DllPath = sourcePath.string();
+		m_LoadedDllPath = shadowPath;
+
+		BT_CORE_INFO_TAG("NativeScriptHost", "Loaded native script DLL: {}", sourcePath.string());
 		return true;
 	}
 
@@ -137,29 +219,18 @@ namespace Bolt {
 	{
 		DestroyAllInstances();
 
-#if defined(BT_PLATFORM_WINDOWS)
-		if (m_DllHandle)
-		{
-			FreeLibrary(static_cast<HMODULE>(m_DllHandle));
-		}
-#elif defined(BT_PLATFORM_LINUX)
-		if (m_DllHandle)
-		{
-			dlclose(m_DllHandle);
-		}
-#endif
-
+		UnloadLibraryHandle(m_DllHandle);
+		RemoveShadowCopy(m_LoadedDllPath);
 		m_DllHandle = nullptr;
 		m_CreateFn = nullptr;
 		m_DestroyFn = nullptr;
+		m_LoadedDllPath.clear();
 	}
 
 	bool NativeScriptHost::Reload()
 	{
 		if (m_DllPath.empty()) return false;
-		std::string path = m_DllPath;
-		UnloadDLL();
-		return LoadDLL(path);
+		return LoadDLL(m_DllPath);
 	}
 
 	NativeScript* NativeScriptHost::CreateInstance(

@@ -83,7 +83,10 @@ namespace Bolt {
 
 	std::string GitHubSource::RunTool(const std::vector<std::string>& args) const {
 		std::vector<std::string> command;
-		command.reserve(args.size() + 1);
+		command.reserve(args.size() + 2);
+		if (std::filesystem::path(m_ToolExePath).extension() == ".dll") {
+			command.push_back("dotnet");
+		}
 		command.push_back(m_ToolExePath);
 		command.insert(command.end(), args.begin(), args.end());
 

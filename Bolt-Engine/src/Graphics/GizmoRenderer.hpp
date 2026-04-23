@@ -1,5 +1,6 @@
 #pragma once
 #include "Graphics/PosColorVertex.hpp"
+#include "Graphics/Gizmo.hpp"
 
 #include <glm/glm.hpp>
 
@@ -17,12 +18,13 @@ namespace Bolt {
         static void Shutdown();
         static void OnResize(int w, int h);
         static void BeginFrame(uint16_t viewId = 1);
-        static void Render();
+        static void Render(GizmoLayerMask layerMask = GizmoLayerMask::Shared);
         static void EndFrame();
 
-        static void RenderWithVP(const glm::mat4& vp);
+        static void RenderWithVP(const glm::mat4& vp, GizmoLayerMask layerMask = GizmoLayerMask::All);
 
     private:
+        static void BuildGeometry(GizmoLayerMask layerMask);
         static void FlushGizmos();
         static void FlushGizmosWithVP(const glm::mat4& vp);
 

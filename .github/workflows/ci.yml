@@ -49,6 +49,10 @@ jobs:
           if errorlevel 1 exit /b %errorlevel%
           "@ | cmd /Q
 
+      - name: Windows Runtime Smoke Test
+        shell: pwsh
+        run: python scripts/ci/runtime_smoke_test.py
+
   linux-build:
     runs-on: ubuntu-latest
 
@@ -79,6 +83,4 @@ jobs:
         run: make config=release -j"$(nproc)" Bolt-Engine Bolt-Runtime Bolt-Editor
 
       - name: Linux Runtime Smoke Test
-        run: |
-          chmod +x scripts/ci/linux_smoke_test.sh
-          ./scripts/ci/linux_smoke_test.sh
+        run: python3 scripts/ci/runtime_smoke_test.py

@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -39,9 +40,9 @@ namespace Bolt {
 		static void Shutdown();
 		static bool IsInitialized();
 
-		static std::shared_ptr<spdlog::logger>& GetCoreLogger();
-		static std::shared_ptr<spdlog::logger>& GetClientLogger();
-		static std::shared_ptr<spdlog::logger>& GetEditorConsoleLogger();
+		static std::shared_ptr<spdlog::logger> GetCoreLogger();
+		static std::shared_ptr<spdlog::logger> GetClientLogger();
+		static std::shared_ptr<spdlog::logger> GetEditorConsoleLogger();
 
 		static Event<const Entry&> OnLog;
 
@@ -75,6 +76,7 @@ namespace Bolt {
 		static std::shared_ptr<spdlog::logger> SelectLogger(Type type);
 		static void Emit(std::shared_ptr<spdlog::logger>& logger, Level level, std::string_view message);
 
+		inline static std::mutex s_StateMutex;
 		inline static bool s_Initialized = false;
 		inline static std::shared_ptr<spdlog::logger> s_CoreLogger;
 		inline static std::shared_ptr<spdlog::logger> s_ClientLogger;

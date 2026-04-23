@@ -2,121 +2,394 @@
 #include "Serialization/FileWatcher.hpp"
 #include "Core/Log.hpp"
 
-	namespace Bolt {
+#include <algorithm>
+#include <cctype>
+
+namespace Bolt {
 
 	namespace {
 		constexpr std::filesystem::directory_options kDirectoryOptions =
 			std::filesystem::directory_options::skip_permission_denied;
+		constexpr int kMaxIdlePollIntervalMs = 5000;
+#ifdef BT_PLATFORM_WINDOWS
+		constexpr DWORD kNativeWatchTimeoutMs = 250;
+#endif
+
+		const std::unordered_set<std::string> kIgnoredDirectoryNames = {
+			".git",
+			".vs",
+			".idea",
+			"bin",
+			"bin-int",
+			"obj",
+			"build",
+			"out"
+		};
+
+		std::filesystem::path NormalizeWatchTargetPath(const std::filesystem::path& path) {
+			std::error_code ec;
+			if (std::filesystem::exists(path, ec)) {
+				std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(path, ec);
+				if (!ec) {
+					return canonicalPath.make_preferred();
+				}
+				ec.clear();
+			}
+
+			std::filesystem::path absolutePath = std::filesystem::absolute(path, ec);
+			if (ec) {
+				return path.lexically_normal().make_preferred();
+			}
+
+			return absolutePath.lexically_normal().make_preferred();
+		}
 	}
 
-	void FileWatcher::Watch(const std::string& directory, const std::string& extension, Callback callback)
-	{
-		m_Directory = directory;
-		m_Extension = extension;
+	FileWatcher::~FileWatcher() {
+		Stop();
+	}
+
+	void FileWatcher::Watch(const std::string& path, const std::string& pattern, Callback callback) {
+		Watch(std::vector<std::string>{ path }, std::vector<std::string>{ pattern }, std::move(callback));
+	}
+
+	void FileWatcher::Watch(const std::vector<std::string>& paths, const std::vector<std::string>& patterns, Callback callback) {
+		Stop();
+
+		ConfigurePatterns(patterns);
 		m_Callback = std::move(callback);
-		m_Watching = true;
-		m_LastPollTime = std::chrono::steady_clock::now();
+		m_Targets.clear();
+		m_WatchDescription.clear();
 
-		// Initial scan to populate timestamps
-		ScanFiles();
+		for (const std::string& pathString : paths) {
+			if (pathString.empty()) {
+				continue;
+			}
 
-		BT_CORE_INFO_TAG("FileWatcher", "Watching '{}' for *{} changes", directory, extension);
+			const std::filesystem::path path(pathString);
+			std::error_code ec;
+			const bool exists = std::filesystem::exists(path, ec);
+			const bool isDirectory = exists ? std::filesystem::is_directory(path, ec) : LooksLikeDirectory(path);
+			m_Targets.push_back({ NormalizeWatchTargetPath(path), isDirectory });
+		}
+
+		if (m_Targets.empty() || !m_Callback) {
+			m_Callback = nullptr;
+			return;
+		}
+
+		m_FileTimestamps = BuildSnapshot();
+		m_PendingChanges.store(false);
+		m_Watching.store(true);
+		m_WatchDescription = m_Targets.size() == 1
+			? m_Targets.front().Path.string()
+			: std::to_string(m_Targets.size()) + " targets";
+
+		m_Worker = std::thread(&FileWatcher::WorkerMain, this);
+		BT_CORE_INFO_TAG("FileWatcher", "Watching {} for {} pattern(s)", m_WatchDescription, patterns.size());
 	}
 
-	void FileWatcher::Stop()
-	{
-		m_Watching = false;
+	void FileWatcher::Stop() {
+		m_Watching.store(false);
+		m_WakeCondition.notify_all();
+
+		if (m_Worker.joinable()) {
+			m_Worker.join();
+		}
+
+		m_Targets.clear();
+		m_Extensions.clear();
+		m_Filenames.clear();
 		m_FileTimestamps.clear();
 		m_Callback = nullptr;
+		m_PendingChanges.store(false);
+		m_WatchDescription.clear();
 	}
 
-	void FileWatcher::Poll(float pollIntervalSeconds)
-	{
-		if (!m_Watching || !m_Callback) return;
+	void FileWatcher::Poll(float pollIntervalSeconds) {
+		const int pollIntervalMs = std::max(50, static_cast<int>(pollIntervalSeconds * 1000.0f));
+		m_PollIntervalMs.store(pollIntervalMs);
 
-		auto now = std::chrono::steady_clock::now();
-		float elapsed = std::chrono::duration<float>(now - m_LastPollTime).count();
-		if (elapsed < pollIntervalSeconds) return;
-		m_LastPollTime = now;
+		if (!m_PendingChanges.exchange(false) || !m_Callback) {
+			return;
+		}
 
-		bool changed = false;
+		BT_CORE_INFO_TAG("FileWatcher", "Changes detected in {}", m_WatchDescription);
+		m_Callback();
+	}
 
-		// Check for modified or new files
-		try
-		{
-			for (auto& dirEntry : std::filesystem::recursive_directory_iterator(m_Directory, kDirectoryOptions))
-			{
-				if (!dirEntry.is_regular_file()) continue;
+	void FileWatcher::WorkerMain() {
+#ifdef BT_PLATFORM_WINDOWS
+		if (WaitForNativeChanges()) {
+			return;
+		}
+#endif
 
-				std::string ext = dirEntry.path().extension().string();
-				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-				if (ext != m_Extension) continue;
+		int idlePollIntervalMs = m_PollIntervalMs.load();
 
-				std::string path = dirEntry.path().string();
-				auto writeTime = dirEntry.last_write_time();
+		while (m_Watching.load()) {
+			std::unique_lock<std::mutex> lock(m_StateMutex);
+			m_WakeCondition.wait_for(lock, std::chrono::milliseconds(idlePollIntervalMs), [this]() {
+				return !m_Watching.load();
+			});
+			lock.unlock();
 
-				auto it = m_FileTimestamps.find(path);
-				if (it == m_FileTimestamps.end())
-				{
-					// New file
-					m_FileTimestamps[path] = writeTime;
-					changed = true;
-				}
-				else if (it->second != writeTime)
-				{
-					// Modified file
-					it->second = writeTime;
-					changed = true;
+			if (!m_Watching.load()) {
+				break;
+			}
+
+			Snapshot nextSnapshot = BuildSnapshot();
+			bool changed = nextSnapshot.size() != m_FileTimestamps.size();
+			if (!changed) {
+				for (const auto& [path, writeTime] : nextSnapshot) {
+					const auto it = m_FileTimestamps.find(path);
+					if (it == m_FileTimestamps.end() || it->second != writeTime) {
+						changed = true;
+						break;
+					}
 				}
 			}
 
-			// Check for deleted files
-			for (auto it = m_FileTimestamps.begin(); it != m_FileTimestamps.end(); )
-			{
-				if (!std::filesystem::exists(it->first))
-				{
-					it = m_FileTimestamps.erase(it);
-					changed = true;
-				}
-				else
-				{
-					++it;
-				}
+			m_FileTimestamps = std::move(nextSnapshot);
+			if (changed) {
+				m_PendingChanges.store(true);
+				idlePollIntervalMs = m_PollIntervalMs.load();
 			}
-		}
-		catch (const std::filesystem::filesystem_error& e)
-		{
-			BT_CORE_WARN_TAG("FileWatcher", "Filesystem error: {}", e.what());
-		}
-
-		if (changed)
-		{
-			BT_CORE_INFO_TAG("FileWatcher", "Changes detected in {}", m_Directory);
-			m_Callback();
+			else {
+				idlePollIntervalMs = std::min(kMaxIdlePollIntervalMs, std::max(m_PollIntervalMs.load(), idlePollIntervalMs * 2));
+			}
 		}
 	}
 
-	void FileWatcher::ScanFiles()
-	{
-		m_FileTimestamps.clear();
+	bool FileWatcher::WaitForNativeChanges() {
+#ifndef BT_PLATFORM_WINDOWS
+		return false;
+#else
+		struct NativeWatchRoot {
+			std::filesystem::path Path;
+			bool Recursive = false;
+		};
 
-		try
-		{
-			for (auto& dirEntry : std::filesystem::recursive_directory_iterator(m_Directory, kDirectoryOptions))
-			{
-				if (!dirEntry.is_regular_file()) continue;
+		std::unordered_map<std::string, NativeWatchRoot> rootsByKey;
+		for (const WatchTarget& target : m_Targets) {
+			std::filesystem::path rootPath = target.IsDirectory ? target.Path : target.Path.parent_path();
+			if (rootPath.empty()) {
+				continue;
+			}
 
-				std::string ext = dirEntry.path().extension().string();
-				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-				if (ext != m_Extension) continue;
+			std::error_code ec;
+			if (!std::filesystem::exists(rootPath, ec) || !std::filesystem::is_directory(rootPath, ec)) {
+				continue;
+			}
 
-				m_FileTimestamps[dirEntry.path().string()] = dirEntry.last_write_time();
+			NativeWatchRoot root{ NormalizeWatchTargetPath(rootPath), target.IsDirectory };
+			const std::string key = NormalizeKey(root.Path);
+			auto [it, inserted] = rootsByKey.emplace(key, root);
+			if (!inserted) {
+				it->second.Recursive = it->second.Recursive || root.Recursive;
 			}
 		}
-		catch (const std::filesystem::filesystem_error& e)
-		{
-			BT_CORE_WARN_TAG("FileWatcher", "Initial scan error: {}", e.what());
+
+		if (rootsByKey.empty()) {
+			return false;
 		}
+
+		if (rootsByKey.size() > MAXIMUM_WAIT_OBJECTS) {
+			BT_CORE_WARN_TAG("FileWatcher", "Watching {} exceeds the Windows notification handle limit; falling back to polling", m_WatchDescription);
+			return false;
+		}
+
+		std::vector<HANDLE> handles;
+		handles.reserve(rootsByKey.size());
+
+		for (const auto& [key, root] : rootsByKey) {
+			(void)key;
+
+			const HANDLE handle = FindFirstChangeNotificationW(
+				root.Path.c_str(),
+				root.Recursive ? TRUE : FALSE,
+				FILE_NOTIFY_CHANGE_FILE_NAME |
+				FILE_NOTIFY_CHANGE_DIR_NAME |
+				FILE_NOTIFY_CHANGE_LAST_WRITE |
+				FILE_NOTIFY_CHANGE_CREATION |
+				FILE_NOTIFY_CHANGE_SIZE);
+
+			if (handle == INVALID_HANDLE_VALUE) {
+				BT_CORE_WARN_TAG("FileWatcher", "Failed to create a native watch for {}; falling back to polling", root.Path.string());
+				for (HANDLE openHandle : handles) {
+					FindCloseChangeNotification(openHandle);
+				}
+				return false;
+			}
+
+			handles.push_back(handle);
+		}
+
+		struct NotificationHandleCloser {
+			std::vector<HANDLE>& Handles;
+
+			~NotificationHandleCloser() {
+				for (HANDLE handle : Handles) {
+					if (handle != INVALID_HANDLE_VALUE) {
+						FindCloseChangeNotification(handle);
+					}
+				}
+			}
+		} handleCloser{ handles };
+
+		while (m_Watching.load()) {
+			const DWORD waitResult = WaitForMultipleObjects(
+				static_cast<DWORD>(handles.size()),
+				handles.data(),
+				FALSE,
+				kNativeWatchTimeoutMs);
+
+			if (waitResult == WAIT_TIMEOUT) {
+				continue;
+			}
+
+			if (waitResult >= WAIT_OBJECT_0 && waitResult < WAIT_OBJECT_0 + handles.size()) {
+				m_PendingChanges.store(true);
+
+				const HANDLE changedHandle = handles[waitResult - WAIT_OBJECT_0];
+				if (!FindNextChangeNotification(changedHandle)) {
+					BT_CORE_WARN_TAG("FileWatcher", "Native notifications failed for {}; falling back to polling", m_WatchDescription);
+					return false;
+				}
+
+				continue;
+			}
+
+			BT_CORE_WARN_TAG("FileWatcher", "Native notifications failed for {}; falling back to polling", m_WatchDescription);
+			return false;
+		}
+
+		return true;
+#endif
+	}
+
+	FileWatcher::Snapshot FileWatcher::BuildSnapshot() const {
+		Snapshot snapshot;
+
+		for (const WatchTarget& target : m_Targets) {
+			std::error_code ec;
+			if (target.IsDirectory) {
+				if (!std::filesystem::exists(target.Path, ec) || !std::filesystem::is_directory(target.Path, ec)) {
+					continue;
+				}
+
+				for (std::filesystem::recursive_directory_iterator it(target.Path, kDirectoryOptions, ec), end;
+					 it != end;
+					 it.increment(ec)) {
+					if (ec) {
+						ec.clear();
+						continue;
+					}
+
+					if (it->is_directory(ec)) {
+						if (!ec && ShouldIgnoreDirectory(it->path())) {
+							it.disable_recursion_pending();
+						}
+						ec.clear();
+						continue;
+					}
+
+					if (!it->is_regular_file(ec) || ec || !MatchesFile(it->path())) {
+						ec.clear();
+						continue;
+					}
+
+					const std::string key = NormalizeKey(it->path());
+					const std::filesystem::file_time_type writeTime = it->last_write_time(ec);
+					if (!ec) {
+						snapshot[key] = writeTime;
+					}
+					ec.clear();
+				}
+
+				continue;
+			}
+
+			if (!std::filesystem::exists(target.Path, ec) || !std::filesystem::is_regular_file(target.Path, ec) || !MatchesFile(target.Path)) {
+				continue;
+			}
+
+			const std::filesystem::file_time_type writeTime = std::filesystem::last_write_time(target.Path, ec);
+			if (!ec) {
+				snapshot[NormalizeKey(target.Path)] = writeTime;
+			}
+		}
+
+		return snapshot;
+	}
+
+	void FileWatcher::ConfigurePatterns(const std::vector<std::string>& patterns) {
+		m_Extensions.clear();
+		m_Filenames.clear();
+
+		for (const std::string& pattern : patterns) {
+			if (pattern.empty()) {
+				continue;
+			}
+
+			const std::string normalizedPattern = ToLowerCopy(pattern);
+			if (!normalizedPattern.empty() && normalizedPattern.front() == '.') {
+				m_Extensions.insert(normalizedPattern);
+			}
+			else {
+				m_Filenames.insert(normalizedPattern);
+			}
+		}
+	}
+
+	bool FileWatcher::MatchesFile(const std::filesystem::path& filePath) const {
+		if (m_Extensions.empty() && m_Filenames.empty()) {
+			return true;
+		}
+
+		const std::string fileName = ToLowerCopy(filePath.filename().string());
+		if (m_Filenames.contains(fileName)) {
+			return true;
+		}
+
+		const std::string extension = ToLowerCopy(filePath.extension().string());
+		return !extension.empty() && m_Extensions.contains(extension);
+	}
+
+	bool FileWatcher::ShouldIgnoreDirectory(const std::filesystem::path& directoryPath) const {
+		return kIgnoredDirectoryNames.contains(ToLowerCopy(directoryPath.filename().string()));
+	}
+
+	std::string FileWatcher::NormalizeKey(const std::filesystem::path& path) {
+		std::error_code ec;
+		std::filesystem::path normalized = std::filesystem::absolute(path, ec);
+		if (ec) {
+			normalized = path.lexically_normal();
+		}
+		else {
+			normalized = normalized.lexically_normal();
+		}
+
+		return normalized.make_preferred().string();
+	}
+
+	std::string FileWatcher::ToLowerCopy(std::string value) {
+		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+			return static_cast<char>(std::tolower(c));
+		});
+		return value;
+	}
+
+	bool FileWatcher::LooksLikeDirectory(const std::filesystem::path& path) {
+		const std::string native = path.lexically_normal().make_preferred().string();
+		if (!native.empty()) {
+			const char lastCharacter = native.back();
+			if (lastCharacter == '/' || lastCharacter == '\\') {
+				return true;
+			}
+		}
+
+		return !path.has_extension();
 	}
 
 } // namespace Bolt

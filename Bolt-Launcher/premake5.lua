@@ -19,6 +19,7 @@ project "Bolt-Launcher"
     }
 
     UseDependencySet(Dependency.EditorRuntimeCommon)
+    postbuildcommands { CopyBoltAssets }
 
     filter "system:windows"
         buildoptions { "/utf-8" }
@@ -26,8 +27,7 @@ project "Bolt-Launcher"
         defines { "BT_PLATFORM_WINDOWS" }
 
         postbuildcommands {
-            CopyBoltAssets,
-            '{COPYFILE} "%{wks.location}External/dotnet/lib/nethost.dll" "%{cfg.targetdir}/nethost.dll"'
+            '{COPYFILE} "' .. path.join(ROOT_DIR, "External/dotnet/lib/nethost.dll") .. '" "%{cfg.targetdir}/nethost.dll"'
         }
 
     filter "system:linux"

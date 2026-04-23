@@ -46,7 +46,7 @@
     <Optimize>true</Optimize>
     <OutputPath>..\bin\Dist-windows-x86_64\Bolt-ScriptCore\</OutputPath>
     <IntermediateOutputPath>..\bin-int\Dist-windows-x86_64\Bolt-ScriptCore\</IntermediateOutputPath>
-    <DefineConstants>BT_RELEASE</DefineConstants>
+    <DefineConstants>BT_DIST</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -100,8 +100,5 @@
     <Compile Include="Source\Bolt\Scene\SceneManager.cs" />
     <Compile Include="Source\Bolt\Scene\SceneQuery.cs" />
     <Compile Include="Source\Bolt\Utility\TextUtility.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Source\Bolt\Events\" />
   </ItemGroup>
 </Project>

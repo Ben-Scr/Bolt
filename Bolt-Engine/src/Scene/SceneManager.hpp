@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -80,15 +81,21 @@ namespace Bolt {
 		void OnGuiScenes();
 		void FixedUpdateScenes();
 		void InitializeStartupScenes();
-		std::shared_ptr<Scene> LoadSceneInternal(const std::string& name, bool additive, SceneSetupCallback setupCallback = {});
+		std::shared_ptr<Scene> LoadSceneInternal(const std::string& name,
+			bool additive,
+			SceneSetupCallback setupCallback = {},
+			bool makeActive = false,
+			std::optional<size_t> insertIndex = std::nullopt);
 		SceneDefinition* GetSceneDefinition(const std::string& name);
 		const SceneDefinition* GetSceneDefinition(const std::string& name) const;
 		LoadedSceneList::iterator FindLoadedSceneIterator(const std::string& name);
 		LoadedSceneList::const_iterator FindLoadedSceneIterator(const std::string& name) const;
+		void RollbackSceneLoad(const std::shared_ptr<Scene>& scene, size_t awakenedSystemCount);
 		void ReleaseScene(LoadedSceneList::iterator it);
 		void RefreshActiveScene();
 
 		SceneDefinitionMap m_SceneDefinitions;
+		std::vector<std::string> m_SceneDefinitionOrder;
 		LoadedSceneList m_LoadedScenes;
 		ComponentRegistry m_ComponentRegistry;
 		Scene* m_ActiveScene = nullptr;

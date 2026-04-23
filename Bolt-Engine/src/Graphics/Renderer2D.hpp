@@ -34,6 +34,7 @@ namespace Bolt {
 		void SetSkipBeginFrameRender(bool skip) { m_SkipBeginFrameRender = skip; }
 
 		size_t GetRenderedInstancesCount() const { return m_RenderedInstancesCount; }
+		size_t GetDrawCallsCount() const { return m_DrawCallsCount; }
 		float GetRenderLoopDuration() const { return m_RenderLoopDuration; }
 
 		using SceneProvider = std::function<void(const std::function<void(const Scene&)>&)>;
@@ -44,6 +45,7 @@ namespace Bolt {
 		void CollectAndRenderInstances(const Scene& scene, const glm::mat4& vp, const AABB& viewportAABB);
 
 		size_t m_RenderedInstancesCount = 0;
+		size_t m_DrawCallsCount = 0;
 		float m_RenderLoopDuration = 0.0f;
 		bool m_IsInitialized = false;
 		bool m_IsEnabled = true;

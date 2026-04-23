@@ -149,6 +149,7 @@ namespace Bolt.Hosting
             s_UserLoadContext.Unload();
             s_UserLoadContext = null;
             s_UserAssembly = null;
+            ReleaseFieldJsonBuffer();
 
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -267,13 +268,16 @@ namespace Bolt.Hosting
         {
             s_Instances.Clear();
             s_ClassCache.Clear();
+            ReleaseFieldJsonBuffer();
 
             UnloadCurrentUserAssemblyContext();
         }
 
         // ── Field reflection for [ShowInEditor] ──────────────────────
 
+        private static readonly object s_FieldJsonBufferLock = new();
         private static byte[] s_FieldJsonBuffer = Array.Empty<byte>();
+        private static GCHandle s_FieldJsonBufferHandle;
 
         [UnmanagedCallersOnly]
         public static unsafe byte* GetScriptFields(int handle)
@@ -552,6 +556,66 @@ namespace Bolt.Hosting
                             float.Parse(parts[2], ic), float.Parse(parts[3], ic));
                     return new Color(1, 1, 1, 1);
                 }
+                if (t == typeof(Vector2))
+                {
+                    var parts = s.Split(',', StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                        return new Vector2(
+                            float.Parse(parts[0], ic),
+                            float.Parse(parts[1], ic));
+                    return null;
+                }
+                if (t == typeof(Vector2Int))
+                {
+                    var parts = s.Split(',', StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                        return new Vector2Int(
+                            int.Parse(parts[0], ic),
+                            int.Parse(parts[1], ic));
+                    return null;
+                }
+                if (t == typeof(Vector3))
+                {
+                    var parts = s.Split(',', StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 3)
+                        return new Vector3(
+                            float.Parse(parts[0], ic),
+                            float.Parse(parts[1], ic),
+                            float.Parse(parts[2], ic));
+                    return null;
+                }
+                if (t == typeof(Vector3Int))
+                {
+                    var parts = s.Split(',', StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 3)
+                        return new Vector3Int(
+                            int.Parse(parts[0], ic),
+                            int.Parse(parts[1], ic),
+                            int.Parse(parts[2], ic));
+                    return null;
+                }
+                if (t == typeof(Vector4))
+                {
+                    var parts = s.Split(',', StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 4)
+                        return new Vector4(
+                            float.Parse(parts[0], ic),
+                            float.Parse(parts[1], ic),
+                            float.Parse(parts[2], ic),
+                            float.Parse(parts[3], ic));
+                    return null;
+                }
+                if (t == typeof(Vector4Int))
+                {
+                    var parts = s.Split(',', StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 4)
+                        return new Vector4Int(
+                            int.Parse(parts[0], ic),
+                            int.Parse(parts[1], ic),
+                            int.Parse(parts[2], ic),
+                            int.Parse(parts[3], ic));
+                    return null;
+                }
                 if (t == typeof(Entity))
                 {
                     ulong id = ulong.Parse(s, ic);
@@ -590,14 +654,39 @@ namespace Bolt.Hosting
             return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
         }
 
+        private static void ReleaseFieldJsonBuffer()
+        {
+            lock (s_FieldJsonBufferLock)
+            {
+                if (s_FieldJsonBufferHandle.IsAllocated)
+                    s_FieldJsonBufferHandle.Free();
+
+                s_FieldJsonBuffer = Array.Empty<byte>();
+            }
+        }
+
         private static unsafe byte* NullTerminated(string s)
         {
-            int byteCount = System.Text.Encoding.UTF8.GetByteCount(s);
-            if (s_FieldJsonBuffer.Length < byteCount + 1)
-                s_FieldJsonBuffer = new byte[byteCount + 1];
-            System.Text.Encoding.UTF8.GetBytes(s, s_FieldJsonBuffer);
-            s_FieldJsonBuffer[byteCount] = 0;
-            fixed (byte* ptr = s_FieldJsonBuffer) return ptr;
+            lock (s_FieldJsonBufferLock)
+            {
+                int byteCount = System.Text.Encoding.UTF8.GetByteCount(s);
+                if (s_FieldJsonBuffer.Length < byteCount + 1)
+                {
+                    if (s_FieldJsonBufferHandle.IsAllocated)
+                        s_FieldJsonBufferHandle.Free();
+
+                    s_FieldJsonBuffer = new byte[byteCount + 1];
+                    s_FieldJsonBufferHandle = GCHandle.Alloc(s_FieldJsonBuffer, GCHandleType.Pinned);
+                }
+                else if (!s_FieldJsonBufferHandle.IsAllocated)
+                {
+                    s_FieldJsonBufferHandle = GCHandle.Alloc(s_FieldJsonBuffer, GCHandleType.Pinned);
+                }
+
+                System.Text.Encoding.UTF8.GetBytes(s, s_FieldJsonBuffer);
+                s_FieldJsonBuffer[byteCount] = 0;
+                return (byte*)s_FieldJsonBufferHandle.AddrOfPinnedObject();
+            }
         }
 
         /// <summary>

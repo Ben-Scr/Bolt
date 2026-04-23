@@ -82,10 +82,17 @@ namespace Bolt::SceneSerializerShared {
 		return assetId != 0 ? std::to_string(assetId) : value;
 	}
 
-	inline TextureHandle LoadTextureFromValue(const Value& object, std::string_view assetKey, std::string_view pathKey, UUID* outAssetId = nullptr) {
+	inline TextureHandle LoadTextureFromValue(
+		const Value& object,
+		std::string_view assetKey,
+		std::string_view pathKey,
+		Filter filter = Filter::Point,
+		Wrap u = Wrap::Clamp,
+		Wrap v = Wrap::Clamp,
+		UUID* outAssetId = nullptr) {
 		uint64_t assetId = GetUInt64Member(object, assetKey, 0);
 		if (assetId != 0) {
-			TextureHandle handle = TextureManager::LoadTextureByUUID(assetId);
+			TextureHandle handle = TextureManager::LoadTextureByUUID(assetId, filter, u, v);
 			if (handle.IsValid()) {
 				if (outAssetId) {
 					*outAssetId = UUID(assetId);
@@ -102,7 +109,7 @@ namespace Bolt::SceneSerializerShared {
 			return TextureHandle::Invalid();
 		}
 
-		TextureHandle handle = TextureManager::LoadTexture(path);
+		TextureHandle handle = TextureManager::LoadTexture(path, filter, u, v);
 		if (handle.IsValid()) {
 			assetId = TextureManager::GetTextureAssetUUID(handle);
 			if (outAssetId) {

@@ -7,12 +7,30 @@ namespace Bolt {
 	Box2DWorld::Box2DWorld() {
 		b2WorldDef def = b2DefaultWorldDef();
 		def.enableSleep = true;
-		def.workerCount = 4;
 
 		def.gravity = b2Vec2{ 0, -9.8f };
 		m_WorldId = b2CreateWorld(&def);
 	}
-	Box2DWorld::~Box2DWorld() {}
+	Box2DWorld::~Box2DWorld() {
+		Destroy();
+	}
+
+	Box2DWorld::Box2DWorld(Box2DWorld&& other) noexcept
+		: m_WorldId(other.m_WorldId), m_Dispatcher(std::move(other.m_Dispatcher)) {
+		other.m_WorldId = b2_nullWorldId;
+	}
+
+	Box2DWorld& Box2DWorld::operator=(Box2DWorld&& other) noexcept {
+		if (this == &other) {
+			return *this;
+		}
+
+		Destroy();
+		m_WorldId = other.m_WorldId;
+		m_Dispatcher = std::move(other.m_Dispatcher);
+		other.m_WorldId = b2_nullWorldId;
+		return *this;
+	}
 
 	void Box2DWorld::Step(float dt) {
 		b2World_Step(m_WorldId, dt, 5);
@@ -40,7 +58,7 @@ namespace Bolt {
 		bodyDef.gravityScale = 1.0f;
 		bodyDef.position = box2dPos;
 		bodyDef.rotation = tr->GetB2Rotation();
-		bodyDef.isBullet = true;
+		bodyDef.isBullet = false;
 		bodyDef.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(nativeEntity));
 		bodyDef.linearDamping = 0.1f;
 

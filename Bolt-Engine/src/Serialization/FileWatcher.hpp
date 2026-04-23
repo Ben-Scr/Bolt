@@ -1,52 +1,66 @@
 #pragma once
-#include <string>
+#include <atomic>
+#include <condition_variable>
 #include <filesystem>
-#include <unordered_map>
 #include <functional>
-#include <chrono>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace Bolt {
 
-	/// <summary>
-	/// Polls a directory for file changes at a configurable interval.
-	/// Uses std::filesystem::last_write_time — no platform-specific APIs.
-	///
-	/// Usage:
-	///   FileWatcher watcher;
-	///   watcher.Watch("path/to/dir", ".cs", [](){ /* rebuild */ });
-	///   // In update loop:
-	///   watcher.Poll();
-	/// </summary>
 	class FileWatcher {
 	public:
 		using Callback = std::function<void()>;
 
-		/// Start watching a directory for files matching the given extension.
-		/// callback is invoked when any matching file is created, modified, or deleted.
-		void Watch(const std::string& directory, const std::string& extension, Callback callback);
+		FileWatcher() = default;
+		~FileWatcher();
 
-		/// Stop watching.
+		FileWatcher(const FileWatcher&) = delete;
+		FileWatcher& operator=(const FileWatcher&) = delete;
+
+		void Watch(const std::string& path, const std::string& pattern, Callback callback);
+		void Watch(const std::vector<std::string>& paths, const std::vector<std::string>& patterns, Callback callback);
 		void Stop();
-
-		/// Check for changes. Call this periodically (e.g. once per frame).
-		/// Internally throttled to pollIntervalMs.
 		void Poll(float pollIntervalSeconds = 1.0f);
 
-		bool IsWatching() const { return m_Watching; }
+		bool IsWatching() const { return m_Watching.load(); }
 
 	private:
-		void ScanFiles();
+		struct WatchTarget {
+			std::filesystem::path Path;
+			bool IsDirectory = false;
+		};
 
-		std::string m_Directory;
-		std::string m_Extension;
+		using Snapshot = std::unordered_map<std::string, std::filesystem::file_time_type>;
+
+		void WorkerMain();
+		bool WaitForNativeChanges();
+		Snapshot BuildSnapshot() const;
+		void ConfigurePatterns(const std::vector<std::string>& patterns);
+
+		bool MatchesFile(const std::filesystem::path& filePath) const;
+		bool ShouldIgnoreDirectory(const std::filesystem::path& directoryPath) const;
+
+		static std::string NormalizeKey(const std::filesystem::path& path);
+		static std::string ToLowerCopy(std::string value);
+		static bool LooksLikeDirectory(const std::filesystem::path& path);
+
+		std::vector<WatchTarget> m_Targets;
+		std::unordered_set<std::string> m_Extensions;
+		std::unordered_set<std::string> m_Filenames;
 		Callback m_Callback;
-		bool m_Watching = false;
-
-		// Tracked files: path -> last_write_time
-		std::unordered_map<std::string, std::filesystem::file_time_type> m_FileTimestamps;
-
-		// Throttle polling
-		std::chrono::steady_clock::time_point m_LastPollTime;
+		Snapshot m_FileTimestamps;
+		std::thread m_Worker;
+		std::condition_variable m_WakeCondition;
+		std::mutex m_StateMutex;
+		std::atomic<bool> m_Watching{ false };
+		std::atomic<bool> m_PendingChanges{ false };
+		std::atomic<int> m_PollIntervalMs{ 1000 };
+		std::string m_WatchDescription;
 	};
 
 } // namespace Bolt

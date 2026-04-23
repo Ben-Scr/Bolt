@@ -10,6 +10,7 @@ namespace Bolt {
 	Event<const Log::Entry&> Log::OnLog;
 
 	void Log::Initialize() {
+		std::scoped_lock lock(s_StateMutex);
 		if (s_Initialized) {
 			return;
 		}
@@ -55,10 +56,12 @@ namespace Bolt {
 	}
 
 	void Log::Shutdown() {
+		std::scoped_lock lock(s_StateMutex);
 		if (!s_Initialized) {
 			return;
 		}
 
+		OnLog.Clear();
 		s_CoreLogger.reset();
 		s_ClientLogger.reset();
 		s_EditorConsoleLogger.reset();
@@ -67,21 +70,25 @@ namespace Bolt {
 	}
 
 	bool Log::IsInitialized() {
+		std::scoped_lock lock(s_StateMutex);
 		return s_Initialized;
 	}
 
-	std::shared_ptr<spdlog::logger>& Log::GetCoreLogger() {
+	std::shared_ptr<spdlog::logger> Log::GetCoreLogger() {
 		EnsureInitialized();
+		std::scoped_lock lock(s_StateMutex);
 		return s_CoreLogger;
 	}
 
-	std::shared_ptr<spdlog::logger>& Log::GetClientLogger() {
+	std::shared_ptr<spdlog::logger> Log::GetClientLogger() {
 		EnsureInitialized();
+		std::scoped_lock lock(s_StateMutex);
 		return s_ClientLogger;
 	}
 
-	std::shared_ptr<spdlog::logger>& Log::GetEditorConsoleLogger() {
+	std::shared_ptr<spdlog::logger> Log::GetEditorConsoleLogger() {
 		EnsureInitialized();
+		std::scoped_lock lock(s_StateMutex);
 		return s_EditorConsoleLogger;
 	}
 
@@ -113,13 +120,21 @@ namespace Bolt {
 	}
 
 	bool Log::EnsureInitialized() {
-		if (!s_Initialized) {
-			Initialize();
+		{
+			std::scoped_lock lock(s_StateMutex);
+			if (s_Initialized) {
+				return true;
+			}
 		}
+
+		Initialize();
+
+		std::scoped_lock lock(s_StateMutex);
 		return s_Initialized;
 	}
 
 	std::shared_ptr<spdlog::logger> Log::SelectLogger(const Type type) {
+		std::scoped_lock lock(s_StateMutex);
 		switch (type) {
 		case Type::Core: return s_CoreLogger;
 		case Type::Client: return s_ClientLogger;
@@ -129,6 +144,10 @@ namespace Bolt {
 	}
 
 	void Log::Emit(std::shared_ptr<spdlog::logger>& logger, const Level level, const std::string_view message) {
+		if (!logger) {
+			return;
+		}
+
 		switch (level) {
 		case Level::Trace: logger->trace(message); break;
 		case Level::Info: logger->info(message); break;

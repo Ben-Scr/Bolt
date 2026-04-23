@@ -1,5 +1,6 @@
 #pragma once
 #include "Scene/EntityHandle.hpp"
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -32,6 +33,7 @@ namespace Bolt {
 		CreateFn  m_CreateFn = nullptr;
 		DestroyFn m_DestroyFn = nullptr;
 		std::string m_DllPath;
+		std::filesystem::path m_LoadedDllPath;
 
 		std::vector<NativeScript*> m_LiveInstances;
 	};

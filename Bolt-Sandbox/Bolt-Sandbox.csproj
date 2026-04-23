@@ -46,7 +46,7 @@
     <Optimize>true</Optimize>
     <OutputPath>..\bin\Dist-windows-x86_64\Bolt-Sandbox\</OutputPath>
     <IntermediateOutputPath>..\bin-int\Dist-windows-x86_64\Bolt-Sandbox\</IntermediateOutputPath>
-    <DefineConstants>BT_RELEASE</DefineConstants>
+    <DefineConstants>BT_DIST</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

@@ -2,12 +2,33 @@
 #include "Collections/AABB.hpp"
 #include "Collections/Color.hpp"
 #include <Math/Math.hpp>
+#include <cstdint>
 #include <vector>
 
 namespace Bolt {
-	struct BOLT_API Square { Vec2 Center, HalfExtents; float Radiant; Color Color; };
-	struct BOLT_API Circle { Vec2 Center; float Radius; int Segments; Color Color; };
-	struct BOLT_API Line { Vec2 Start; Vec2 End; Color Color; };
+	enum class GizmoLayer : uint8_t {
+		EditorOnly = 1 << 0,
+		Shared = 1 << 1
+	};
+
+	enum class GizmoLayerMask : uint8_t {
+		None = 0,
+		EditorOnly = static_cast<uint8_t>(GizmoLayer::EditorOnly),
+		Shared = static_cast<uint8_t>(GizmoLayer::Shared),
+		All = static_cast<uint8_t>(GizmoLayer::EditorOnly) | static_cast<uint8_t>(GizmoLayer::Shared)
+	};
+
+	constexpr GizmoLayerMask operator|(GizmoLayerMask lhs, GizmoLayerMask rhs) {
+		return static_cast<GizmoLayerMask>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+	}
+
+	constexpr bool HasAnyLayer(GizmoLayer layer, GizmoLayerMask mask) {
+		return (static_cast<uint8_t>(layer) & static_cast<uint8_t>(mask)) != 0;
+	}
+
+	struct BOLT_API Square { Vec2 Center, HalfExtents; float Radiant; Color Color; GizmoLayer Layer = GizmoLayer::Shared; };
+	struct BOLT_API Circle { Vec2 Center; float Radius; int Segments; Color Color; GizmoLayer Layer = GizmoLayer::Shared; };
+	struct BOLT_API Line { Vec2 Start; Vec2 End; Color Color; GizmoLayer Layer = GizmoLayer::Shared; };
 
 	struct BOLT_API Box { Vec3 Center, HalfExtents; float Radiant; Color Color; };
 	struct BOLT_API Sphere { Vec3 Center; float Radius; int Segments; Color Color; };
@@ -38,6 +59,8 @@ namespace Bolt {
 
 		static void SetColor(const Color& color) { s_Color = color; }
 		static Color GetColor() { return s_Color; }
+		static void SetLayer(GizmoLayer layer) { s_Layer = layer; }
+		static GizmoLayer GetLayer() { return s_Layer; }
 
 		static void SetMaxVertices(size_t maxVertices) { s_MaxVertices = maxVertices; };
 		static size_t GetMaxVertices() { return s_MaxVertices; }
@@ -54,6 +77,7 @@ namespace Bolt {
 		static bool s_HasViewportOverride;
 		static bool s_IsEnabled;
 		static bool s_ShowInRuntime;
+		static GizmoLayer s_Layer;
 
 		static  Color s_Color;;
 

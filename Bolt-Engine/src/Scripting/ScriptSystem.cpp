@@ -12,9 +12,20 @@
 
 #include <imgui.h>
 #include <filesystem>
+#include <optional>
 
 namespace Bolt {
+	struct ScriptSystemProcessTaskState {
+		std::mutex Mutex;
+		std::optional<Process::Result> Result;
+		std::atomic<bool> Completed{ false };
+		std::atomic<bool> Abandoned{ false };
+		std::chrono::steady_clock::time_point StartedAt{ std::chrono::steady_clock::now() };
+	};
+
 	namespace {
+		using ProcessTaskState = ScriptSystemProcessTaskState;
+
 		std::string GetNativeLibraryFilename(const std::string& targetName)
 		{
 #if defined(BT_PLATFORM_WINDOWS)
@@ -52,7 +63,84 @@ namespace Bolt {
 
 		std::string GetActiveNativeBuildConfig()
 		{
-			return BT_BUILD_CONFIG_NAME;
+			return BoltProject::GetActiveBuildConfiguration();
+		}
+
+		std::vector<std::string> GetManagedWatchPatterns()
+		{
+			return {
+				".cs",
+				".csproj",
+				".props",
+				".targets",
+				".sln"
+			};
+		}
+
+		std::vector<std::string> BuildManagedWatchTargets(
+			const std::filesystem::path& scriptsDirectory,
+			const std::filesystem::path& projectFile,
+			const std::filesystem::path& solutionFile = {})
+		{
+			std::vector<std::string> targets;
+			auto appendTarget = [&targets](const std::filesystem::path& path) {
+				if (!path.empty()) {
+					targets.push_back(path.string());
+				}
+			};
+
+			appendTarget(scriptsDirectory);
+			appendTarget(projectFile);
+			appendTarget(solutionFile);
+
+			const std::filesystem::path projectRoot = projectFile.parent_path();
+			if (!projectRoot.empty()) {
+				appendTarget(projectRoot / "Directory.Build.props");
+				appendTarget(projectRoot / "Directory.Build.targets");
+			}
+
+			return targets;
+		}
+
+		std::vector<std::string> GetNativeWatchPatterns()
+		{
+			return {
+				".c",
+				".cc",
+				".cpp",
+				".cxx",
+				".h",
+				".hh",
+				".hpp",
+				".hxx",
+				".inl",
+				".ipp",
+				".cmake",
+				"CMakeLists.txt"
+			};
+		}
+
+		std::vector<std::string> BuildNativeWatchTargets(
+			const std::filesystem::path& projectDirectory,
+			const std::filesystem::path& sourceDirectory = {})
+		{
+			std::vector<std::string> targets;
+			auto appendTarget = [&targets](const std::filesystem::path& path) {
+				if (!path.empty()) {
+					targets.push_back(path.string());
+				}
+			};
+
+			appendTarget(sourceDirectory);
+			appendTarget(projectDirectory / "CMakeLists.txt");
+			appendTarget(projectDirectory / "cmake");
+			appendTarget(projectDirectory / "Include");
+
+			if (targets.empty()) {
+				appendTarget(projectDirectory);
+			}
+
+			return targets;
 		}
 
 		template <typename TFunc>
@@ -68,6 +156,117 @@ namespace Bolt {
 					func(*loadedScene);
 				}
 			}
+		}
+
+		void RemovePendingFieldValuesForClass(ScriptComponent& scriptComp, const std::string& className)
+		{
+			if (className.empty() || scriptComp.HasScript(className)) {
+				return;
+			}
+
+			const std::string prefix = className + ".";
+			for (auto it = scriptComp.PendingFieldValues.begin(); it != scriptComp.PendingFieldValues.end(); ) {
+				if (it->first.rfind(prefix, 0) == 0) {
+					it = scriptComp.PendingFieldValues.erase(it);
+				}
+				else {
+					++it;
+				}
+			}
+		}
+
+		void TeardownManagedScriptInstance(Scene& scene, ScriptInstance& instance)
+		{
+			if (!instance.HasManagedInstance() || !ScriptEngine::IsInitialized()) {
+				return;
+			}
+
+			ScriptEngine::SetScene(&scene);
+			ScriptEngine::InvokeOnDestroy(instance.GetGCHandle());
+			ScriptEngine::DestroyScriptInstance(instance.GetGCHandle());
+			instance.Unbind();
+		}
+
+		void TeardownNativeScriptInstance(Scene& scene, ScriptInstance& instance, NativeScriptHost& nativeHost)
+		{
+			if (!instance.HasNativeInstance()) {
+				return;
+			}
+
+			ScriptEngine::SetScene(&scene);
+			if (nativeHost.IsLoaded()) {
+				nativeHost.DestroyInstance(instance.GetNativePtr());
+			}
+			instance.Unbind();
+		}
+
+		bool IsTaskRunning(const std::shared_ptr<ProcessTaskState>& task)
+		{
+			return task && !task->Completed.load(std::memory_order_acquire);
+		}
+
+		std::shared_ptr<ProcessTaskState> LaunchTask(std::function<Process::Result()> work)
+		{
+			auto task = std::make_shared<ProcessTaskState>();
+			task->StartedAt = std::chrono::steady_clock::now();
+
+			std::thread([task, work = std::move(work)]() mutable {
+				Process::Result result{};
+				try {
+					result = work();
+				}
+				catch (const std::exception& e) {
+					result.ExitCode = -1;
+					result.Output = e.what();
+				}
+				catch (...) {
+					result.ExitCode = -1;
+					result.Output = "Unknown exception while running background rebuild task.";
+				}
+
+				{
+					std::scoped_lock lock(task->Mutex);
+					task->Result = std::move(result);
+				}
+
+				task->Completed.store(true, std::memory_order_release);
+			}).detach();
+
+			return task;
+		}
+
+		bool TryTakeTaskResult(std::shared_ptr<ProcessTaskState>& task, Process::Result& outResult)
+		{
+			if (!task || !task->Completed.load(std::memory_order_acquire)) {
+				return false;
+			}
+
+			if (task->Abandoned.load(std::memory_order_acquire)) {
+				task.reset();
+				return false;
+			}
+
+			{
+				std::scoped_lock lock(task->Mutex);
+				outResult = task->Result.value_or(Process::Result{});
+			}
+
+			task.reset();
+			return true;
+		}
+
+		void AbandonTask(std::shared_ptr<ProcessTaskState>& task, std::string_view description)
+		{
+			if (!task) {
+				return;
+			}
+
+			if (!task->Completed.load(std::memory_order_acquire)) {
+				task->Abandoned.store(true, std::memory_order_release);
+				BT_CORE_WARN_TAG("ScriptSystem", "{} is still running during teardown; the result will be ignored so shutdown stays non-blocking", description);
+			}
+
+			task.reset();
 		}
 	}
 
@@ -130,23 +329,26 @@ namespace Bolt {
 		{
 			auto scriptsDir = std::filesystem::path(project->ScriptsDirectory);
 			auto csproj = std::filesystem::path(project->CsprojPath);
-			if (std::filesystem::exists(scriptsDir) && std::filesystem::exists(csproj))
+			if (std::filesystem::exists(csproj))
 			{
 				m_SandboxProjectPath = std::filesystem::canonical(csproj).string();
 				m_ScriptWatcher.Watch(
-					std::filesystem::canonical(scriptsDir).string(), ".cs",
+					BuildManagedWatchTargets(scriptsDir, csproj, std::filesystem::path(project->SlnPath)),
+					GetManagedWatchPatterns(),
 					[this]() { RebuildAndReloadScripts(); });
 			}
 		}
 		else
 		{
-			auto sandboxSourceDir = exeDir / ".." / ".." / ".." / "Bolt-Sandbox" / "Source";
-			auto sandboxCsproj = exeDir / ".." / ".." / ".." / "Bolt-Sandbox" / "Bolt-Sandbox.csproj";
-			if (std::filesystem::exists(sandboxSourceDir) && std::filesystem::exists(sandboxCsproj))
+			auto sandboxProjectDir = exeDir / ".." / ".." / ".." / "Bolt-Sandbox";
+			auto sandboxSourceDir = sandboxProjectDir / "Source";
+			auto sandboxCsproj = sandboxProjectDir / "Bolt-Sandbox.csproj";
+			if (std::filesystem::exists(sandboxCsproj))
 			{
 				m_SandboxProjectPath = std::filesystem::canonical(sandboxCsproj).string();
 				m_ScriptWatcher.Watch(
-					std::filesystem::canonical(sandboxSourceDir).string(), ".cs",
+					BuildManagedWatchTargets(sandboxSourceDir, sandboxCsproj),
+					GetManagedWatchPatterns(),
 					[this]() { RebuildAndReloadScripts(); });
 			}
 		}
@@ -163,11 +365,11 @@ namespace Bolt {
 			{
 				m_NativeHost.LoadDLL(m_NativeDLLPath);
 			}
-			auto nativeSourceDir = std::filesystem::path(project->NativeSourceDir);
-			if (std::filesystem::exists(nativeSourceDir))
+			if (!m_NativeProjectDirectory.empty())
 			{
 				m_NativeWatcher.Watch(
-					std::filesystem::canonical(nativeSourceDir).string(), ".cpp",
+					BuildNativeWatchTargets(std::filesystem::path(project->NativeScriptsDir), std::filesystem::path(project->NativeSourceDir)),
+					GetNativeWatchPatterns(),
 					[this]() { RebuildAndReloadNativeScripts(); });
 			}
 		}
@@ -183,11 +385,11 @@ namespace Bolt {
 			{
 				m_NativeHost.LoadDLL(m_NativeDLLPath);
 			}
-			auto nativeSourceDir = exeDir / ".." / ".." / ".." / "Bolt-NativeScripts" / "Source";
-			if (std::filesystem::exists(nativeSourceDir))
+			if (!m_NativeProjectDirectory.empty())
 			{
 				m_NativeWatcher.Watch(
-					std::filesystem::canonical(nativeSourceDir).string(), ".cpp",
+					BuildNativeWatchTargets(nativeProjectDir, nativeProjectDir / "Source"),
+					GetNativeWatchPatterns(),
 					[this]() { RebuildAndReloadNativeScripts(); });
 			}
 		}
@@ -199,22 +401,21 @@ namespace Bolt {
 
 	void ScriptSystem::RebuildAndReloadScripts()
 	{
-		if (m_IsRebuilding) return;
+		if (IsTaskRunning(m_RebuildTask)) {
+			return;
+		}
 
 		BT_INFO_TAG("ScriptSystem", "Rebuilding C# scripts...");
-		m_IsRebuilding = true;
-		m_RebuildStartTime = std::chrono::steady_clock::now();
-
 		const std::string sandboxProjectPath = m_SandboxProjectPath;
-		m_RebuildFuture = std::async(std::launch::async, [sandboxProjectPath]() {
+		m_RebuildTask = LaunchTask([sandboxProjectPath]() {
 			return Process::Run({
 				"dotnet",
 				"build",
 				sandboxProjectPath,
-				"-c", "Release",
+				"-c", BoltProject::GetActiveBuildConfiguration(),
 				"--nologo",
 				"-v", "q",
-				"-p:DefineConstants=BOLT_EDITOR%3BBT_RELEASE"
+				"-p:DefineConstants=" + BoltProject::BuildManagedDefineConstants("BOLT_EDITOR")
 			});
 		});
 	}
@@ -223,20 +424,14 @@ namespace Bolt {
 
 	void ScriptSystem::RebuildAndReloadNativeScripts()
 	{
-		if (m_IsRebuildingNative || m_NativeProjectDirectory.empty()) return;
+		if (IsTaskRunning(m_NativeRebuildTask) || m_NativeProjectDirectory.empty()) {
+			return;
+		}
 
 		BT_INFO_TAG("ScriptSystem", "Rebuilding native scripts...");
-		m_IsRebuildingNative = true;
-		m_NativeRebuildStartTime = std::chrono::steady_clock::now();
-
-		ForEachLoadedScene([this](Scene& loadedScene) { TeardownNativeScripts(loadedScene); });
-
-		// Unload after scene instances are unbound so no stale native pointers survive the frame.
-		m_NativeHost.UnloadDLL();
-
 		const std::string nativeProjectDirectory = m_NativeProjectDirectory;
 		const std::string buildConfig = GetActiveNativeBuildConfig();
-		m_NativeRebuildFuture = std::async(std::launch::async, [nativeProjectDirectory, buildConfig]() {
+		m_NativeRebuildTask = LaunchTask([nativeProjectDirectory, buildConfig]() {
 			const std::filesystem::path buildDirectory = std::filesystem::path(nativeProjectDirectory) / "build";
 
 			Process::Result configureResult = Process::Run({
@@ -276,13 +471,7 @@ namespace Bolt {
 		{
 			for (auto& instance : scriptComp.Scripts)
 			{
-				if (!instance.HasManagedInstance()) {
-					continue;
-				}
-
-				ScriptEngine::InvokeOnDestroy(instance.GetGCHandle());
-				ScriptEngine::DestroyScriptInstance(instance.GetGCHandle());
-				instance.Unbind();
+				TeardownManagedScriptInstance(scene, instance);
 			}
 		}
 	}
@@ -290,7 +479,6 @@ namespace Bolt {
 	void ScriptSystem::TeardownNativeScripts(Scene& scene)
 	{
 		ScriptEngine::SetScene(&scene);
-		const bool canDestroyNativeInstances = m_NativeHost.IsLoaded();
 
 		auto view = scene.GetRegistry().view<ScriptComponent>();
 		for (auto [entity, scriptComp] : view.each())
@@ -301,12 +489,54 @@ namespace Bolt {
 					continue;
 				}
 
-				if (canDestroyNativeInstances) {
-					m_NativeHost.DestroyInstance(instance.GetNativePtr());
-				}
-				instance.Unbind();
+				TeardownNativeScriptInstance(scene, instance, m_NativeHost);
 			}
 		}
+	}
+
+	bool ScriptSystem::RemoveScript(Entity entity, size_t index)
+	{
+		if (entity.GetScene() == nullptr) {
+			return false;
+		}
+
+		if (!entity.HasComponent<ScriptComponent>()) {
+			return false;
+		}
+
+		auto& scriptComp = entity.GetComponent<ScriptComponent>();
+		if (index >= scriptComp.Scripts.size()) {
+			return false;
+		}
+
+		ScriptInstance& instance = scriptComp.Scripts[index];
+		const std::string removedClassName = instance.GetClassName();
+
+		if (Scene* scene = entity.GetScene()) {
+			TeardownManagedScriptInstance(*scene, instance);
+			TeardownNativeScriptInstance(*scene, instance, m_NativeHost);
+		}
+		else {
+			instance.Unbind();
+		}
+
+		scriptComp.Scripts.erase(scriptComp.Scripts.begin() + static_cast<ptrdiff_t>(index));
+		RemovePendingFieldValuesForClass(scriptComp, removedClassName);
+		return true;
+	}
+
+	void ScriptSystem::RemoveAllScripts(Entity entity)
+	{
+		if (entity.GetScene() == nullptr || !entity.HasComponent<ScriptComponent>()) {
+			return;
+		}
+
+		auto& scriptComp = entity.GetComponent<ScriptComponent>();
+		for (size_t index = scriptComp.Scripts.size(); index > 0; --index) {
+			RemoveScript(entity, index - 1);
+		}
+
+		scriptComp.PendingFieldValues.clear();
 	}
 
 	void ScriptSystem::OnGui(Scene& scene)
@@ -328,65 +558,63 @@ namespace Bolt {
 		bool anyRebuilding = false;
 
 		// C# build completion check
-		if (m_IsRebuilding && m_RebuildFuture.valid())
+		Process::Result result;
+		if (TryTakeTaskResult(m_RebuildTask, result))
 		{
-			if (m_RebuildFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+			if (result.Succeeded())
 			{
-				Process::Result result = m_RebuildFuture.get();
-				m_IsRebuilding = false;
-
-				if (result.Succeeded())
-				{
-					ForEachLoadedScene([this](Scene& loadedScene) { TeardownManagedScripts(loadedScene); });
-					ScriptEngine::ReloadAssemblies();
-					BT_INFO_TAG("ScriptSystem", "C# scripts rebuilt and reloaded");
-				}
-				else
-				{
-					BT_ERROR_TAG("ScriptSystem", "C# build failed (exit code {})", result.ExitCode);
-					if (!result.Output.empty()) {
-						BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
-					}
+				ForEachLoadedScene([this](Scene& loadedScene) { TeardownManagedScripts(loadedScene); });
+				ScriptEngine::ReloadAssemblies();
+				BT_INFO_TAG("ScriptSystem", "C# scripts rebuilt and reloaded");
+			}
+			else
+			{
+				BT_ERROR_TAG("ScriptSystem", "C# build failed (exit code {})", result.ExitCode);
+				if (!result.Output.empty()) {
+					BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
 				}
 			}
 		}
 
 		// C++ build completion check
-		if (m_IsRebuildingNative && m_NativeRebuildFuture.valid())
+		if (TryTakeTaskResult(m_NativeRebuildTask, result))
 		{
-			if (m_NativeRebuildFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+			if (result.Succeeded())
 			{
-				Process::Result result = m_NativeRebuildFuture.get();
-				m_IsRebuildingNative = false;
+				const std::filesystem::path exeDir = std::filesystem::path(Path::ExecutableDir());
+				if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+					m_NativeDLLPath = ResolveProjectNativeDLLPath(*project).string();
+				}
+				else {
+					m_NativeDLLPath = ResolveStandaloneNativeDLLPath(exeDir).string();
+				}
 
-				if (result.Succeeded())
-				{
-					const std::filesystem::path exeDir = std::filesystem::path(Path::ExecutableDir());
-					if (BoltProject* project = ProjectManager::GetCurrentProject()) {
-						m_NativeDLLPath = ResolveProjectNativeDLLPath(*project).string();
-					}
-					else {
-						m_NativeDLLPath = ResolveStandaloneNativeDLLPath(exeDir).string();
-					}
+				if (!std::filesystem::exists(m_NativeDLLPath)) {
+					BT_ERROR_TAG("ScriptSystem", "Native scripts built, but DLL was not found at '{}'", m_NativeDLLPath);
+				}
+				else {
+					// Swap only after the replacement DLL exists so failed rebuilds keep the previous host alive.
+					ForEachLoadedScene([this](Scene& loadedScene) { TeardownNativeScripts(loadedScene); });
 
-					if (!std::filesystem::exists(m_NativeDLLPath) || !m_NativeHost.LoadDLL(m_NativeDLLPath)) {
+					if (!m_NativeHost.LoadDLL(m_NativeDLLPath)) {
 						BT_ERROR_TAG("ScriptSystem", "Native scripts built, but failed to load '{}'", m_NativeDLLPath);
+						BT_WARN_TAG("ScriptSystem", "Keeping the previous native script DLL loaded; instances will be recreated on the next update.");
 					}
 					else {
 						BT_INFO_TAG("ScriptSystem", "Native scripts rebuilt and reloaded");
 					}
 				}
-				else
-				{
-					BT_ERROR_TAG("ScriptSystem", "Native build failed (exit code {})", result.ExitCode);
-					if (!result.Output.empty()) {
-						BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
-					}
+			}
+			else
+			{
+				BT_ERROR_TAG("ScriptSystem", "Native build failed (exit code {})", result.ExitCode);
+				if (!result.Output.empty()) {
+					BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
 				}
 			}
 		}
 
-		anyRebuilding = m_IsRebuilding || m_IsRebuildingNative;
+		anyRebuilding = IsTaskRunning(m_RebuildTask) || IsTaskRunning(m_NativeRebuildTask);
 
 		// Build overlay
 		if (anyRebuilding)
@@ -404,10 +632,11 @@ namespace Bolt {
 				| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav;
 
 			ImGui::Begin("##ScriptBuildOverlay", nullptr, flags);
-			ImGui::TextUnformatted(m_IsRebuildingNative ? "Compiling Native Scripts..." : "Compiling Scripts...");
+			const bool nativeRebuildRunning = IsTaskRunning(m_NativeRebuildTask);
+			ImGui::TextUnformatted(nativeRebuildRunning ? "Compiling Native Scripts..." : "Compiling Scripts...");
 			ImGui::Spacing();
 
-			auto startTime = m_IsRebuildingNative ? m_NativeRebuildStartTime : m_RebuildStartTime;
+			const auto startTime = nativeRebuildRunning ? m_NativeRebuildTask->StartedAt : m_RebuildTask->StartedAt;
 			float elapsed = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
 			ImGui::ProgressBar(fmodf(elapsed * 0.4f, 1.0f), ImVec2(-1, 0), "");
 
@@ -419,10 +648,9 @@ namespace Bolt {
 
 	void ScriptSystem::Update(Scene& scene)
 	{
-		if (!ScriptEngine::IsInitialized()) return;
-
 		m_LastScene = &scene;
 		ScriptEngine::SetScene(&scene);
+		const bool managedRuntimeReady = ScriptEngine::IsInitialized();
 
 		float dt = Application::GetInstance() ? Application::GetInstance()->GetTime().GetDeltaTime() : 0.0f;
 
@@ -440,7 +668,7 @@ namespace Bolt {
 				if (!instance.HasAnyInstance())
 				{
 					// Try C# (managed) first
-					if (ScriptEngine::ClassExists(instance.GetClassName()))
+					if (managedRuntimeReady && ScriptEngine::ClassExists(instance.GetClassName()))
 					{
 						uint32_t handle = ScriptEngine::CreateScriptInstance(
 							instance.GetClassName(), entity);
@@ -448,7 +676,7 @@ namespace Bolt {
 							instance.SetGCHandle(handle);
 					}
 					// Then try native C++
-					else if (!m_IsRebuildingNative && m_NativeHost.IsLoaded())
+					else if (!IsTaskRunning(m_NativeRebuildTask) && m_NativeHost.IsLoaded())
 					{
 						NativeScript* native = m_NativeHost.CreateInstance(
 							instance.GetClassName(), entity, &scene);
@@ -482,6 +710,10 @@ namespace Bolt {
 				// Dispatch lifecycle based on script type
 				if (instance.GetType() == ScriptType::Managed)
 				{
+					if (!managedRuntimeReady || !instance.HasManagedInstance()) {
+						continue;
+					}
+
 					if (!instance.HasStarted())
 					{
 						instance.MarkStarted();
@@ -491,7 +723,7 @@ namespace Bolt {
 				}
 				else if (instance.GetType() == ScriptType::Native)
 				{
-					if (m_IsRebuildingNative || !instance.HasNativeInstance()) {
+					if (IsTaskRunning(m_NativeRebuildTask) || !instance.HasNativeInstance()) {
 						continue;
 					}
 
@@ -533,14 +765,8 @@ namespace Bolt {
 		m_ScriptWatcher.Stop();
 		m_NativeWatcher.Stop();
 
-		if (m_IsRebuilding && m_RebuildFuture.valid()) {
-			(void)m_RebuildFuture.get();
-			m_IsRebuilding = false;
-		}
-		if (m_IsRebuildingNative && m_NativeRebuildFuture.valid()) {
-			(void)m_NativeRebuildFuture.get();
-			m_IsRebuildingNative = false;
-		}
+		AbandonTask(m_RebuildTask, "Managed script rebuild");
+		AbandonTask(m_NativeRebuildTask, "Native script rebuild");
 
 		if (ScriptEngine::IsInitialized()) {
 			ScriptEngine::Shutdown();

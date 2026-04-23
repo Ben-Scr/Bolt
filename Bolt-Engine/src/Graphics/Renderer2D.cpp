@@ -26,6 +26,29 @@ namespace Bolt {
 			Scene* activeScene = app->GetSceneManager()->GetActiveScene();
 			return activeScene ? activeScene->GetMainCamera() : nullptr;
 		}
+
+		bool TextureHandleLess(const TextureHandle& a, const TextureHandle& b) {
+			if (a.index != b.index) {
+				return a.index < b.index;
+			}
+
+			return a.generation < b.generation;
+		}
+
+		TextureHandle ResolveRenderableTextureHandle(TextureHandle requestedTexture, TextureHandle fallbackTexture) {
+			if (TextureManager::IsValid(requestedTexture)) {
+				if (Texture2D* texture = TextureManager::GetTexture(requestedTexture); texture && texture->IsValid()) {
+					return requestedTexture;
+				}
+			}
+
+			return fallbackTexture;
+		}
+
+		Texture2D* ResolveRenderableTexture(TextureHandle requestedTexture, TextureHandle fallbackTexture, TextureHandle& resolvedHandle) {
+			resolvedHandle = ResolveRenderableTextureHandle(requestedTexture, fallbackTexture);
+			return TextureManager::GetTexture(resolvedHandle);
+		}
 	}
 
 	void Renderer2D::Initialize() {
@@ -44,6 +67,7 @@ namespace Bolt {
 		Timer timer = Timer();
 
 		if (m_SkipBeginFrameRender) {
+			m_DrawCallsCount = 0;
 			m_RenderLoopDuration = timer.ElapsedMilliseconds();
 			return;
 		}
@@ -64,8 +88,10 @@ namespace Bolt {
 			glClear(GL_COLOR_BUFFER_BIT);
 			if (m_IsInitialized && m_IsEnabled)
 				RenderScenes();
-			else
+			else {
 				m_RenderedInstancesCount = 0;
+				m_DrawCallsCount = 0;
+			}
 
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			glViewport(0, 0, savedW, savedH);
@@ -81,8 +107,10 @@ namespace Bolt {
 			glClear(GL_COLOR_BUFFER_BIT);
 			if (m_IsInitialized && m_IsEnabled)
 				RenderScenes();
-			else
+			else {
 				m_RenderedInstancesCount = 0;
+				m_DrawCallsCount = 0;
+			}
 		}
 
 		m_RenderLoopDuration = timer.ElapsedMilliseconds();
@@ -172,6 +200,9 @@ namespace Bolt {
 					return a.SortingLayer < b.SortingLayer;
 				if (a.SortingOrder != b.SortingOrder)
 					return a.SortingOrder < b.SortingOrder;
+				if (a.TextureHandle != b.TextureHandle) {
+					return TextureHandleLess(a.TextureHandle, b.TextureHandle);
+				}
 
 				return false;
 			});
@@ -179,24 +210,37 @@ namespace Bolt {
 		m_QuadMesh.Bind();
 		glActiveTexture(GL_TEXTURE0);
 
-		TextureHandle currentTexture{};
-		bool hasTextureBound = false;
+		const TextureHandle fallbackTexture = TextureManager::GetDefaultTexture(DefaultTexture::Square);
+		m_DrawCallsCount = 0;
 
-		for (const Instance44& instance : m_Instances) {
-			m_SpriteShader.SetSpritePosition(instance.Position);
-			m_SpriteShader.SetScale(instance.Scale);
-			m_SpriteShader.SetRotation(instance.Rotation);
-			m_SpriteShader.SetVertexColor(instance.Color);
+		for (size_t batchStart = 0; batchStart < m_Instances.size(); ) {
+			TextureHandle batchTextureHandle{};
+			Texture2D* batchTexture = ResolveRenderableTexture(
+				m_Instances[batchStart].TextureHandle,
+				fallbackTexture,
+				batchTextureHandle);
 
-			if (!hasTextureBound || !(instance.TextureHandle == currentTexture)) {
-				Texture2D* texture = TextureManager::GetTexture(instance.TextureHandle);
-				if (texture && texture->IsValid())
-					texture->Submit(0);
-				currentTexture = instance.TextureHandle;
-				hasTextureBound = true;
+			size_t batchEnd = batchStart + 1;
+			for (; batchEnd < m_Instances.size(); ++batchEnd) {
+				TextureHandle nextTextureHandle = ResolveRenderableTextureHandle(
+					m_Instances[batchEnd].TextureHandle,
+					fallbackTexture);
+				if (!(nextTextureHandle == batchTextureHandle)) {
+					break;
+				}
 			}
 
-			m_QuadMesh.Draw();
+			if (batchTexture && batchTexture->IsValid()) {
+				batchTexture->Submit(0);
+			}
+			else {
+				glBindTexture(GL_TEXTURE_2D, 0);
+			}
+
+			m_QuadMesh.UploadInstances(std::span<const Instance44>(m_Instances.data() + batchStart, batchEnd - batchStart));
+			m_QuadMesh.DrawInstanced(batchEnd - batchStart);
+			++m_DrawCallsCount;
+			batchStart = batchEnd;
 		}
 
 		m_QuadMesh.Unbind();
@@ -209,5 +253,6 @@ namespace Bolt {
 		m_SpriteShader.Shutdown();
 		m_Instances.clear();
 		m_Instances.shrink_to_fit();
+		m_DrawCallsCount = 0;
 	}
 }

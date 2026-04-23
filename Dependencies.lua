@@ -16,16 +16,20 @@ IncludeDir["DotNet"] = "External/dotnet"
 IncludeDir["BoltEngine"] = "Bolt-Engine/src"
 IncludeDir["BoltEngineLegacy"] = "Bolt-Engine/src"
 
+local isWindowsTarget = os.target() == "windows"
+
 Library = {}
 Library["GLFW"] = "glfw3.lib"
 Library["Box2D"] = "box2d.lib"
 Library["FreeType"] = "freetype.lib"
 Library["OpenGL"] = "%{cfg.system == 'windows' and 'opengl32.lib' or 'GL'}"
 Library["GDI32"] = "gdi32.lib"
-Library["NetHost"] = "nethost.lib"
+Library["NetHost"] = isWindowsTarget and "nethost.lib" or "nethost"
 
 LibDir = {}
-LibDir["DotNet"] = "External/dotnet/lib"
+if isWindowsTarget then
+    LibDir["DotNet"] = "External/dotnet/lib"
+end
 
 Dependency = {}
 Dependency["ImGui"] =
@@ -78,10 +82,7 @@ Dependency["EngineCore"] =
         "%{IncludeDir.DotNet}"
     },
 
-    LibDirs =
-    {
-        "%{LibDir.DotNet}"
-    },
+    LibDirs = {},
 
     DependsOn =
     {
@@ -123,10 +124,7 @@ Dependency["EditorRuntimeCommon"] =
         "%{IncludeDir.DotNet}"
     },
 
-    LibDirs =
-    {
-        "%{LibDir.DotNet}"
-    },
+    LibDirs = {},
 
     DependsOn =
     {
@@ -150,3 +148,8 @@ Dependency["EditorRuntimeCommon"] =
         "%{Library.NetHost}"
     }
 }
+
+if LibDir["DotNet"] then
+    table.insert(Dependency["EngineCore"].LibDirs, "%{LibDir.DotNet}")
+    table.insert(Dependency["EditorRuntimeCommon"].LibDirs, "%{LibDir.DotNet}")
+end

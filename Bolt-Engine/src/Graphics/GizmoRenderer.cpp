@@ -120,11 +120,15 @@ namespace Bolt {
 		m_GizmoIndices.clear();
 	}
 
-	void GizmoRenderer2D::Render() {
-		if (!m_IsInitialized || !Gizmo::s_IsEnabled)
-			return;
+	void GizmoRenderer2D::BuildGeometry(GizmoLayerMask layerMask) {
+		m_GizmoVertices.clear();
+		m_GizmoIndices.clear();
 
 		for (const auto& square : Gizmo::s_Squares) {
+			if (!HasAnyLayer(square.Layer, layerMask)) {
+				continue;
+			}
+
 			uint32_t color = square.Color.ABGR32();
 			uint16_t baseIndex = static_cast<uint16_t>(m_GizmoVertices.size());
 
@@ -135,7 +139,6 @@ namespace Bolt {
 					Vec2(-square.HalfExtents.x,  square.HalfExtents.y)
 			};
 
-			// To-Do: Better Optimization for non-rotated squares
 			for (int i = 0; i < 4; ++i) {
 				Vec2 rotated = Rotated(corners[i], square.Radiant);
 				Vec2 final = square.Center + rotated;
@@ -153,6 +156,10 @@ namespace Bolt {
 		}
 
 		for (const auto& line : Gizmo::s_Lines) {
+			if (!HasAnyLayer(line.Layer, layerMask)) {
+				continue;
+			}
+
 			uint32_t color = line.Color.ABGR32();
 			uint16_t baseIndex = static_cast<uint16_t>(m_GizmoVertices.size());
 
@@ -164,8 +171,10 @@ namespace Bolt {
 		}
 
 		for (const auto& circle : Gizmo::s_Circles) {
-			if (circle.Segments <= 0)
+			if (!HasAnyLayer(circle.Layer, layerMask) || circle.Segments <= 0) {
 				continue;
+			}
+
 			uint32_t color = circle.Color.ABGR32();
 			uint16_t baseIndex = static_cast<uint16_t>(m_GizmoVertices.size());
 
@@ -182,9 +191,14 @@ namespace Bolt {
 				m_GizmoIndices.push_back(baseIndex + static_cast<uint16_t>((i + 1) % circle.Segments));
 			}
 		}
+	}
 
+	void GizmoRenderer2D::Render(GizmoLayerMask layerMask) {
+		if (!m_IsInitialized || !Gizmo::s_IsEnabled)
+			return;
+
+		BuildGeometry(layerMask);
 		FlushGizmos();
-		Gizmo::Clear();
 	}
 
 	void GizmoRenderer2D::FlushGizmos() {
@@ -217,70 +231,12 @@ namespace Bolt {
 		glUseProgram(0);
 	}
 
-	void GizmoRenderer2D::RenderWithVP(const glm::mat4& vp) {
+	void GizmoRenderer2D::RenderWithVP(const glm::mat4& vp, GizmoLayerMask layerMask) {
 		if (!m_IsInitialized || !Gizmo::s_IsEnabled)
 			return;
 
-		for (const auto& square : Gizmo::s_Squares) {
-			uint32_t color = square.Color.ABGR32();
-			uint16_t baseIndex = static_cast<uint16_t>(m_GizmoVertices.size());
-
-			Vec2 corners[4] = {
-				Vec2(-square.HalfExtents.x, -square.HalfExtents.y),
-				Vec2(square.HalfExtents.x, -square.HalfExtents.y),
-				Vec2(square.HalfExtents.x,  square.HalfExtents.y),
-				Vec2(-square.HalfExtents.x,  square.HalfExtents.y)
-			};
-
-			for (int i = 0; i < 4; ++i) {
-				Vec2 rotated = Rotated(corners[i], square.Radiant);
-				Vec2 final = square.Center + rotated;
-				m_GizmoVertices.push_back({ final.x, final.y, 0.0f, color });
-			}
-
-			m_GizmoIndices.push_back(baseIndex + 0);
-			m_GizmoIndices.push_back(baseIndex + 1);
-			m_GizmoIndices.push_back(baseIndex + 1);
-			m_GizmoIndices.push_back(baseIndex + 2);
-			m_GizmoIndices.push_back(baseIndex + 2);
-			m_GizmoIndices.push_back(baseIndex + 3);
-			m_GizmoIndices.push_back(baseIndex + 3);
-			m_GizmoIndices.push_back(baseIndex + 0);
-		}
-
-		for (const auto& line : Gizmo::s_Lines) {
-			uint32_t color = line.Color.ABGR32();
-			uint16_t baseIndex = static_cast<uint16_t>(m_GizmoVertices.size());
-
-			m_GizmoVertices.push_back({ line.Start.x, line.Start.y, 0.0f, color });
-			m_GizmoVertices.push_back({ line.End.x, line.End.y, 0.0f, color });
-
-			m_GizmoIndices.push_back(baseIndex);
-			m_GizmoIndices.push_back(baseIndex + 1);
-		}
-
-		for (const auto& circle : Gizmo::s_Circles) {
-			if (circle.Segments <= 0)
-				continue;
-			uint32_t color = circle.Color.ABGR32();
-			uint16_t baseIndex = static_cast<uint16_t>(m_GizmoVertices.size());
-
-			float angleStep = TwoPi<float>() / static_cast<float>(circle.Segments);
-			for (int i = 0; i < circle.Segments; ++i) {
-				float angle = i * angleStep;
-				float x = circle.Center.x + circle.Radius * Cos(angle);
-				float y = circle.Center.y + circle.Radius * Sin(angle);
-				m_GizmoVertices.push_back({ x, y, 0.0f, color });
-			}
-
-			for (int i = 0; i < circle.Segments; ++i) {
-				m_GizmoIndices.push_back(baseIndex + i);
-				m_GizmoIndices.push_back(baseIndex + static_cast<uint16_t>((i + 1) % circle.Segments));
-			}
-		}
-
+		BuildGeometry(layerMask);
 		FlushGizmosWithVP(vp);
-		Gizmo::Clear();
 	}
 
 	void GizmoRenderer2D::FlushGizmosWithVP(const glm::mat4& vp) {
@@ -312,9 +268,9 @@ namespace Bolt {
 
 	void GizmoRenderer2D::EndFrame() {
 		if (Gizmo::GetShowInRuntime()) {
-			Render();
-		} else {
-			Gizmo::Clear();
+			Render(GizmoLayerMask::Shared);
 		}
+
+		Gizmo::Clear();
 	}
 }

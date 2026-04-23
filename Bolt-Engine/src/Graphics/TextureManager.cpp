@@ -4,6 +4,42 @@
 #include <Serialization/File.hpp>
 
 namespace Bolt {
+	namespace {
+		std::string NormalizeTexturePath(const std::filesystem::path& path) {
+			std::error_code ec;
+			std::filesystem::path normalized = std::filesystem::weakly_canonical(path, ec);
+			if (ec) {
+				normalized = path.lexically_normal();
+			}
+
+			return normalized.make_preferred().string();
+		}
+
+		std::string ResolveTexturePath(std::string_view rawPath, const std::string& rootPath) {
+			if (rawPath.empty()) {
+				return {};
+			}
+
+			const std::filesystem::path requestedPath(rawPath);
+			if (File::Exists(requestedPath.string())) {
+				return NormalizeTexturePath(requestedPath);
+			}
+
+			const std::filesystem::path enginePath = std::filesystem::path(rootPath) / requestedPath;
+			if (File::Exists(enginePath.string())) {
+				return NormalizeTexturePath(enginePath);
+			}
+
+			const std::filesystem::path userPath =
+				std::filesystem::path(Path::ExecutableDir()) / "Assets" / "Textures" / requestedPath;
+			if (File::Exists(userPath.string())) {
+				return NormalizeTexturePath(userPath);
+			}
+
+			return {};
+		}
+	}
+
 	std::array<std::string, 9> TextureManager::s_DefaultTextures = {
 		   "Default/Square.png",
 		   "Default/Pixel.png",
@@ -67,26 +103,13 @@ namespace Bolt {
 			return TextureHandle::Invalid();
 		}
 
-		// Accept path as-given first (absolute or already-correct relative)
-		std::string fullpath(path);
-		if (!File::Exists(fullpath)) {
-			// Fallback: try relative to engine assets root
-			std::string rootPath = Path::Combine(s_RootPath, path);
-			if (File::Exists(rootPath)) {
-				fullpath = rootPath;
-			} else {
-				// Fallback: try user project Assets/Textures
-				std::string userPath = Path::Combine(Path::ExecutableDir(), "Assets", "Textures", path);
-				if (File::Exists(userPath)) {
-					fullpath = userPath;
-				} else {
-					BT_CORE_ERROR("[{}] Texture '{}' not found", ErrorCodeToString(BoltErrorCode::FileNotFound), std::string(path));
-					return TextureHandle::Invalid();
-				}
-			}
+		const std::string fullpath = ResolveTexturePath(path, s_RootPath);
+		if (fullpath.empty()) {
+			BT_CORE_ERROR("[{}] Texture '{}' not found", ErrorCodeToString(BoltErrorCode::FileNotFound), std::string(path));
+			return TextureHandle::Invalid();
 		}
 
-		auto existingHandle = FindTextureByPath(fullpath);
+		auto existingHandle = FindTextureByPath(fullpath, filter, u, v);
 		if (existingHandle.index != k_InvalidIndex) {
 			return existingHandle;
 		}
@@ -108,6 +131,9 @@ namespace Bolt {
 			entry.Generation++;
 			entry.IsValid = true;
 			entry.Name = fullpath;
+			entry.SamplerFilter = filter;
+			entry.WrapU = u;
+			entry.WrapV = v;
 		}
 		else {
 			index = static_cast<uint16_t>(s_Textures.size());
@@ -123,6 +149,9 @@ namespace Bolt {
 			entry.Generation = 0;
 			entry.IsValid = true;
 			entry.Name = fullpath;
+			entry.SamplerFilter = filter;
+			entry.WrapU = u;
+			entry.WrapV = v;
 
 			s_Textures.push_back(std::move(entry));
 		}
@@ -156,7 +185,18 @@ namespace Bolt {
 			return TextureHandle::Invalid();
 		}
 
-		return TextureHandle(static_cast<uint16_t>(index), s_Textures[index].Generation);
+		if (index >= static_cast<int>(s_Textures.size())) {
+			BT_CORE_ERROR("[{}] Default texture '{}' is unavailable", ErrorCodeToString(BoltErrorCode::InvalidHandle), s_DefaultTextures[index]);
+			return TextureHandle::Invalid();
+		}
+
+		const TextureEntry& entry = s_Textures[index];
+		if (!entry.IsValid) {
+			BT_CORE_ERROR("[{}] Default texture '{}' failed to load", ErrorCodeToString(BoltErrorCode::LoadFailed), s_DefaultTextures[index]);
+			return TextureHandle::Invalid();
+		}
+
+		return TextureHandle(static_cast<uint16_t>(index), entry.Generation);
 	}
 
 	void TextureManager::UnloadTexture(TextureHandle handle) {
@@ -185,6 +225,9 @@ namespace Bolt {
 		entry.Texture.Destroy();
 		entry.IsValid = false;
 		entry.Name.clear();
+		entry.SamplerFilter = Filter::Point;
+		entry.WrapU = Wrap::Clamp;
+		entry.WrapV = Wrap::Clamp;
 		s_FreeIndices.push(handle.index);
 	}
 
@@ -265,8 +308,9 @@ namespace Bolt {
 		s_Textures.reserve(s_DefaultTextures.size() + 32);
 
 		for (const auto& texPath : s_DefaultTextures) {
+			const std::string resolvedPath = ResolveTexturePath(texPath, s_RootPath);
 			TextureEntry entry;
-			entry.Texture = Texture2D(Path::Combine(s_RootPath, texPath).c_str(), Filter::Point, Wrap::Clamp, Wrap::Clamp);
+			entry.Texture = Texture2D(resolvedPath.c_str(), Filter::Point, Wrap::Clamp, Wrap::Clamp);
 
 			if (!entry.Texture.IsValid()) {
 				BT_CORE_ERROR("[{}] Failed to load default texture at path: {}", ErrorCodeToString(BoltErrorCode::LoadFailed), texPath);
@@ -276,7 +320,10 @@ namespace Bolt {
 
 			entry.Generation = 0;
 			entry.IsValid = true;
-			entry.Name = texPath;
+			entry.Name = resolvedPath;
+			entry.SamplerFilter = Filter::Point;
+			entry.WrapU = Wrap::Clamp;
+			entry.WrapV = Wrap::Clamp;
 
 			s_Textures.push_back(std::move(entry));
 		}
@@ -294,6 +341,9 @@ namespace Bolt {
 				s_Textures[i].Texture.Destroy();
 				s_Textures[i].IsValid = false;
 				s_Textures[i].Name.clear();
+				s_Textures[i].SamplerFilter = Filter::Point;
+				s_Textures[i].WrapU = Wrap::Clamp;
+				s_Textures[i].WrapV = Wrap::Clamp;
 				if (i >= s_DefaultTextures.size()) {
 					s_FreeIndices.push(static_cast<uint16_t>(i));
 				}
@@ -308,14 +358,39 @@ namespace Bolt {
 		}
 	}
 
+	TextureHandle TextureManager::FindTextureByPath(const std::string& path, Filter filter, Wrap u, Wrap v) {
+		if (!s_IsInitialized) {
+			return TextureHandle::Invalid();
+		}
+
+		const std::string normalizedPath = ResolveTexturePath(path, s_RootPath);
+		const std::string& lookupPath = normalizedPath.empty() ? path : normalizedPath;
+
+		for (size_t i = 0; i < s_Textures.size(); i++) {
+			const TextureEntry& entry = s_Textures[i];
+			if (entry.IsValid
+				&& entry.Name == lookupPath
+				&& entry.SamplerFilter == filter
+				&& entry.WrapU == u
+				&& entry.WrapV == v) {
+				return TextureHandle(static_cast<uint16_t>(i), entry.Generation);
+			}
+		}
+
+		return { k_InvalidIndex, 0 };
+	}
+
 	TextureHandle TextureManager::FindTextureByPath(const std::string& path) {
 		if (!s_IsInitialized) {
 			return TextureHandle::Invalid();
 		}
 
+		const std::string normalizedPath = ResolveTexturePath(path, s_RootPath);
+		const std::string& lookupPath = normalizedPath.empty() ? path : normalizedPath;
+
 		for (size_t i = 0; i < s_Textures.size(); i++) {
 			const TextureEntry& entry = s_Textures[i];
-			if (entry.IsValid && entry.Name == path) {
+			if (entry.IsValid && entry.Name == lookupPath) {
 				return TextureHandle(static_cast<uint16_t>(i), entry.Generation);
 			}
 		}

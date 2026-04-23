@@ -21,8 +21,7 @@ project "Bolt-Runtime"
 
     postbuildcommands
     {
-        CopyBoltAssets,
-        '{COPYFILE} "%{wks.location}External/dotnet/lib/nethost.dll" "%{cfg.targetdir}/nethost.dll"'
+        CopyBoltAssets
     }
 
     filter "system:windows"
@@ -30,6 +29,9 @@ project "Bolt-Runtime"
         systemversion "latest"
         links { "%{Library.GDI32}" }
         defines { "BT_PLATFORM_WINDOWS" }
+        postbuildcommands {
+            '{COPYFILE} "' .. path.join(ROOT_DIR, "External/dotnet/lib/nethost.dll") .. '" "%{cfg.targetdir}/nethost.dll"'
+        }
 
     filter "system:linux"
         defines { "BT_PLATFORM_LINUX" }
@@ -49,4 +51,4 @@ project "Bolt-Runtime"
         runtime "Release"
         optimize "Full"
         symbols "Off"
-        defines { "BT_RELEASE", "NDEBUG" }
+        defines { "BT_DIST", "NDEBUG" }

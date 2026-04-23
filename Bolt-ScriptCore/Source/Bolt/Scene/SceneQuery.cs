@@ -7,10 +7,26 @@ namespace Bolt
 {
     public class Scene
     {
-        public string Name { get; internal set; } = "";
-        public bool IsLoaded => false;
+        private delegate int QueryExecutor(Span<ulong> buffer);
 
-        private const int MaxQueryResults = 4096;
+        public string Name { get; internal set; } = "";
+        public bool IsLoaded
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(Name))
+                    return false;
+
+                int count = InternalCalls.Scene_GetLoadedCount();
+                for (int i = 0; i < count; i++)
+                {
+                    if (string.Equals(InternalCalls.Scene_GetLoadedSceneNameAt(i), Name, StringComparison.Ordinal))
+                        return true;
+                }
+
+                return false;
+            }
+        }
 
         // ── Query entry points (1-4 type params) ───────────────────
 
@@ -48,13 +64,7 @@ namespace Bolt
 
         internal static ulong[] ExecuteQuery(string queryString)
         {
-            Span<ulong> buffer = stackalloc ulong[MaxQueryResults];
-            int count = InternalCalls.Scene_QueryEntities(queryString, buffer);
-            if (count <= 0) return Array.Empty<ulong>();
-            int resultCount = Math.Min(count, MaxQueryResults);
-            ulong[] result = new ulong[resultCount];
-            buffer.Slice(0, resultCount).CopyTo(result);
-            return result;
+            return ExecuteQueryWithRetry(buffer => InternalCalls.Scene_QueryEntities(queryString, buffer));
         }
 
 
@@ -62,15 +72,74 @@ namespace Bolt
             string withComponents, string withoutComponents,
             string mustHaveComponents, int enableFilter)
         {
-            Span<ulong> buffer = stackalloc ulong[MaxQueryResults];
-            int count = InternalCalls.Scene_QueryEntitiesFiltered(
+            return ExecuteQueryWithRetry(buffer => InternalCalls.Scene_QueryEntitiesFiltered(
                 withComponents, withoutComponents, mustHaveComponents,
-                enableFilter, buffer);
-            if (count <= 0) return Array.Empty<ulong>();
-            int resultCount = Math.Min(count, MaxQueryResults);
-            ulong[] result = new ulong[resultCount];
-            buffer.Slice(0, resultCount).CopyTo(result);
-            return result;
+                enableFilter, buffer));
+        }
+
+        private static ulong[] ExecuteQueryWithRetry(QueryExecutor nativeQuery)
+        {
+            int capacity = Math.Max(64, InternalCalls.Scene_GetEntityCount());
+            ulong[] buffer = new ulong[capacity];
+
+            while (true)
+            {
+                int count = nativeQuery(buffer);
+                if (count <= 0)
+                    return Array.Empty<ulong>();
+
+                if (count <= buffer.Length)
+                {
+                    if (count == buffer.Length)
+                        return buffer;
+
+                    ulong[] result = new ulong[count];
+                    Array.Copy(buffer, result, count);
+                    return result;
+                }
+
+                buffer = new ulong[count];
+            }
+        }
+
+        internal static bool TryGetComponents<T1>(Entity entity, out T1? c1)
+            where T1 : Component, new()
+        {
+            c1 = entity.GetComponent<T1>();
+            return c1 != null;
+        }
+
+        internal static bool TryGetComponents<T1, T2>(Entity entity, out T1? c1, out T2? c2)
+            where T1 : Component, new()
+            where T2 : Component, new()
+        {
+            c1 = entity.GetComponent<T1>();
+            c2 = entity.GetComponent<T2>();
+            return c1 != null && c2 != null;
+        }
+
+        internal static bool TryGetComponents<T1, T2, T3>(Entity entity, out T1? c1, out T2? c2, out T3? c3)
+            where T1 : Component, new()
+            where T2 : Component, new()
+            where T3 : Component, new()
+        {
+            c1 = entity.GetComponent<T1>();
+            c2 = entity.GetComponent<T2>();
+            c3 = entity.GetComponent<T3>();
+            return c1 != null && c2 != null && c3 != null;
+        }
+
+        internal static bool TryGetComponents<T1, T2, T3, T4>(Entity entity, out T1? c1, out T2? c2, out T3? c3, out T4? c4)
+            where T1 : Component, new()
+            where T2 : Component, new()
+            where T3 : Component, new()
+            where T4 : Component, new()
+        {
+            c1 = entity.GetComponent<T1>();
+            c2 = entity.GetComponent<T2>();
+            c3 = entity.GetComponent<T3>();
+            c4 = entity.GetComponent<T4>();
+            return c1 != null && c2 != null && c3 != null && c4 != null;
         }
 
         internal static string BuildQueryString(params string?[] names)
@@ -185,7 +254,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return entity.GetComponent<T1>()!;
+                if (!Scene.TryGetComponents(entity, out T1? c1)) continue;
+                yield return c1!;
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -203,7 +273,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return (entity, entity.GetComponent<T1>()!);
+                if (!Scene.TryGetComponents(entity, out T1? c1)) continue;
+                yield return (entity, c1!);
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -260,7 +331,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return (entity.GetComponent<T1>()!, entity.GetComponent<T2>()!);
+                if (!Scene.TryGetComponents(entity, out T1? c1, out T2? c2)) continue;
+                yield return (c1!, c2!);
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -279,7 +351,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return (entity, entity.GetComponent<T1>()!, entity.GetComponent<T2>()!);
+                if (!Scene.TryGetComponents(entity, out T1? c1, out T2? c2)) continue;
+                yield return (entity, c1!, c2!);
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -337,7 +410,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return (entity.GetComponent<T1>()!, entity.GetComponent<T2>()!, entity.GetComponent<T3>()!);
+                if (!Scene.TryGetComponents(entity, out T1? c1, out T2? c2, out T3? c3)) continue;
+                yield return (c1!, c2!, c3!);
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -357,7 +431,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return (entity, entity.GetComponent<T1>()!, entity.GetComponent<T2>()!, entity.GetComponent<T3>()!);
+                if (!Scene.TryGetComponents(entity, out T1? c1, out T2? c2, out T3? c3)) continue;
+                yield return (entity, c1!, c2!, c3!);
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -417,7 +492,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return (entity.GetComponent<T1>()!, entity.GetComponent<T2>()!, entity.GetComponent<T3>()!, entity.GetComponent<T4>()!);
+                if (!Scene.TryGetComponents(entity, out T1? c1, out T2? c2, out T3? c3, out T4? c4)) continue;
+                yield return (c1!, c2!, c3!, c4!);
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -438,7 +514,8 @@ namespace Bolt
             {
                 var entity = new Entity(id);
                 if (!_filter.PassesConditions(entity)) continue;
-                yield return (entity, entity.GetComponent<T1>()!, entity.GetComponent<T2>()!, entity.GetComponent<T3>()!, entity.GetComponent<T4>()!);
+                if (!Scene.TryGetComponents(entity, out T1? c1, out T2? c2, out T3? c3, out T4? c4)) continue;
+                yield return (entity, c1!, c2!, c3!, c4!);
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();

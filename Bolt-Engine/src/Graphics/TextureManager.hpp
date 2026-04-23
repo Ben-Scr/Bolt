@@ -70,9 +70,10 @@ namespace Bolt {
                     s_Textures[handle.index].Generation == handle.generation;
             }
 
-        private:
-            static TextureHandle FindTextureByPath(const std::string& path);
-            static void LoadDefaultTextures();
+		private:
+			static TextureHandle FindTextureByPath(const std::string& path, Filter filter, Wrap u, Wrap v);
+			static TextureHandle FindTextureByPath(const std::string& path);
+			static void LoadDefaultTextures();
 
             static std::array<std::string, 9> s_DefaultTextures;
             static std::vector<TextureEntry> s_Textures;

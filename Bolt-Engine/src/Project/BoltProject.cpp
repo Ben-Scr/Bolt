@@ -7,6 +7,7 @@
 #include "Core/Log.hpp"
 #include "Core/Version.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <ctime>
@@ -16,6 +17,12 @@
 
 namespace Bolt {
 	namespace {
+		void ReportCreateProgress(const BoltProject::CreateProgressCallback& callback, float progress, std::string_view stage) {
+			if (callback) {
+				callback(progress, stage);
+			}
+		}
+
 		bool ToLocalTime(std::time_t value, std::tm& outTime) {
 #if defined(_WIN32)
 			return localtime_s(&outTime, &value) == 0;
@@ -109,6 +116,80 @@ namespace Bolt {
 			return {};
 #endif
 		}
+
+		std::vector<std::string> GetPreferredBuildConfigurations() {
+			std::vector<std::string> configurations;
+			configurations.reserve(3);
+
+			auto appendUnique = [&configurations](std::string value) {
+				if (value.empty()) {
+					return;
+				}
+
+				if (std::find(configurations.begin(), configurations.end(), value) == configurations.end()) {
+					configurations.push_back(std::move(value));
+				}
+			};
+
+			appendUnique(BoltProject::GetActiveBuildConfiguration());
+			appendUnique("Release");
+			appendUnique("Debug");
+			appendUnique("Dist");
+			return configurations;
+		}
+
+		std::vector<std::filesystem::path> BuildScriptCoreArtifactDirectories(const std::filesystem::path& engineRoot) {
+			std::vector<std::filesystem::path> directories;
+			if (engineRoot.empty()) {
+				return directories;
+			}
+
+			auto appendUnique = [&directories](std::filesystem::path path) {
+				if (path.empty()) {
+					return;
+				}
+
+				std::error_code ec;
+				const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, ec);
+				const std::filesystem::path key = ec ? path.lexically_normal() : normalized;
+				if (std::find(directories.begin(), directories.end(), key) == directories.end()) {
+					directories.push_back(key);
+				}
+			};
+
+			const std::string platformDirectory = GetNativeBuildPlatformDirectory();
+			const auto preferredConfigurations = GetPreferredBuildConfigurations();
+			for (const std::string& config : preferredConfigurations) {
+				if (!platformDirectory.empty()) {
+					appendUnique(engineRoot / "bin" / (config + "-" + platformDirectory) / "Bolt-ScriptCore");
+				}
+			}
+
+			const std::filesystem::path binDirectory = engineRoot / "bin";
+			std::error_code ec;
+			if (std::filesystem::exists(binDirectory, ec) && std::filesystem::is_directory(binDirectory, ec)) {
+				for (const auto& entry : std::filesystem::directory_iterator(binDirectory, ec)) {
+					if (ec || !entry.is_directory()) {
+						continue;
+					}
+
+					appendUnique(entry.path() / "Bolt-ScriptCore");
+				}
+			}
+
+			return directories;
+		}
+
+		std::filesystem::path FindScriptCoreArtifact(const std::filesystem::path& engineRoot, const std::string& filename) {
+			for (const auto& directory : BuildScriptCoreArtifactDirectories(engineRoot)) {
+				const std::filesystem::path candidate = directory / filename;
+				if (std::filesystem::exists(candidate)) {
+					return candidate;
+				}
+			}
+
+			return {};
+		}
 	}
 
 	static std::string GenerateGUID() {
@@ -173,8 +254,44 @@ namespace Bolt {
 		return root;
 	}
 
-	std::string BoltProject::GetUserAssemblyOutputPath() const {
-		return Path::Combine(RootDirectory, "bin", "Release", Name + ".dll");
+	std::string BoltProject::GetUserAssemblyOutputPath(std::string_view configuration) const {
+		const std::string resolvedConfiguration = configuration.empty()
+			? GetActiveBuildConfiguration()
+			: std::string(configuration);
+		return Path::Combine(RootDirectory, "bin", resolvedConfiguration, Name + ".dll");
+	}
+
+	std::string BoltProject::GetActiveBuildConfiguration() {
+		return BT_BUILD_CONFIG_NAME;
+	}
+
+	std::string BoltProject::GetActiveBuildDefineConstant() {
+#if defined(BT_DEBUG)
+		return "BT_DEBUG";
+#elif defined(BT_RELEASE)
+		return "BT_RELEASE";
+#elif defined(BT_DIST)
+		return "BT_DIST";
+#else
+		return {};
+#endif
+	}
+
+	std::string BoltProject::BuildManagedDefineConstants(std::string_view primarySymbol) {
+		std::string defineConstants;
+		if (!primarySymbol.empty()) {
+			defineConstants.assign(primarySymbol);
+		}
+
+		const std::string buildDefine = GetActiveBuildDefineConstant();
+		if (!buildDefine.empty()) {
+			if (!defineConstants.empty()) {
+				defineConstants += "%3B";
+			}
+			defineConstants += buildDefine;
+		}
+
+		return defineConstants;
 	}
 
 	std::string BoltProject::GetNativeDllPath() const {
@@ -314,8 +431,8 @@ namespace Bolt {
 	void ConfigurePackages(const BoltProject& project) {
 
 		const std::filesystem::path engineRoot = ResolveEngineRoot();
-		const std::filesystem::path scriptCoreOutput = engineRoot / "bin" / "Release-windows-x86_64" / "Bolt-ScriptCore" / "Bolt-ScriptCore.dll";
-		const std::filesystem::path scriptCorePdb = engineRoot / "bin" / "Release-windows-x86_64" / "Bolt-ScriptCore" / "Bolt-ScriptCore.pdb";
+		const std::filesystem::path scriptCoreOutput = FindScriptCoreArtifact(engineRoot, "Bolt-ScriptCore.dll");
+		const std::filesystem::path scriptCorePdb = FindScriptCoreArtifact(engineRoot, "Bolt-ScriptCore.pdb");
 
 		std::filesystem::path packageDir = std::filesystem::path(project.PackagesDirectory) / "Bolt-ScriptCore";
 		std::filesystem::create_directories(packageDir);
@@ -327,18 +444,22 @@ namespace Bolt {
 			std::filesystem::copy_file(scriptCorePdb, packageDir / "Bolt-ScriptCore.pdb", std::filesystem::copy_options::overwrite_existing);
 	}
 
-	BoltProject BoltProject::Create(const std::string& name, const std::string& parentDir) {
+	BoltProject BoltProject::Create(const std::string& name, const std::string& parentDir,
+		const CreateProgressCallback& progressCallback) {
 		BoltProject project;
 		project.Name = name;
 		project.RootDirectory = Path::Combine(parentDir, name);
 		project.EngineVersion = BT_VERSION;
 		ResolvePaths(project);
 
+		ReportCreateProgress(progressCallback, 0.08f, "Creating project folders...");
 		CreateDirectoryTree(project);
+		ReportCreateProgress(progressCallback, 0.18f, "Configuring engine packages...");
 		ConfigurePackages(project);
 
 		std::string engineAssets = Path::ResolveBoltAssets("");
 		if (!engineAssets.empty() && Directory::Exists(engineAssets)) {
+			ReportCreateProgress(progressCallback, 0.34f, "Copying Bolt assets...");
 			try {
 				std::filesystem::copy(engineAssets, project.BoltAssetsDirectory,
 					std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing);
@@ -352,6 +473,7 @@ namespace Bolt {
 
 		// Write bolt-project.json
 		{
+			ReportCreateProgress(progressCallback, 0.48f, "Writing project configuration...");
 			Json::Value root = BuildProjectJson(project);
 			root.AddMember("createdAt", NowISO8601());
 			File::WriteAllText(project.ProjectFilePath, Json::Stringify(root, true));
@@ -359,6 +481,7 @@ namespace Bolt {
 
 		// Generate starter scene
 		{
+			ReportCreateProgress(progressCallback, 0.56f, "Generating starter scene...");
 			Json::Value sceneRoot = Json::Value::MakeObject();
 			sceneRoot.AddMember("version", 1);
 			sceneRoot.AddMember("name", project.StartupScene);
@@ -403,10 +526,12 @@ namespace Bolt {
 			}
 		}
 
+		ReportCreateProgress(progressCallback, 0.66f, "Generating C# project files...");
 		std::string csproj = R"CS(<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <TargetFramework>net9.0</TargetFramework>
+    <Configurations>Debug;Release;Dist</Configurations>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -422,6 +547,11 @@ namespace Bolt {
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <OutputPath>bin\Release\</OutputPath>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Dist'">
+    <OutputPath>bin\Dist\</OutputPath>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
@@ -443,6 +573,7 @@ namespace Bolt {
 		// Generate .sln — only the user project is visible.
 		// Bolt-ScriptCore is linked via DLL reference in the .csproj,
 		// so it does not need a project entry here.
+		ReportCreateProgress(progressCallback, 0.72f, "Generating solution and starter scripts...");
 		std::string projGuid = GenerateGUID();
 
 		std::string sln = R"(
@@ -454,12 +585,15 @@ Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
+		Dist|Any CPU = Dist|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{)" + projGuid + R"(}.Debug|Any CPU.ActiveCfg = Debug|AnyCPU
 		{)" + projGuid + R"(}.Debug|Any CPU.Build.0 = Debug|AnyCPU
 		{)" + projGuid + R"(}.Release|Any CPU.ActiveCfg = Release|AnyCPU
 		{)" + projGuid + R"(}.Release|Any CPU.Build.0 = Release|AnyCPU
+		{)" + projGuid + R"(}.Dist|Any CPU.ActiveCfg = Dist|AnyCPU
+		{)" + projGuid + R"(}.Dist|Any CPU.Build.0 = Dist|AnyCPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -566,6 +700,7 @@ endforeach()
 		File::WriteAllText(Path::Combine(project.RootDirectory, ".gitignore"),
 			"bin/\nobj/\n.vs/\n*.user\nNativeScripts/build/\nPackages/\n");
 
+		ReportCreateProgress(progressCallback, 0.82f, "Project files ready.");
 		BT_INFO_TAG("BoltProject", "Created project: {} at {}", name, project.RootDirectory);
 		return project;
 	}

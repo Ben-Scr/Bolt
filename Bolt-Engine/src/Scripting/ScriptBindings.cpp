@@ -214,10 +214,23 @@ namespace Bolt {
 		s_StringReturnBuffer = scene->GetName();
 		return s_StringReturnBuffer.c_str();
 	}
+
+	static int CountSceneEntities(const Scene& scene) {
+		int count = 0;
+		auto view = scene.GetRegistry().view<entt::entity>();
+		for (EntityHandle entityHandle : view) {
+			if (scene.GetRegistry().valid(entityHandle)) {
+				++count;
+			}
+		}
+
+		return count;
+	}
+
 	static int Bolt_Scene_GetEntityCount() {
 		Scene* scene = GetScene();
 		if (!scene) return 0;
-		return static_cast<int>(scene->GetRegistry().view<NameComponent>().size());
+		return CountSceneEntities(*scene);
 	}
 
 	static const char* Bolt_Scene_GetEntityNameByUUID(uint64_t uuid) {
@@ -237,9 +250,19 @@ namespace Bolt {
 	static int LoadSceneByName(const char* sceneName, bool additive) {
 		auto& sm = SceneManager::Get();
 		std::string name(sceneName);
+		BoltProject* project = ProjectManager::GetCurrentProject();
+		const bool hasDefinition = sm.HasSceneDefinition(name);
 
-		if (!sm.HasSceneDefinition(name)) {
-			sm.RegisterScene(name);
+		if (!hasDefinition) {
+			auto& definition = sm.RegisterScene(name);
+			if (project) {
+				const std::string scenePath = project->GetSceneFilePath(name);
+				definition.OnLoad([scenePath](Scene& scene) {
+					if (File::Exists(scenePath)) {
+						SceneSerializer::LoadFromFile(scene, scenePath);
+					}
+				});
+			}
 		}
 
 		auto sceneWeak = additive ? sm.LoadSceneAdditive(name) : sm.LoadScene(name);
@@ -247,14 +270,6 @@ namespace Bolt {
 		if (!scenePtr) {
 			BT_CORE_ERROR_TAG("ScriptBindings", "Failed to load scene{}: {}", additive ? " additively" : "", name);
 			return 0;
-		}
-
-		BoltProject* project = ProjectManager::GetCurrentProject();
-		if (project) {
-			std::string scenePath = project->GetSceneFilePath(name);
-			if (File::Exists(scenePath)) {
-				SceneSerializer::LoadFromFile(*scenePtr, scenePath);
-			}
 		}
 
 		BT_INFO_TAG("ScriptBindings", "Loaded scene{}: {}", additive ? " additively" : "", name);
@@ -320,8 +335,10 @@ namespace Bolt {
 
 		int count = 0;
 		auto& registry = scene->GetRegistry();
-		auto view = registry.view<NameComponent>();
-		for (auto [entityHandle, nameComp] : view.each()) {
+		auto view = registry.view<entt::entity>();
+		for (EntityHandle entityHandle : view) {
+			if (!registry.valid(entityHandle)) continue;
+
 			Entity entity = scene->GetEntity(entityHandle);
 			bool match = true;
 			for (auto* info : infos) {

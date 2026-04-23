@@ -27,7 +27,7 @@ require("premake/fix_csharp_platforms")
 include "Dependencies.lua"
 
 -- Shared postbuild command: copy BoltAssets into each target output directory.
-CopyBoltAssets = '{COPYDIR} "%{wks.location}Bolt-Runtime/BoltAssets" "%{cfg.targetdir}/BoltAssets"'
+CopyBoltAssets = '{COPYDIR} "' .. path.join(ROOT_DIR, "Bolt-Runtime/BoltAssets") .. '" "%{cfg.targetdir}/BoltAssets"'
 
 local function NormalizeRootPath(pathValue)
     if path.isabsolute(pathValue) then

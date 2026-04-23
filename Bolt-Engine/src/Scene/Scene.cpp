@@ -20,6 +20,12 @@
 #include "Components/Graphics/Camera2DComponent.hpp"
 #include "Components/General/UUIDComponent.hpp"
 #include "Core/Application.hpp"
+#include "Scripting/ScriptComponent.hpp"
+#include "Scripting/ScriptSystem.hpp"
+
+#include <exception>
+#include <limits>
+#include <typeinfo>
 
 namespace Bolt {
 	Entity Scene::CreateEntity() {
@@ -128,28 +134,104 @@ namespace Bolt {
 		return m_EntitiesBeingDestroyed.contains(static_cast<uint32_t>(entity));
 	}
 
-	void Scene::AwakeSystems() {
-		ForeachEnabledSystem([this](ISystem& s) { s.Awake(*this); });
+	void Scene::RunLifecycleSystems(const std::function<void(ISystem&)>& func, size_t* enteredSystemCount) {
+		for (const auto& systemPointer : m_Systems) {
+			ISystem& system = *systemPointer;
+			if (!system.IsEnabled()) {
+				continue;
+			}
+
+			if (enteredSystemCount) {
+				++(*enteredSystemCount);
+			}
+
+			func(system);
+		}
 	}
 
-	void Scene::StartSystems() {
-		ForeachEnabledSystem([this](ISystem& s) { s.Start(*this); });
+	void Scene::AwakeSystems(size_t* enteredSystemCount) {
+		RunLifecycleSystems([this](ISystem& s) { s.Awake(*this); }, enteredSystemCount);
+	}
+
+	void Scene::StartSystems(size_t* enteredSystemCount) {
+		RunLifecycleSystems([this](ISystem& s) { s.Start(*this); }, enteredSystemCount);
 	}
 
 	void Scene::UpdateSystems() {
-		ForeachEnabledSystem([this](ISystem& s) { s.Update(*this); });
+		ForeachEnabledSystem("Update", [this](ISystem& s) { s.Update(*this); });
 	}
 
 	void Scene::FixedUpdateSystems() {
-		ForeachEnabledSystem([this](ISystem& s) { s.FixedUpdate(*this); });
+		ForeachEnabledSystem("FixedUpdate", [this](ISystem& s) { s.FixedUpdate(*this); });
 	}
 
 	void Scene::OnGuiSystems() {
-		ForeachEnabledSystem([this](ISystem& s) { s.OnGui(*this); });
+		ForeachEnabledSystem("OnGui", [this](ISystem& s) { s.OnGui(*this); });
+	}
+
+	void Scene::ForeachEnabledSystem(std::string_view phase, const std::function<void(ISystem&)>& func) {
+		for (size_t i = 0; i < m_Systems.size(); ++i) {
+			ISystem& system = *m_Systems[i];
+			if (!system.IsEnabled()) {
+				continue;
+			}
+
+			try {
+				func(system);
+			}
+			catch (const std::exception& e) {
+				BT_CORE_ERROR_TAG("Scene", "{} failed in '{}': {}", typeid(system).name(), phase, e.what());
+				throw;
+			}
+			catch (...) {
+				BT_CORE_ERROR_TAG("Scene", "{} failed in '{}' with an unknown exception", typeid(system).name(), phase);
+				throw;
+			}
+		}
 	}
 
 	void Scene::DestroyScene() {
-		ForeachEnabledSystem([this](ISystem& s) { s.OnDestroy(*this); });
+		DestroyScene(std::numeric_limits<size_t>::max());
+	}
+
+	void Scene::DestroyScene(size_t enabledSystemCount) {
+		std::vector<ISystem*> systemsToDestroy;
+		systemsToDestroy.reserve(m_Systems.size());
+
+		for (const auto& systemPointer : m_Systems) {
+			ISystem& system = *systemPointer;
+			if (!system.IsEnabled()) {
+				continue;
+			}
+
+			systemsToDestroy.push_back(&system);
+			if (systemsToDestroy.size() >= enabledSystemCount) {
+				break;
+			}
+		}
+
+		std::exception_ptr firstFailure;
+		for (auto it = systemsToDestroy.rbegin(); it != systemsToDestroy.rend(); ++it) {
+			try {
+				(*it)->OnDestroy(*this);
+			}
+			catch (const std::exception& e) {
+				BT_CORE_ERROR_TAG("Scene", "System error during destroy: {}", e.what());
+				if (!firstFailure) {
+					firstFailure = std::current_exception();
+				}
+			}
+			catch (...) {
+				BT_CORE_ERROR_TAG("Scene", "Unknown system error during destroy");
+				if (!firstFailure) {
+					firstFailure = std::current_exception();
+				}
+			}
+		}
+
+		if (firstFailure) {
+			std::rethrow_exception(firstFailure);
+		}
 	}
 
 	Scene::Scene(const std::string& name, const SceneDefinition* definition, bool IsPersistent)
@@ -167,6 +249,7 @@ namespace Bolt {
 		m_Registry.on_destroy<Rigidbody2DComponent>().connect<&Scene::OnRigidBody2DComponentDestroy>(this);
 		m_Registry.on_destroy<BoxCollider2DComponent>().connect<&Scene::OnBoxCollider2DComponentDestroy>(this);
 		m_Registry.on_destroy<AudioSourceComponent>().connect<&Scene::OnAudioSourceComponentDestroy>(this);
+		m_Registry.on_destroy<ScriptComponent>().connect<&Scene::OnScriptComponentDestroy>(this);
 		m_Registry.on_destroy<Camera2DComponent>().connect<&Scene::OnCamera2DComponentDestruct>(this);
 		m_Registry.on_destroy<ParticleSystem2DComponent>().connect<&Scene::OnParticleSystem2DComponentDestruct>(this);
 		m_Registry.on_destroy<DisabledTag>().connect<&Scene::OnDisabledTagDestroy>(this);
@@ -257,8 +340,19 @@ namespace Bolt {
 		registry.get<AudioSourceComponent>(entity).Destroy();
 	}
 
+	void Scene::OnScriptComponentDestroy(entt::registry& registry, EntityHandle entity)
+	{
+		(void)registry;
+		ScriptSystem::RemoveAllScripts(Entity(entity, *this));
+	}
+
 	void Scene::OnCamera2DComponentConstruct(entt::registry& registry, EntityHandle entity)
 	{
+		if (!registry.all_of<Transform2DComponent>(entity)) {
+			BT_CORE_WARN_TAG("Scene", "Adding missing Transform2DComponent before creating Camera2D for entity {}", static_cast<uint32_t>(entity));
+			registry.emplace<Transform2DComponent>(entity);
+		}
+
 		Camera2DComponent& camera2D = GetComponent<Camera2DComponent>(entity);
 		camera2D.Initialize(GetComponent<Transform2DComponent>(entity));
 		camera2D.UpdateViewport();

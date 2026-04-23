@@ -58,13 +58,54 @@ namespace Bolt {
 			}
 			return copied;
 		}
+
+		std::string GetRuntimeExecutableFilename() {
+#if defined(BT_PLATFORM_WINDOWS)
+			return "Bolt-Runtime.exe";
+#else
+			return "Bolt-Runtime";
+#endif
+		}
+
+		std::string GetEngineRuntimeFilename() {
+#if defined(BT_PLATFORM_WINDOWS)
+			return "Bolt-Engine.dll";
+#elif defined(__APPLE__)
+			return "libBolt-Engine.dylib";
+#else
+			return "libBolt-Engine.so";
+#endif
+		}
+
+		std::string GetNetHostRuntimeFilename() {
+#if defined(BT_PLATFORM_WINDOWS)
+			return "nethost.dll";
+#else
+			return "libnethost.so";
+#endif
+		}
+
+		std::string NormalizePreviewTexturePath(const std::filesystem::path& path) {
+			std::error_code ec;
+			std::filesystem::path normalized = std::filesystem::weakly_canonical(path, ec);
+			if (ec) {
+				ec.clear();
+				normalized = std::filesystem::absolute(path, ec);
+				if (ec) {
+					normalized = path.lexically_normal();
+				}
+			}
+
+			return normalized.lexically_normal().make_preferred().string();
+		}
 	}
 
 	void ImGuiEditorLayer::RenderLogPanel() {
+		DrainPendingLogEntries();
 		ImGui::Begin("Log");
 
 		if (ImGui::Button("Clear")) {
-			m_LogEntries.clear();
+			ClearLogEntries();
 		}
 
 		int infoCount = 0, warnCount = 0, errorCount = 0;
@@ -226,8 +267,7 @@ namespace Bolt {
 
 		m_AssetBrowser.Render();
 		if (m_AssetBrowser.TakeSelectionActivated() && !m_AssetBrowser.GetSelectedPath().empty()) {
-			m_SelectedEntity = entt::null;
-			m_RenamingEntity = entt::null;
+			ClearEntitySelection();
 		}
 	}
 
@@ -253,6 +293,7 @@ namespace Bolt {
 
 		auto exeDir = std::filesystem::path(Path::ExecutableDir());
 		auto outDir = std::filesystem::path(m_BuildOutputDir);
+		const std::string buildConfiguration = BoltProject::GetActiveBuildConfiguration();
 
 		if (std::filesystem::exists(project->CsprojPath)) {
 			BT_INFO_TAG("Build", "Compiling C# scripts...");
@@ -260,10 +301,10 @@ namespace Bolt {
 				"dotnet",
 				"build",
 				project->CsprojPath,
-				"-c", "Release",
+				"-c", buildConfiguration,
 				"--nologo",
 				"-v", "q",
-				"-p:DefineConstants=BOLT_BUILD%3BBT_RELEASE"
+				"-p:DefineConstants=" + BoltProject::BuildManagedDefineConstants("BOLT_BUILD")
 			});
 			if (!buildResult.Succeeded()) {
 				BT_ERROR_TAG("Build", "C# script compilation failed (exit code {}).", buildResult.ExitCode);
@@ -301,14 +342,26 @@ namespace Bolt {
 			}
 		};
 
-		copyFile(exeDir / ".." / "Bolt-Runtime" / "Bolt-Runtime.exe", outDir / (project->Name + ".exe"), "runtime executable");
-		copyFile(exeDir / ".." / "Bolt-Runtime" / "Bolt-Engine.dll", outDir / "Bolt-Engine.dll", "Bolt-Engine.dll");
+		const std::filesystem::path runtimeOutputDirectory = exeDir / ".." / "Bolt-Runtime";
+		const std::string runtimeExecutableFilename = GetRuntimeExecutableFilename();
+		copyFile(runtimeOutputDirectory / runtimeExecutableFilename,
+			outDir / (project->Name + std::filesystem::path(runtimeExecutableFilename).extension().string()),
+			"runtime executable");
+		copyFile(runtimeOutputDirectory / GetEngineRuntimeFilename(),
+			outDir / GetEngineRuntimeFilename(),
+			GetEngineRuntimeFilename());
 
 		auto scriptCoreDir = exeDir / ".." / "Bolt-ScriptCore";
 		copyFile(scriptCoreDir / "Bolt-ScriptCore.dll", outDir / "Bolt-ScriptCore.dll", "Bolt-ScriptCore.dll");
 		copyFile(scriptCoreDir / "Bolt-ScriptCore.runtimeconfig.json", outDir / "Bolt-ScriptCore.runtimeconfig.json", "ScriptCore config");
 		copyFile(scriptCoreDir / "Bolt-ScriptCore.deps.json", outDir / "Bolt-ScriptCore.deps.json", "ScriptCore deps");
-		copyFile(exeDir / "nethost.dll", outDir / "nethost.dll", "nethost.dll");
+		{
+			const std::string netHostFilename = GetNetHostRuntimeFilename();
+			const std::filesystem::path netHostSource = exeDir / netHostFilename;
+			if (std::filesystem::exists(netHostSource)) {
+				copyFile(netHostSource, outDir / netHostFilename, netHostFilename);
+			}
+		}
 
 		try {
 			std::filesystem::copy_file(project->ProjectFilePath, outDir / "bolt-project.json",
@@ -344,7 +397,7 @@ namespace Bolt {
 		{
 			auto userBinDir = std::filesystem::path(project->GetUserAssemblyOutputPath()).parent_path();
 			if (std::filesystem::exists(userBinDir)) {
-				auto destBinDir = outDir / "bin" / "Release";
+				auto destBinDir = outDir / "bin" / buildConfiguration;
 				int copied = 0;
 				for (const auto& entry : std::filesystem::directory_iterator(userBinDir)) {
 					if (!entry.is_regular_file()) continue;
@@ -361,8 +414,9 @@ namespace Bolt {
 		{
 			std::string nativeDll = project->GetNativeDllPath();
 			if (std::filesystem::exists(nativeDll)) {
+				const std::filesystem::path nativeLibraryPath(nativeDll);
 				copyFile(nativeDll,
-					outDir / "NativeScripts" / "build" / "Release" / (project->Name + "-NativeScripts.dll"),
+					outDir / "NativeScripts" / "build" / buildConfiguration / nativeLibraryPath.filename(),
 					"native script DLL");
 			}
 		}
@@ -638,8 +692,7 @@ namespace Bolt {
 		ImGui::TextDisabled("Type: %s", ext.c_str());
 		if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
 			ImGui::Spacing();
-			auto handle = TextureManager::LoadTexture(name);
-			Texture2D* tex = TextureManager::GetTexture(handle);
+			const Texture2D* tex = GetPreviewTexture(path);
 			if (tex && tex->IsValid()) {
 				ImGuiUtils::DrawTexturePreview(tex->GetHandle(), tex->GetWidth(), tex->GetHeight(), 128.0f);
 				ImGui::Text("%.0f x %.0f", tex->GetWidth(), tex->GetHeight());
@@ -647,13 +700,66 @@ namespace Bolt {
 		}
 	}
 
+	const Texture2D* ImGuiEditorLayer::GetPreviewTexture(const std::filesystem::path& path) {
+		const std::string canonicalPath = NormalizePreviewTexturePath(path);
+		if (canonicalPath.empty()) {
+			return nullptr;
+		}
+
+		if (const auto it = m_PreviewTextureLookup.find(canonicalPath); it != m_PreviewTextureLookup.end()) {
+			PreviewTextureEntry& entry = m_PreviewTextureCache[it->second];
+			entry.LastTouchTick = ++m_PreviewTextureTick;
+			return entry.Texture.get();
+		}
+
+		auto texture = std::make_unique<Texture2D>(canonicalPath.c_str(), Filter::Point, Wrap::Clamp, Wrap::Clamp);
+		if (!texture->IsValid()) {
+			return nullptr;
+		}
+
+		PreviewTextureEntry entry;
+		entry.CanonicalPath = canonicalPath;
+		entry.Texture = std::move(texture);
+		entry.LastTouchTick = ++m_PreviewTextureTick;
+
+		const size_t index = m_PreviewTextureCache.size();
+		m_PreviewTextureLookup[canonicalPath] = index;
+		m_PreviewTextureCache.push_back(std::move(entry));
+		TrimPreviewTextureCache();
+		return m_PreviewTextureCache.back().Texture.get();
+	}
+
+	void ImGuiEditorLayer::TrimPreviewTextureCache() {
+		while (m_PreviewTextureCache.size() > kMaxPreviewTextures) {
+			auto victimIt = std::min_element(
+				m_PreviewTextureCache.begin(),
+				m_PreviewTextureCache.end(),
+				[](const PreviewTextureEntry& a, const PreviewTextureEntry& b) {
+					return a.LastTouchTick < b.LastTouchTick;
+				});
+			if (victimIt == m_PreviewTextureCache.end()) {
+				break;
+			}
+
+			m_PreviewTextureCache.erase(victimIt);
+			m_PreviewTextureLookup.clear();
+			for (size_t i = 0; i < m_PreviewTextureCache.size(); ++i) {
+				m_PreviewTextureLookup[m_PreviewTextureCache[i].CanonicalPath] = i;
+			}
+		}
+	}
+
+	void ImGuiEditorLayer::ClearPreviewTextureCache() {
+		m_PreviewTextureLookup.clear();
+		m_PreviewTextureCache.clear();
+		m_PreviewTextureTick = 0;
+	}
+
 	void ImGuiEditorLayer::RenderPackageManagerPanel() {
 		if (!m_ShowPackageManager) return;
 
 		if (!m_PackageManagerInitialized) {
-			auto exeDir = std::filesystem::path(Path::ExecutableDir());
-			auto toolPath = exeDir / ".." / ".." / ".." / "Bolt-PackageTool" / "bin" / "Release" / "net9.0" / "Bolt-PackageTool.exe";
-			m_PackageManager.Initialize(toolPath.string());
+			m_PackageManager.Initialize();
 
 			if (m_PackageManager.IsReady()) {
 				m_PackageManager.AddSource(std::make_unique<NuGetSource>(m_PackageManager.GetToolPath()));

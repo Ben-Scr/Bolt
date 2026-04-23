@@ -19,6 +19,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <system_error>
 
 #ifdef BT_PLATFORM_WINDOWS
 #include <shobjidl.h>
@@ -68,6 +69,36 @@ namespace Bolt {
 		return std::to_string(years) + "y ago";
 	}
 
+#ifdef BT_PLATFORM_WINDOWS
+	static std::wstring Utf8ToWide(std::string_view utf8) {
+		if (utf8.empty()) {
+			return {};
+		}
+
+		const int requiredChars = MultiByteToWideChar(
+			CP_UTF8, MB_ERR_INVALID_CHARS,
+			utf8.data(), static_cast<int>(utf8.size()),
+			nullptr, 0);
+		if (requiredChars <= 0) {
+			return {};
+		}
+
+		std::wstring wide(static_cast<size_t>(requiredChars), L'\0');
+		if (MultiByteToWideChar(
+			CP_UTF8, MB_ERR_INVALID_CHARS,
+			utf8.data(), static_cast<int>(utf8.size()),
+			wide.data(), requiredChars) != requiredChars) {
+			return {};
+		}
+
+		return wide;
+	}
+
+	static std::string FormatWindowsError(DWORD errorCode) {
+		return std::error_code(static_cast<int>(errorCode), std::system_category()).message();
+	}
+#endif
+
 	// ── Lifecycle ───────────────────────────────────────────────────
 
 	void LauncherLayer::OnAttach(Application& app) {
@@ -88,11 +119,155 @@ namespace Bolt {
 
 	void LauncherLayer::OnImGuiRender(Application& app) {
 		(void)app;
+		PollCreateProjectTask();
 		RenderLauncherPanel();
 	}
 
 	void LauncherLayer::OnDetach(Application& app) {
 		(void)app;
+		ResetCreateProjectTask();
+	}
+
+	void LauncherLayer::ResetCreateProjectTask(bool clearWorker) {
+		if (clearWorker && m_CreateTask.Worker.joinable()) {
+			m_CreateTask.Worker.join();
+		}
+
+		std::scoped_lock lock(m_CreateTask.Mutex);
+		m_CreateTask.Worker = std::thread();
+		m_CreateTask.CreatedProject.reset();
+		m_CreateTask.Error.clear();
+		m_CreateTask.Stage = "Idle";
+		m_CreateTask.Progress = 0.0f;
+		m_CreateTask.BuildExitCode = 0;
+		m_CreateTask.Running = false;
+		m_CreateTask.Finished = false;
+		m_CreateTask.Success = false;
+		m_CreateTask.InitialBuildSucceeded = true;
+	}
+
+	void LauncherLayer::StartCreateProjectAsync(const std::string& name, const std::string& location) {
+		ResetCreateProjectTask();
+
+		m_CreateError.clear();
+		m_CloseCreatePopup = false;
+		m_IsCreating = true;
+
+		{
+			std::scoped_lock lock(m_CreateTask.Mutex);
+			m_CreateTask.Stage = "Preparing project...";
+			m_CreateTask.Progress = 0.02f;
+			m_CreateTask.Running = true;
+		}
+
+		m_CreateTask.Worker = std::thread([this, name, location]() {
+			auto updateProgress = [this](float progress, std::string_view stage) {
+				std::scoped_lock lock(m_CreateTask.Mutex);
+				m_CreateTask.Progress = progress;
+				m_CreateTask.Stage = std::string(stage);
+			};
+
+			try {
+				const std::string fullPath = Path::Combine(location, name);
+				if (std::filesystem::exists(fullPath)) {
+					std::scoped_lock lock(m_CreateTask.Mutex);
+					m_CreateTask.Error = "Directory already exists: " + fullPath;
+					m_CreateTask.Stage = "Project creation failed";
+					m_CreateTask.Finished = true;
+					m_CreateTask.Running = false;
+					m_CreateTask.Success = false;
+					return;
+				}
+
+				updateProgress(0.05f, "Creating project...");
+				BoltProject project = BoltProject::Create(name, location, updateProgress);
+
+				updateProgress(0.90f, "Compiling starter scripts...");
+				const std::string buildConfiguration = BoltProject::GetActiveBuildConfiguration();
+				Process::Result buildResult = Process::Run({
+					"dotnet",
+					"build",
+					project.CsprojPath,
+					"-c", buildConfiguration,
+					"--nologo",
+					"-v", "q",
+					"-nowarn:CS8632",
+					"-p:DefineConstants=" + BoltProject::BuildManagedDefineConstants("BOLT_EDITOR")
+					});
+
+				std::scoped_lock lock(m_CreateTask.Mutex);
+				m_CreateTask.CreatedProject = project;
+				m_CreateTask.BuildExitCode = buildResult.ExitCode;
+				m_CreateTask.InitialBuildSucceeded = buildResult.Succeeded();
+				m_CreateTask.Progress = 1.0f;
+				m_CreateTask.Stage = buildResult.Succeeded()
+					? "Project ready."
+					: "Project ready. Initial script build failed.";
+				m_CreateTask.Finished = true;
+				m_CreateTask.Running = false;
+				m_CreateTask.Success = true;
+			}
+			catch (const std::exception& e) {
+				std::scoped_lock lock(m_CreateTask.Mutex);
+				m_CreateTask.Error = e.what();
+				m_CreateTask.Stage = "Project creation failed";
+				m_CreateTask.Finished = true;
+				m_CreateTask.Running = false;
+				m_CreateTask.Success = false;
+			}
+		});
+	}
+
+	void LauncherLayer::PollCreateProjectTask() {
+		bool finished = false;
+		bool success = false;
+		bool initialBuildSucceeded = true;
+		int buildExitCode = 0;
+		std::string error;
+		std::optional<BoltProject> createdProject;
+
+		{
+			std::scoped_lock lock(m_CreateTask.Mutex);
+			finished = m_CreateTask.Finished;
+			if (!finished) {
+				return;
+			}
+
+			success = m_CreateTask.Success;
+			initialBuildSucceeded = m_CreateTask.InitialBuildSucceeded;
+			buildExitCode = m_CreateTask.BuildExitCode;
+			error = m_CreateTask.Error;
+			createdProject = m_CreateTask.CreatedProject;
+		}
+
+		if (m_CreateTask.Worker.joinable()) {
+			m_CreateTask.Worker.join();
+		}
+
+		m_IsCreating = false;
+
+		if (!success) {
+			m_CreateError = error;
+			ResetCreateProjectTask(false);
+			return;
+		}
+
+		if (!createdProject.has_value()) {
+			m_CreateError = "Project creation finished without a project result.";
+			ResetCreateProjectTask(false);
+			return;
+		}
+
+		m_Registry.AddProject(createdProject->Name, createdProject->RootDirectory);
+		m_Registry.Save();
+
+		if (!initialBuildSucceeded) {
+			BT_WARN_TAG("Launcher", "Project created, but the initial script build failed (exit code {}).", buildExitCode);
+		}
+
+		m_CloseCreatePopup = true;
+		m_PendingCreatedProjectOpen = LauncherProjectEntry{ createdProject->Name, createdProject->RootDirectory };
+		ResetCreateProjectTask(false);
 	}
 
 	// ── Main Panel ──────────────────────────────────────────────────
@@ -288,6 +463,28 @@ namespace Bolt {
 		ImGui::SetNextWindowSize(ImVec2(450, 0), ImGuiCond_Appearing);
 
 		if (ImGui::BeginPopupModal("Create New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			float createProgress = 0.0f;
+			std::string createStage;
+			bool createTaskRunning = false;
+			{
+				std::scoped_lock lock(m_CreateTask.Mutex);
+				createProgress = m_CreateTask.Progress;
+				createStage = m_CreateTask.Stage;
+				createTaskRunning = m_CreateTask.Running;
+			}
+
+			if (m_CloseCreatePopup) {
+				m_CloseCreatePopup = false;
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+
+				if (m_PendingCreatedProjectOpen.has_value()) {
+					OpenProject(*m_PendingCreatedProjectOpen);
+					m_PendingCreatedProjectOpen.reset();
+				}
+				return;
+			}
+
 			ImGui::Text("Project Name:");
 			ImGui::SetNextItemWidth(-1);
 			ImGui::InputText("##ProjName", m_NewProjectName, sizeof(m_NewProjectName));
@@ -306,6 +503,12 @@ namespace Bolt {
 				ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", m_CreateError.c_str());
 			}
 
+			if (m_IsCreating || createTaskRunning) {
+				ImGui::Spacing();
+				ImGui::TextDisabled("%s", createStage.empty() ? "Creating project..." : createStage.c_str());
+				ImGui::ProgressBar(createProgress, ImVec2(-1, 0));
+			}
+
 			ImGui::Spacing();
 			ImGui::Separator();
 			ImGui::Spacing();
@@ -313,67 +516,23 @@ namespace Bolt {
 			bool canCreate = BoltProject::IsValidProjectName(m_NewProjectName) && !m_IsCreating;
 			if (!canCreate) ImGui::BeginDisabled();
 
-			//TODO(Ben-Scr): Project creation has to be async since it takes up 1-10s for creating a project
 			if (ImGui::Button("Create", ImVec2(120, 0))) {
-				if (m_IsCreating) {
-				}
-				else {
-					Timer timer;
-
-					m_IsCreating = true;
-					try {
-						std::string name(m_NewProjectName);
-						std::string location(m_NewProjectLocation);
-						std::string fullPath = Path::Combine(location, name);
-
-						if (std::filesystem::exists(fullPath)) {
-							m_CreateError = "Directory already exists: " + fullPath;
-							m_IsCreating = false;
-						}
-						else {
-							auto project = BoltProject::Create(name, location);
-							m_Registry.AddProject(project.Name, project.RootDirectory);
-							m_Registry.Save();
-
-							ImGui::CloseCurrentPopup();
-
-							Process::Result buildResult = Process::Run({
-								"dotnet",
-								"build",
-								project.CsprojPath,
-								"-c", "Release",
-								"--nologo",
-								"-v", "q",
-								"-nowarn:CS8632",
-								"-p:DefineConstants=BOLT_EDITOR%3BBT_RELEASE"
-								});
-							if (!buildResult.Succeeded()) {
-								BT_WARN_TAG("Launcher", "Project created, but the initial script build failed (exit code {}).", buildResult.ExitCode);
-							}
-
-							LauncherProjectEntry entry;
-							entry.name = project.Name;
-							entry.path = project.RootDirectory;
-
-							m_IsCreating = false;
-							OpenProject(entry);
-						}
-					}
-					catch (const std::exception& e) {
-						m_CreateError = e.what();
-						m_IsCreating = false;
-					}
-
-					BT_INFO_TAG("Project", "Creation Took: " + StringHelper::ToString(timer));
-				}
+				Timer timer;
+				StartCreateProjectAsync(std::string(m_NewProjectName), std::string(m_NewProjectLocation));
+				BT_INFO_TAG("Project", "Queued async project creation in {}", StringHelper::ToString(timer));
 			}
 
 			if (!canCreate) ImGui::EndDisabled();
 
 			ImGui::SameLine();
-			if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-				m_IsCreating = false;
+			if (m_IsCreating) {
+				ImGui::BeginDisabled();
+			}
+			if (ImGui::Button(m_IsCreating ? "Working..." : "Cancel", ImVec2(120, 0))) {
 				ImGui::CloseCurrentPopup();
+			}
+			if (m_IsCreating) {
+				ImGui::EndDisabled();
 			}
 
 			ImGui::EndPopup();
@@ -409,14 +568,6 @@ namespace Bolt {
 		}
 #endif
 
-		// Set loading state FIRST -- before anything that could re-sort the list
-		m_IsOpening = true;
-		m_OpenStartTime = std::chrono::steady_clock::now();
-		m_OpeningProjectName = entry.name;
-
-		// L1: Defer the re-sort until the loading screen dismisses
-		m_DeferredUpdatePath = entry.path;
-
 #ifdef BT_PLATFORM_WINDOWS
 		auto exeDir = std::filesystem::path(Path::ExecutableDir());
 		auto editorExe = exeDir / "Bolt-Editor.exe";
@@ -425,33 +576,56 @@ namespace Bolt {
 		}
 
 		if (std::filesystem::exists(editorExe)) {
-			std::string canonical = std::filesystem::canonical(editorExe).string();
-			std::string cmdLine = "\"" + canonical + "\" --project=\"" + entry.path + "\"";
+			std::error_code canonicalError;
+			std::filesystem::path resolvedEditorExe = std::filesystem::weakly_canonical(editorExe, canonicalError);
+			if (canonicalError) {
+				resolvedEditorExe = editorExe.lexically_normal();
+			}
 
-			std::wstring wcmd(cmdLine.begin(), cmdLine.end());
-			std::vector<wchar_t> buf(wcmd.begin(), wcmd.end());
+			const std::wstring projectPath = Utf8ToWide(entry.path);
+			if (projectPath.empty() && !entry.path.empty()) {
+				m_OpenError = "Project path is not valid UTF-8";
+				BT_ERROR_TAG("Launcher", "Failed to open project '{}': invalid UTF-8 path", entry.path);
+				return;
+			}
+
+			const std::wstring commandLine =
+				L"\"" + resolvedEditorExe.native() + L"\" --project=\"" + projectPath + L"\"";
+			std::vector<wchar_t> buf(commandLine.begin(), commandLine.end());
 			buf.push_back(L'\0');
+
+			const std::wstring workingDirectory = resolvedEditorExe.parent_path().native();
 
 			STARTUPINFOW si{};
 			si.cb = sizeof(si);
 			PROCESS_INFORMATION pi{};
 
-			if (CreateProcessW(nullptr, buf.data(), nullptr, nullptr,
-				FALSE, CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi))
+			if (CreateProcessW(resolvedEditorExe.c_str(), buf.data(), nullptr, nullptr,
+				FALSE, CREATE_NEW_PROCESS_GROUP, nullptr,
+				workingDirectory.empty() ? nullptr : workingDirectory.c_str(), &si, &pi))
 			{
+				m_IsOpening = true;
+				m_OpenStartTime = std::chrono::steady_clock::now();
+				m_OpeningProjectName = entry.name;
+				m_DeferredUpdatePath = entry.path;
+
 				// L3: Store PID for duplicate-open detection
 				m_RunningProjects[entry.path] = pi.dwProcessId;
 				CloseHandle(pi.hProcess);
 				CloseHandle(pi.hThread);
-			}
 
-			// m_IsOpening stays true -- the loading screen timer will clear it
-			BT_INFO_TAG("Launcher", "Opened project: {} at {}", entry.name, entry.path);
+				BT_INFO_TAG("Launcher", "Opened project: {} at {}", entry.name, entry.path);
+			}
+			else {
+				const DWORD errorCode = GetLastError();
+				m_OpenError = "Failed to open project: " + FormatWindowsError(errorCode);
+				BT_ERROR_TAG("Launcher", "CreateProcessW failed for '{}' with error {} ({})",
+					entry.path, errorCode, m_OpenError);
+			}
 		}
 		else {
+			m_OpenError = "Bolt-Editor.exe not found";
 			BT_ERROR_TAG("Launcher", "Bolt-Editor.exe not found");
-			m_IsOpening = false;
-			m_DeferredUpdatePath.clear();
 		}
 #endif
 	}

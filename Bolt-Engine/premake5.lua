@@ -22,21 +22,18 @@ project "Bolt-Engine"
     }
 
     UseDependencySet(Dependency.EngineCore)
+    defines { "BT_TRACK_MEMORY" }
 
     filter "system:windows"
         buildoptions { "/utf-8" }
         systemversion "latest"
-        defines { "BT_PLATFORM_WINDOWS", "BT_TRACK_MEMORY" }
+        defines { "BT_PLATFORM_WINDOWS" }
 
     filter "system:linux"
         pic "On"
-        defines { "BT_PLATFORM_LINUX", "BT_TRACK_MEMORY" }
+        defines { "BT_PLATFORM_LINUX" }
 
-    defines
-    {
-        "BT_PLATFORM_WINDOWS",
-        "BT_TRACK_MEMORY"
-    }
+    filter {}
 
     filter "files:**/glad.c"
         flags { "NoPCH" }

@@ -4,6 +4,7 @@
 #include "Scripting/ScriptComponent.hpp"
 #include "Gui/ImGuiUtils.hpp"
 #include "Scripting/ScriptEngine.hpp"
+#include "Scripting/ScriptSystem.hpp"
 #include "Core/Application.hpp"
 #include "Serialization/Json.hpp"
 #include "Serialization/Path.hpp"
@@ -1049,7 +1050,7 @@ namespace Bolt {
 		}
 
 		if (removeIndex != SIZE_MAX) {
-			scriptComp.RemoveScript(removeIndex);
+			ScriptSystem::RemoveScript(entity, removeIndex);
 		}
 
 		RenderScriptPicker();

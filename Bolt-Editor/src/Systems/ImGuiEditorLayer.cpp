@@ -45,6 +45,8 @@ namespace Bolt {
 
 	void ImGuiEditorLayer::OnAttach(Application& app) {
 		Application::SetIsPlaying(false);
+		Application::SetGameInputEnabled(false);
+		Gizmo::SetShowInRuntime(false);
 		if (app.GetRenderer2D()) {
 			app.GetRenderer2D()->SetSkipBeginFrameRender(true);
 		}
@@ -53,25 +55,31 @@ namespace Bolt {
 			Log::OnLog.Remove(m_LogSubscriptionId);
 		}
 
-		m_LogEntries.clear();
-		m_LogSubscriptionId = Log::OnLog.Add([this](const Log::Entry& entry) {
+		ClearLogEntries();
+		m_LogDispatchState = std::make_shared<LogDispatchState>();
+		std::weak_ptr<LogDispatchState> weakLogDispatchState = m_LogDispatchState;
+		m_LogSubscriptionId = Log::OnLog.Add([weakLogDispatchState](const Log::Entry& entry) {
 			// Only show user-facing logs in editor panel (Client + EditorConsole)
 			// Core/engine logs still go to stdout but not the editor UI
 			if (entry.Source == Log::Type::Core) return;
 
-			m_LogEntries.push_back({ entry.Message, entry.Level });
-			if (m_LogEntries.size() > 2000) {
-				m_LogEntries.erase(m_LogEntries.begin(), m_LogEntries.begin() + 500);
+			if (std::shared_ptr<LogDispatchState> state = weakLogDispatchState.lock()) {
+				std::scoped_lock lock(state->Mutex);
+				state->PendingEntries.push_back({ entry.Message, entry.Level });
 			}
 			});
 	}
 
 	void ImGuiEditorLayer::OnDetach(Application& app) {
 		(void)app;
+		Application::SetGameInputEnabled(true);
+		Gizmo::SetShowInRuntime(true);
 		if (m_LogSubscriptionId.value != 0) {
 			Log::OnLog.Remove(m_LogSubscriptionId);
 			m_LogSubscriptionId = EventId{};
 		}
+		m_LogDispatchState.reset();
+		ClearPreviewTextureCache();
 
 		DestroyFBO(m_EditorViewFBO);
 		DestroyFBO(m_GameViewFBO);
@@ -82,42 +90,74 @@ namespace Bolt {
 	}
 
 	void ImGuiEditorLayer::OnUpdate(Application& app, float dt) {
+		(void)dt;
+		DrainPendingLogEntries();
 
 		Input& input = app.GetInput();
-
-		//INFO(Ben-Scr): Used as shortcut for focusing an entity within the editor view
-		if (input.GetKeyDown(KeyCode::F)) {
-			BT_INFO("Pressed F");
-			BT_INFO(m_IsEditorViewActive ? "true" : "false");
-
-			if (m_SelectedEntity == entt::null) return;
-			if (!m_IsEditorViewActive) return;
-
-			auto& scene = *app.GetSceneManager()->GetActiveScene();
-
-			Transform2DComponent* tr2D;
-			if (scene.TryGetComponent<Transform2DComponent>(m_SelectedEntity, tr2D)) {
-				m_EditorCamera.SetPosition(tr2D->Position);
-			}
+		Scene* activeScene = app.GetSceneManager() ? app.GetSceneManager()->GetActiveScene() : nullptr;
+		if (!activeScene) {
+			return;
 		}
 
-		//INFO(Ben-Scr): Used as shortcut for duplicating an entity within the editor view
+		Scene& scene = *activeScene;
+		const bool hasShortcutFocus = HasEntityShortcutFocus();
+		const bool hasEntitySelection = m_SelectedEntity != entt::null && scene.IsValid(m_SelectedEntity);
+
+		if (input.GetKeyDown(KeyCode::F) && hasShortcutFocus && hasEntitySelection) {
+			FocusSelectedEntity(scene);
+		}
+
+		if (Application::GetIsPlaying() || !hasShortcutFocus || !hasEntitySelection) {
+			return;
+		}
+
+		if (m_RenamingEntity != entt::null || ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive()) {
+			return;
+		}
+
 		if (input.GetKey(KeyCode::LeftControl) && input.GetKeyDown(KeyCode::D)) {
-			
+			DuplicateSelectedEntity(scene);
+		}
+		if (input.GetKeyDown(KeyCode::Delete)) {
+			DeleteSelectedEntity(scene);
+		}
+		if (input.GetKeyDown(KeyCode::F2)) {
+			BeginRenameSelectedEntity(scene);
+		}
+	}
+
+	void ImGuiEditorLayer::DrainPendingLogEntries() {
+		if (!m_LogDispatchState) {
+			return;
 		}
 
-		//INFO(Ben-Scr): Used as shortcut for deleting an entity within the editor view
-		if (input.GetKey(KeyCode::Delete)) {
-			if (m_SelectedEntity == entt::null) return;
+		std::vector<LogEntry> pendingEntries;
+		{
+			std::scoped_lock lock(m_LogDispatchState->Mutex);
+			if (m_LogDispatchState->PendingEntries.empty()) {
+				return;
+			}
 
-			auto& scene = *app.GetSceneManager()->GetActiveScene();
-			scene.DestroyEntity(m_SelectedEntity);
-			m_SelectedEntity = entt::null;
+			pendingEntries.swap(m_LogDispatchState->PendingEntries);
 		}
 
-		//INFO(Ben-Scr): Used as shortcut for renaming an entity within the editor view
-		if (input.GetKey(KeyCode::F2)) {
+		for (LogEntry& entry : pendingEntries) {
+			AppendLogEntry(std::move(entry));
+		}
+	}
 
+	void ImGuiEditorLayer::AppendLogEntry(LogEntry entry) {
+		m_LogEntries.push_back(std::move(entry));
+		if (m_LogEntries.size() > 2000) {
+			m_LogEntries.erase(m_LogEntries.begin(), m_LogEntries.begin() + 500);
+		}
+	}
+
+	void ImGuiEditorLayer::ClearLogEntries() {
+		m_LogEntries.clear();
+		if (m_LogDispatchState) {
+			std::scoped_lock lock(m_LogDispatchState->Mutex);
+			m_LogDispatchState->PendingEntries.clear();
 		}
 	}
 
@@ -364,10 +404,81 @@ namespace Bolt {
 		auto view = active->GetRegistry().view<UUIDComponent>();
 		for (auto [ent, uuid] : view.each()) {
 			if (static_cast<uint64_t>(uuid.Id) == selectedUUID) {
-				m_SelectedEntity = ent;
+				SelectEntity(ent);
 				break;
 			}
 		}
+	}
+
+	void ImGuiEditorLayer::SelectEntity(EntityHandle entity) {
+		m_SelectedEntity = entity;
+		if (entity != entt::null) {
+			m_AssetBrowser.ClearSelection();
+		}
+	}
+
+	void ImGuiEditorLayer::ClearEntitySelection() {
+		m_SelectedEntity = entt::null;
+		m_RenamingEntity = entt::null;
+		m_EntityRenameFrameCounter = 0;
+	}
+
+	void ImGuiEditorLayer::FocusSelectedEntity(Scene& scene) {
+		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
+			return;
+		}
+
+		Transform2DComponent* transform = nullptr;
+		if (scene.TryGetComponent<Transform2DComponent>(m_SelectedEntity, transform) && transform) {
+			m_EditorCamera.SetPosition(transform->Position);
+		}
+	}
+
+	void ImGuiEditorLayer::DuplicateSelectedEntity(Scene& scene) {
+		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
+			return;
+		}
+
+		Entity source = scene.GetEntity(m_SelectedEntity);
+		Entity clone = scene.CreateEntity(source.GetName() + " (Clone)");
+
+		const auto& componentRegistry = SceneManager::Get().GetComponentRegistry();
+		componentRegistry.ForEachComponentInfo([&](const std::type_index&, const ComponentInfo& info) {
+			if (info.category != ComponentCategory::Component) return;
+			if (!info.has(source)) return;
+			if (info.copyTo) {
+				info.copyTo(source, clone);
+			}
+		});
+
+		SelectEntity(clone.GetHandle());
+		scene.MarkDirty();
+		m_EntityOrder.clear();
+	}
+
+	void ImGuiEditorLayer::DeleteSelectedEntity(Scene& scene) {
+		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
+			return;
+		}
+
+		scene.DestroyEntity(m_SelectedEntity);
+		ClearEntitySelection();
+		m_EntityOrder.clear();
+	}
+
+	void ImGuiEditorLayer::BeginRenameSelectedEntity(Scene& scene) {
+		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
+			return;
+		}
+
+		Entity entity = scene.GetEntity(m_SelectedEntity);
+		m_RenamingEntity = m_SelectedEntity;
+		m_EntityRenameFrameCounter = 0;
+		std::snprintf(m_EntityRenameBuffer, sizeof(m_EntityRenameBuffer), "%s", entity.GetName().c_str());
+	}
+
+	bool ImGuiEditorLayer::HasEntityShortcutFocus() const {
+		return m_IsEditorViewFocused || m_IsEntitiesPanelFocused || m_IsInspectorPanelFocused;
 	}
 
 
@@ -388,7 +499,7 @@ namespace Bolt {
 			if (ImGui::MenuItem("Create Entity"))
 			{
 				Entity created = scene.CreateEntity("Entity " + std::to_string(EntityHelper::EntitiesCount()));
-				m_SelectedEntity = created.GetHandle();
+				SelectEntity(created.GetHandle());
 			}
 
 			if (ImGui::BeginMenu("2D Entity"))
@@ -399,35 +510,35 @@ namespace Bolt {
 					{
 						Entity created = scene.CreateEntity("Square " + std::to_string(EntityHelper::EntitiesCount()));
 						created.AddComponent<SpriteRendererComponent>();
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 					if (ImGui::MenuItem("Circle"))
 					{
 						Entity created = scene.CreateEntity("Circle " + std::to_string(EntityHelper::EntitiesCount()));
 						auto& sprite = created.AddComponent<SpriteRendererComponent>();
 						sprite.TextureHandle = TextureManager::GetDefaultTexture(DefaultTexture::Circle);
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 					if (ImGui::MenuItem("9Sliced"))
 					{
 						Entity created = scene.CreateEntity("9Sliced " + std::to_string(EntityHelper::EntitiesCount()));
 						auto& sprite = created.AddComponent<SpriteRendererComponent>();
 						sprite.TextureHandle = TextureManager::GetDefaultTexture(DefaultTexture::_9Sliced);
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 					if (ImGui::MenuItem("Pixel"))
 					{
 						Entity created = scene.CreateEntity("Pixel " + std::to_string(EntityHelper::EntitiesCount()));
 						auto& sprite = created.AddComponent<SpriteRendererComponent>();
 						sprite.TextureHandle = TextureManager::GetDefaultTexture(DefaultTexture::Pixel);
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 					if (ImGui::MenuItem("Logo"))
 					{
 						Entity created = scene.CreateEntity("Logo " + std::to_string(EntityHelper::EntitiesCount()));
 						auto& sprite = created.AddComponent<SpriteRendererComponent>();
 						sprite.TextureHandle = TextureManager::LoadTexture("Game/logo.png");
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 
 					ImGui::EndMenu();
@@ -440,7 +551,7 @@ namespace Bolt {
 						created.AddComponent<SpriteRendererComponent>();
 						created.AddComponent<Rigidbody2DComponent>();
 						created.AddComponent<BoxCollider2DComponent>();
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 					if (ImGui::MenuItem("Kinematic Body"))
 					{
@@ -448,7 +559,7 @@ namespace Bolt {
 						created.AddComponent<SpriteRendererComponent>();
 						created.AddComponent<Rigidbody2DComponent>().SetBodyType(BodyType::Kinematic);
 						created.AddComponent<BoxCollider2DComponent>();
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 					if (ImGui::MenuItem("Static Body"))
 					{
@@ -456,7 +567,7 @@ namespace Bolt {
 						created.AddComponent<SpriteRendererComponent>();
 						created.AddComponent<Rigidbody2DComponent>().SetBodyType(BodyType::Static);
 						created.AddComponent<BoxCollider2DComponent>();
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 
 					ImGui::EndMenu();
@@ -468,7 +579,7 @@ namespace Bolt {
 					{
 						Entity created = scene.CreateEntity("Particle System " + std::to_string(EntityHelper::EntitiesCount()));
 						created.AddComponent<ParticleSystem2DComponent>();
-						m_SelectedEntity = created.GetHandle();
+						SelectEntity(created.GetHandle());
 					}
 					ImGui::EndMenu();
 				}
@@ -480,7 +591,7 @@ namespace Bolt {
 			{
 				Entity created = scene.CreateEntity("Camera " + std::to_string(EntityHelper::EntitiesCount()));
 				created.AddComponent<Camera2DComponent>();
-				m_SelectedEntity = created.GetHandle();
+				SelectEntity(created.GetHandle());
 			}
 
 			ImGui::EndPopup();
@@ -595,7 +706,7 @@ namespace Bolt {
 						bool entityLabelTruncated = false;
 						const std::string entityLabel = ImGuiUtils::Ellipsize(entity.GetName(), ImGui::GetContentRegionAvail().x, &entityLabelTruncated);
 						if (ImGui::Selectable(entityLabel.c_str(), selected)) {
-							m_SelectedEntity = entityHandle;
+							SelectEntity(entityHandle);
 						}
 						if (entityLabelTruncated && ImGui::IsItemHovered()) {
 							ImGui::SetTooltip("%s", entity.GetName().c_str());
@@ -644,13 +755,13 @@ namespace Bolt {
 
 					if (ImGui::BeginPopupContextItem())
 					{
-						m_SelectedEntity = entityHandle;
+						SelectEntity(entityHandle);
 
 						if (ImGui::MenuItem("Delete Entity"))
 						{
 							scene.DestroyEntity(entity);
 							if (m_SelectedEntity == entityHandle)
-								m_SelectedEntity = entt::null;
+								ClearEntitySelection();
 							if (m_RenamingEntity == entityHandle)
 								m_RenamingEntity = entt::null;
 							m_EntityOrder.clear();
@@ -658,26 +769,12 @@ namespace Bolt {
 
 						if (ImGui::MenuItem("Duplicate"))
 						{
-							Entity clone = scene.CreateEntity(entity.GetName() + " (Clone)");
-
-							const auto& compReg = SceneManager::Get().GetComponentRegistry();
-							compReg.ForEachComponentInfo([&](const std::type_index&, const ComponentInfo& info) {
-								if (info.category != ComponentCategory::Component) return;
-								if (!info.has(entity)) return;
-								if (info.copyTo)
-									info.copyTo(entity, clone);
-							});
-
-							m_SelectedEntity = clone.GetHandle();
-							scene.MarkDirty();
-							m_EntityOrder.clear();
+							DuplicateSelectedEntity(scene);
 						}
 
 						if (ImGui::MenuItem("Rename"))
 						{
-							m_RenamingEntity = entityHandle;
-							m_EntityRenameFrameCounter = 0;
-							std::snprintf(m_EntityRenameBuffer, sizeof(m_EntityRenameBuffer), "%s", entity.GetName().c_str());
+							BeginRenameSelectedEntity(scene);
 						}
 
 						ImGui::EndPopup();
@@ -697,8 +794,7 @@ namespace Bolt {
 
 		// Deferred scene removal (after iteration)
 		if (!sceneToRemove.empty()) {
-			m_SelectedEntity = entt::null;
-			m_RenamingEntity = entt::null;
+			ClearEntitySelection();
 			SceneManager::Get().UnloadScene(sceneToRemove);
 		}
 
@@ -737,7 +833,7 @@ namespace Bolt {
 									transform.Scale = { aspect, 1.0f };
 								}
 
-								m_SelectedEntity = newEntity.GetHandle();
+								SelectEntity(newEntity.GetHandle());
 								dropScene->MarkDirty();
 							}
 						}
@@ -750,10 +846,10 @@ namespace Bolt {
 		if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)
 			&& ImGui::IsMouseClicked(ImGuiMouseButton_Left)
 			&& !ImGui::IsAnyItemHovered()) {
-			m_SelectedEntity = entt::null;
-			m_RenamingEntity = entt::null;
+			ClearEntitySelection();
 		}
 
+		m_IsEntitiesPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		ImGui::End();
 	}
 
@@ -763,6 +859,7 @@ namespace Bolt {
 		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
 			m_SelectedEntity = entt::null;
 			RenderAssetInspector();
+			m_IsInspectorPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 			ImGui::End();
 			m_InspectorItemWasActive = false;
 			return;
@@ -822,6 +919,8 @@ namespace Bolt {
 				ImGui::SetClipboardText(std::to_string(uuid).c_str());
 			}
 		}
+
+		m_IsInspectorPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		ImGui::Separator();
 
@@ -1059,6 +1158,7 @@ namespace Bolt {
 			scene.MarkDirty();
 		}
 		m_InspectorItemWasActive = anyActive;
+		m_IsInspectorPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		ImGui::End();
 	}

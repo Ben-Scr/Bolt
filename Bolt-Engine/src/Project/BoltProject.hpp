@@ -1,11 +1,15 @@
 #pragma once
 #include "Core/Export.hpp"
 #include <string>
+#include <functional>
+#include <string_view>
 #include <vector>
 
 namespace Bolt {
 
 	struct BOLT_API BoltProject {
+		using CreateProgressCallback = std::function<void(float progress, std::string_view stage)>;
+
 		std::string Name;
 		std::string RootDirectory;
 		std::string AssetsDirectory;
@@ -32,13 +36,18 @@ namespace Bolt {
 		std::string AppIconPath;
 		std::vector<std::string> BuildSceneList;
 
-		std::string GetUserAssemblyOutputPath() const;
+		std::string GetUserAssemblyOutputPath(std::string_view configuration = {}) const;
 		std::string GetNativeDllPath() const;
 		std::string GetSceneFilePath(const std::string& sceneName) const;
 
 		void Save() const;
 
-		static BoltProject Create(const std::string& name, const std::string& parentDir);
+		static std::string GetActiveBuildConfiguration();
+		static std::string GetActiveBuildDefineConstant();
+		static std::string BuildManagedDefineConstants(std::string_view primarySymbol);
+
+		static BoltProject Create(const std::string& name, const std::string& parentDir,
+			const CreateProgressCallback& progressCallback = {});
 		static BoltProject Load(const std::string& rootDir);
 		static bool Validate(const std::string& rootDir);
 		static bool IsValidProjectName(const std::string& name);

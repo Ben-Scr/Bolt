@@ -26,6 +26,11 @@ namespace Bolt {
 
 		/// Returns the currently selected asset path (empty if none).
 		const std::string& GetSelectedPath() const { return m_SelectedPath; }
+		void ClearSelection() {
+			m_SelectedPath.clear();
+			m_SelectionActivated = false;
+			CancelRename();
+		}
 		bool TakeSelectionActivated() {
 			const bool activated = m_SelectionActivated;
 			m_SelectionActivated = false;

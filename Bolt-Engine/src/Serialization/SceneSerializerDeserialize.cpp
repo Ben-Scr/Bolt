@@ -529,15 +529,17 @@ namespace Bolt {
 			spriteRenderer.Color.a = GetFloatMember(*spriteValue, "a", 1.0f);
 			spriteRenderer.SortingOrder = static_cast<short>(GetIntMember(*spriteValue, "sortOrder", 0));
 			spriteRenderer.SortingLayer = static_cast<uint8_t>(GetIntMember(*spriteValue, "sortLayer", 0));
-
-			spriteRenderer.TextureHandle = LoadTextureFromValue(*spriteValue, "textureAsset", "texture", &spriteRenderer.TextureAssetId);
-			Texture2D* texture = TextureManager::GetTexture(spriteRenderer.TextureHandle);
-			if (texture) {
-				const int filter = GetIntMember(*spriteValue, "filter", static_cast<int>(Filter::Point));
-				const int wrapU = GetIntMember(*spriteValue, "wrapU", static_cast<int>(Wrap::Clamp));
-				const int wrapV = GetIntMember(*spriteValue, "wrapV", static_cast<int>(Wrap::Clamp));
-				texture->SetSampler(static_cast<Filter>(filter), static_cast<Wrap>(wrapU), static_cast<Wrap>(wrapV));
-			}
+			const Filter filter = static_cast<Filter>(GetIntMember(*spriteValue, "filter", static_cast<int>(Filter::Point)));
+			const Wrap wrapU = static_cast<Wrap>(GetIntMember(*spriteValue, "wrapU", static_cast<int>(Wrap::Clamp)));
+			const Wrap wrapV = static_cast<Wrap>(GetIntMember(*spriteValue, "wrapV", static_cast<int>(Wrap::Clamp)));
+			spriteRenderer.TextureHandle = LoadTextureFromValue(
+				*spriteValue,
+				"textureAsset",
+				"texture",
+				filter,
+				wrapU,
+				wrapV,
+				&spriteRenderer.TextureAssetId);
 		}
 
 		if (const Value* rigidbodyValue = GetObjectMember(entityValue, "Rigidbody2D")) {
@@ -678,7 +680,14 @@ namespace Bolt {
 				static_cast<uint8_t>(GetIntMember(*particleValue, "sortLayer", 0));
 
 			UUID textureAssetId = UUID(0);
-			const TextureHandle textureHandle = LoadTextureFromValue(*particleValue, "textureAsset", "texture", &textureAssetId);
+			const TextureHandle textureHandle = LoadTextureFromValue(
+				*particleValue,
+				"textureAsset",
+				"texture",
+				Filter::Point,
+				Wrap::Clamp,
+				Wrap::Clamp,
+				&textureAssetId);
 			if (textureHandle.IsValid()) {
 				particleSystem.SetTexture(textureHandle, textureAssetId);
 			}
@@ -704,7 +713,14 @@ namespace Bolt {
 			image.Color.b = GetFloatMember(*imageValue, "b", 1.0f);
 			image.Color.a = GetFloatMember(*imageValue, "a", 1.0f);
 
-			image.TextureHandle = LoadTextureFromValue(*imageValue, "textureAsset", "texture", &image.TextureAssetId);
+			image.TextureHandle = LoadTextureFromValue(
+				*imageValue,
+				"textureAsset",
+				"texture",
+				Filter::Point,
+				Wrap::Clamp,
+				Wrap::Clamp,
+				&image.TextureAssetId);
 		}
 
 		if (const Value* scriptsValue = GetArrayMember(entityValue, "Scripts")) {

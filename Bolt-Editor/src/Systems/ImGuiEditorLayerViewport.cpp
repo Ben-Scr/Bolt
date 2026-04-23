@@ -12,14 +12,36 @@
 #include "Graphics/Renderer2D.hpp"
 #include "Graphics/TextureManager.hpp"
 #include "Gui/EditorIcons.hpp"
+#include "Math/Trigonometry.hpp"
+#include "Math/VectorMath.hpp"
+#include "Project/ProjectManager.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+
 namespace Bolt {
+	namespace {
+		struct GameViewAspectPreset {
+			const char* Label;
+			float Aspect = 0.0f;
+		};
+
+		constexpr std::array<GameViewAspectPreset, 6> k_GameViewAspectPresets = {{
+			{ "Free Aspect", 0.0f },
+			{ "16:9", 16.0f / 9.0f },
+			{ "21:9", 21.0f / 9.0f },
+			{ "4:3", 4.0f / 3.0f },
+			{ "3:2", 3.0f / 2.0f },
+			{ "9:16", 9.0f / 16.0f }
+		}};
+	}
 
 	void ImGuiEditorLayer::RenderSceneIntoFBO(ViewportFBO& fbo, Scene& scene,
 		const glm::mat4& vp, const AABB& viewportAABB,
-		bool withGizmos, const Color& clearColor)
+		bool withGizmos, bool sharedGizmosOnly, const Color& clearColor)
 	{
 		auto* app = Application::GetInstance();
 		if (!app) return;
@@ -39,7 +61,8 @@ namespace Bolt {
 			});
 
 		if (withGizmos && Gizmo::IsEnabled()) {
-			GizmoRenderer2D::RenderWithVP(vp);
+			const GizmoLayerMask layerMask = sharedGizmosOnly ? GizmoLayerMask::Shared : GizmoLayerMask::All;
+			GizmoRenderer2D::RenderWithVP(vp, layerMask);
 		}
 
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -48,6 +71,94 @@ namespace Bolt {
 		if (window) {
 			glViewport(0, 0, window->GetWidth(), window->GetHeight());
 		}
+	}
+
+	void ImGuiEditorLayer::DrawEditorComponentGizmos(Scene& scene) {
+		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)
+			|| !scene.HasComponent<Transform2DComponent>(m_SelectedEntity)) {
+			return;
+		}
+
+		auto& transform = scene.GetComponent<Transform2DComponent>(m_SelectedEntity);
+		const float rotationDegrees = transform.GetRotationDegrees();
+
+		const Color previousColor = Gizmo::GetColor();
+		const float previousLineWidth = Gizmo::GetLineWidth();
+		const GizmoLayer previousLayer = Gizmo::GetLayer();
+
+		Gizmo::SetLayer(GizmoLayer::EditorOnly);
+
+		Gizmo::SetColor(Color(1.0f, 0.65f, 0.10f, 1.0f));
+		Gizmo::SetLineWidth(2.0f);
+		Gizmo::DrawSquare(transform.Position, transform.Scale, rotationDegrees);
+
+		if (scene.HasComponent<Camera2DComponent>(m_SelectedEntity)) {
+			auto& camera = scene.GetComponent<Camera2DComponent>(m_SelectedEntity);
+			Gizmo::SetColor(Color(0.35f, 0.75f, 1.0f, 1.0f));
+			Gizmo::SetLineWidth(1.5f);
+			Gizmo::DrawSquare(transform.Position, camera.WorldViewPort(), rotationDegrees);
+		}
+
+		if (scene.HasComponent<BoxCollider2DComponent>(m_SelectedEntity)) {
+			auto& collider = scene.GetComponent<BoxCollider2DComponent>(m_SelectedEntity);
+			if (collider.IsValid()) {
+				const Vec2 center = transform.Position + Rotated(collider.GetCenter(), transform.Rotation);
+				Gizmo::SetColor(Color(0.20f, 1.0f, 0.35f, 1.0f));
+				Gizmo::SetLineWidth(2.0f);
+				Gizmo::DrawSquare(center, collider.GetScale(), rotationDegrees);
+			}
+		}
+
+		if (scene.HasComponent<BoltBoxCollider2DComponent>(m_SelectedEntity)) {
+			auto& collider = scene.GetComponent<BoltBoxCollider2DComponent>(m_SelectedEntity);
+			const Vec2 halfExtents = collider.GetHalfExtents();
+			const Vec2 worldSize(
+				std::abs(halfExtents.x * transform.Scale.x) * 2.0f,
+				std::abs(halfExtents.y * transform.Scale.y) * 2.0f);
+			Gizmo::SetColor(Color(0.10f, 0.85f, 0.85f, 1.0f));
+			Gizmo::SetLineWidth(2.0f);
+			Gizmo::DrawSquare(transform.Position, worldSize, rotationDegrees);
+		}
+
+		if (scene.HasComponent<BoltCircleCollider2DComponent>(m_SelectedEntity)) {
+			auto& collider = scene.GetComponent<BoltCircleCollider2DComponent>(m_SelectedEntity);
+			const float worldRadius = collider.GetRadius() * std::max(std::abs(transform.Scale.x), std::abs(transform.Scale.y));
+			Gizmo::SetColor(Color(0.10f, 0.85f, 0.85f, 1.0f));
+			Gizmo::SetLineWidth(2.0f);
+			Gizmo::DrawCircle(transform.Position, worldRadius);
+		}
+
+		if (scene.HasComponent<ParticleSystem2DComponent>(m_SelectedEntity)) {
+			auto& particleSystem = scene.GetComponent<ParticleSystem2DComponent>(m_SelectedEntity);
+			Gizmo::SetColor(Color(1.0f, 0.20f, 0.75f, 1.0f));
+			Gizmo::SetLineWidth(2.0f);
+
+			std::visit([&](auto&& shape) {
+				using T = std::decay_t<decltype(shape)>;
+				if constexpr (std::is_same_v<T, ParticleSystem2DComponent::CircleParams>) {
+					const float radius = shape.Radius * std::max(std::abs(transform.Scale.x), std::abs(transform.Scale.y));
+					Gizmo::DrawCircle(transform.Position, radius);
+				}
+				else if constexpr (std::is_same_v<T, ParticleSystem2DComponent::SquareParams>) {
+					const Vec2 size(
+						std::abs(shape.HalfExtends.x * transform.Scale.x) * 2.0f,
+						std::abs(shape.HalfExtends.y * transform.Scale.y) * 2.0f);
+					Gizmo::DrawSquare(transform.Position, size, rotationDegrees);
+				}
+			}, particleSystem.Shape);
+
+			Vec2 moveDirection = particleSystem.ParticleSettings.MoveDirection;
+			if (LengthSquared(moveDirection) < 0.0001f) {
+				moveDirection = Up();
+			}
+			moveDirection = Normalized(Rotated(moveDirection, transform.Rotation));
+			const float indicatorLength = std::max(0.75f, std::max(std::abs(transform.Scale.x), std::abs(transform.Scale.y)));
+			Gizmo::DrawLine(transform.Position, transform.Position + moveDirection * indicatorLength);
+		}
+
+		Gizmo::SetLayer(previousLayer);
+		Gizmo::SetColor(previousColor);
+		Gizmo::SetLineWidth(previousLineWidth);
 	}
 
 	void ImGuiEditorLayer::RenderEditorView(Scene& scene) {
@@ -88,31 +199,10 @@ namespace Bolt {
 				glm::mat4 vp = m_EditorCamera.GetViewProjectionMatrix();
 				AABB viewAABB = m_EditorCamera.GetViewportAABB();
 				Gizmo::SetViewportAABBOverride(viewAABB);
-
-				if (m_SelectedEntity != entt::null && scene.IsValid(m_SelectedEntity)
-					&& scene.HasComponent<Transform2DComponent>(m_SelectedEntity)) {
-					auto& transform = scene.GetComponent<Transform2DComponent>(m_SelectedEntity);
-					Vec2 outlineScale = transform.Scale;
-
-					if (scene.HasComponent<SpriteRendererComponent>(m_SelectedEntity)) {
-						auto& sr = scene.GetComponent<SpriteRendererComponent>(m_SelectedEntity);
-						Texture2D* tex = TextureManager::GetTexture(sr.TextureHandle);
-						if (tex && tex->IsValid() && tex->GetHeight() > 0) {
-							// Bounds are already encoded in the entity transform.
-						}
-					}
-
-					Color prevColor = Gizmo::GetColor();
-					float prevWidth = Gizmo::GetLineWidth();
-					Gizmo::SetColor(Color(1.0f, 0.6f, 0.0f, 1.0f));
-					Gizmo::SetLineWidth(2.0f);
-					Gizmo::DrawSquare(transform.Position, outlineScale, transform.Rotation * (180.0f / 3.14159265f));
-					Gizmo::SetColor(prevColor);
-					Gizmo::SetLineWidth(prevWidth);
-				}
+				DrawEditorComponentGizmos(scene);
 
 				static const Color k_EditorClearColor(0.18f, 0.18f, 0.20f, 1.0f);
-				RenderSceneIntoFBO(m_EditorViewFBO, scene, vp, viewAABB, true, k_EditorClearColor);
+				RenderSceneIntoFBO(m_EditorViewFBO, scene, vp, viewAABB, true, false, k_EditorClearColor);
 				Gizmo::ClearViewportAABBOverride();
 
 				ImGui::Image(
@@ -165,27 +255,71 @@ namespace Bolt {
 	}
 
 	void ImGuiEditorLayer::RenderGameView(Scene& scene) {
-		(void)scene;
-
 		m_IsGameViewActive = ImGui::Begin("Game View");
 
 		if (!m_IsGameViewActive) {
 			ImGui::End();
 			m_IsGameViewFocused = false;
 			m_IsGameViewHovered = false;
+			Application::SetGameInputEnabled(false);
 			return;
 		}
 
-		const ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-		const int fbW = static_cast<int>(viewportSize.x);
-		const int fbH = static_cast<int>(viewportSize.y);
+		const int aspectPresetIndex = std::clamp(m_GameViewAspectPresetIndex, 0, static_cast<int>(k_GameViewAspectPresets.size()) - 1);
+		m_GameViewAspectPresetIndex = aspectPresetIndex;
 
-		if (fbW > 0 && fbH > 0) {
+		ImGui::SetNextItemWidth(140.0f);
+		if (ImGui::BeginCombo("##GameViewAspect", k_GameViewAspectPresets[m_GameViewAspectPresetIndex].Label)) {
+			for (int i = 0; i < static_cast<int>(k_GameViewAspectPresets.size()); ++i) {
+				const bool selected = (i == m_GameViewAspectPresetIndex);
+				if (ImGui::Selectable(k_GameViewAspectPresets[i].Label, selected)) {
+					m_GameViewAspectPresetIndex = i;
+				}
+				if (selected) {
+					ImGui::SetItemDefaultFocus();
+				}
+			}
+			ImGui::EndCombo();
+		}
+
+		if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("Build: %dx%d", project->BuildWidth, project->BuildHeight);
+		}
+
+		ImGui::Separator();
+
+		const ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+		const float targetAspect = k_GameViewAspectPresets[m_GameViewAspectPresetIndex].Aspect;
+
+		ImVec2 renderSize = viewportSize;
+		if (targetAspect > 0.0f && viewportSize.x > 0.0f && viewportSize.y > 0.0f) {
+			const float availableAspect = viewportSize.x / viewportSize.y;
+			if (availableAspect > targetAspect) {
+				renderSize.x = viewportSize.y * targetAspect;
+			}
+			else {
+				renderSize.y = viewportSize.x / targetAspect;
+			}
+		}
+
+		const int fbW = std::max(1, static_cast<int>(std::round(renderSize.x)));
+		const int fbH = std::max(1, static_cast<int>(std::round(renderSize.y)));
+
+		if (viewportSize.x > 0.0f && viewportSize.y > 0.0f) {
 			EnsureFBO(m_GameViewFBO, fbW, fbH);
 
 			Camera2DComponent* gameCam = Camera2DComponent::Main();
 			if (m_GameViewFBO.FramebufferId != 0 && gameCam && gameCam->IsValid()) {
 				Viewport* savedViewport = gameCam->GetViewport();
+				if (!savedViewport) {
+					ImGui::TextDisabled("Main camera has no viewport");
+					m_IsGameViewHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+					m_IsGameViewFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+					Application::SetGameInputEnabled(m_IsGameViewFocused);
+					ImGui::End();
+					return;
+				}
 				int savedW = savedViewport->GetWidth();
 				int savedH = savedViewport->GetHeight();
 				savedViewport->SetSize(fbW, fbH);
@@ -193,15 +327,29 @@ namespace Bolt {
 				gameCam->UpdateViewport();
 				glm::mat4 vp = gameCam->GetViewProjectionMatrix();
 				AABB viewAABB = gameCam->GetViewportAABB();
-				RenderSceneIntoFBO(m_GameViewFBO, scene, vp, viewAABB, true, gameCam->GetClearColor());
+				RenderSceneIntoFBO(m_GameViewFBO, scene, vp, viewAABB, true, true, gameCam->GetClearColor());
 
 				savedViewport->SetSize(savedW, savedH);
+				gameCam->UpdateViewport();
 
-				ImGui::Image(
+				ImGui::InvisibleButton("##GameViewCanvas", viewportSize);
+				const ImVec2 canvasMin = ImGui::GetItemRectMin();
+				const ImVec2 canvasMax = ImGui::GetItemRectMax();
+				ImDrawList* drawList = ImGui::GetWindowDrawList();
+				drawList->AddRectFilled(canvasMin, canvasMax, IM_COL32(0, 0, 0, 255));
+
+				const ImVec2 imageMin(
+					canvasMin.x + (viewportSize.x - renderSize.x) * 0.5f,
+					canvasMin.y + (viewportSize.y - renderSize.y) * 0.5f);
+				const ImVec2 imageMax(imageMin.x + renderSize.x, imageMin.y + renderSize.y);
+
+				drawList->AddImage(
 					static_cast<ImTextureID>(static_cast<intptr_t>(m_GameViewFBO.ColorTextureId)),
-					viewportSize,
+					imageMin,
+					imageMax,
 					ImVec2(0.0f, 1.0f),
 					ImVec2(1.0f, 0.0f));
+				drawList->AddRect(imageMin, imageMax, IM_COL32(255, 255, 255, 40));
 			}
 			else {
 				ImGui::TextDisabled("No main camera in scene");
@@ -213,6 +361,7 @@ namespace Bolt {
 
 		m_IsGameViewHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
 		m_IsGameViewFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+		Application::SetGameInputEnabled(m_IsGameViewFocused);
 		ImGui::End();
 	}
 

@@ -38,6 +38,24 @@ namespace Bolt
         internal static string? GetNativeComponentName<T>() where T : Component, new() => GetNativeName<T>();
         internal static bool TryGetNativeComponentName(Type type, out string? name) => s_NativeComponentNames.TryGetValue(type, out name);
 
+        private void InvalidateCachedComponent(Type type)
+        {
+            if (m_ComponentCache.Remove(type, out Component? cached))
+                cached.Invalidate();
+
+            if (type == typeof(Transform2DComponent))
+                m_TransformComponent = null;
+        }
+
+        private void InvalidateAllCachedComponents()
+        {
+            foreach (Component component in m_ComponentCache.Values)
+                component.Invalidate();
+
+            m_ComponentCache.Clear();
+            m_TransformComponent = null;
+        }
+
         public string Name => GetComponent<NameComponent>()?.Name ?? "";
 
         public Transform2DComponent Transform
@@ -65,8 +83,12 @@ namespace Bolt
         public T? AddComponent<T>() where T : Component, new()
         {
             string? nativeName = GetNativeName<T>();
-            if (nativeName != null)
-                InternalCalls.Entity_AddComponent(ID, nativeName);
+            if (nativeName == null)
+                return null;
+
+            if (!InternalCalls.Entity_AddComponent(ID, nativeName))
+                return null;
+
             return GetComponent<T>();
         }
 
@@ -88,15 +110,23 @@ namespace Bolt
         {
             string? nativeName = GetNativeName<T>();
             if (nativeName == null) return false;
-            m_ComponentCache.Remove(typeof(T));
-            if (typeof(T) == typeof(Transform2DComponent))
-                m_TransformComponent = null;
-            return InternalCalls.Entity_RemoveComponent(ID, nativeName);
+
+            bool removed = InternalCalls.Entity_RemoveComponent(ID, nativeName);
+            if (removed || !HasComponent<T>())
+                InvalidateCachedComponent(typeof(T));
+
+            return removed;
         }
 
         public T? GetComponent<T>() where T : Component, new()
         {
             Type type = typeof(T);
+            if (!HasComponent<T>())
+            {
+                InvalidateCachedComponent(type);
+                return null;
+            }
+
             if (m_ComponentCache.TryGetValue(type, out Component? cached))
                 return cached as T;
 
@@ -127,7 +157,11 @@ namespace Bolt
 
         public Entity Clone() => Create(this);
 
-        public void Destroy() => InternalCalls.Entity_Destroy(ID);
+        public void Destroy()
+        {
+            InvalidateAllCachedComponents();
+            InternalCalls.Entity_Destroy(ID);
+        }
 
         public bool Equals(Entity? other) => other is not null && ID == other.ID;
         public override bool Equals(object? obj) => obj is Entity other && Equals(other);

@@ -69,6 +69,10 @@ namespace Bolt {
 
 	bool DotNetHost::LoadHostFxr()
 	{
+		if (m_HostFxrLib || m_HostContext || m_Initialized) {
+			Close();
+		}
+
 		// Use nethost to find hostfxr.dll
 		char_t hostfxrPath[1024]{};
 		size_t pathSize = sizeof(hostfxrPath) / sizeof(char_t);
@@ -97,6 +101,7 @@ namespace Bolt {
 		if (!m_InitFn || !m_GetDelegateFn || !m_CloseFn)
 		{
 			BT_CORE_ERROR_TAG("DotNetHost", "Failed to resolve hostfxr exports");
+			Close();
 			return false;
 		}
 
@@ -133,6 +138,7 @@ namespace Bolt {
 		if (rc < 0 || !m_HostContext)
 		{
 			BT_CORE_ERROR_TAG("DotNetHost", "Failed to initialize .NET runtime: 0x{:x}", static_cast<unsigned>(rc));
+			Close();
 			return false;
 		}
 
@@ -146,6 +152,7 @@ namespace Bolt {
 		if (rc != 0 || !m_LoadAssemblyAndGetFunctionPointer)
 		{
 			BT_CORE_ERROR_TAG("DotNetHost", "Failed to get load_assembly delegate: 0x{:x}", static_cast<unsigned>(rc));
+			Close();
 			return false;
 		}
 

@@ -12,7 +12,34 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
 
+#include <filesystem>
+
 namespace Bolt {
+	namespace {
+		std::string NormalizeAudioPath(std::filesystem::path path)
+		{
+			if (path.empty()) {
+				return {};
+			}
+
+			std::error_code ec;
+			if (std::filesystem::exists(path, ec)) {
+				std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(path, ec);
+				if (!ec) {
+					return canonicalPath.make_preferred().string();
+				}
+				ec.clear();
+			}
+
+			const std::filesystem::path absolutePath = std::filesystem::absolute(path, ec);
+			if (ec) {
+				return path.lexically_normal().make_preferred().string();
+			}
+
+			return absolutePath.lexically_normal().make_preferred().string();
+		}
+	}
+
 	ma_engine AudioManager::s_Engine{};
 	bool AudioManager::s_IsInitialized = false;
 	std::unordered_map<AudioHandle::HandleType, std::unique_ptr<Audio>> AudioManager::s_audioMap;
@@ -191,21 +218,28 @@ namespace Bolt {
 			return AudioHandle();
 		}
 
-		std::string fullpath(path);
-		auto audio = std::make_unique<Audio>();
-		if (!audio->LoadFromFile(fullpath)) {
-
-			std::string rootPath = Path::Combine(s_RootPath, path);
-			audio = std::make_unique<Audio>();
-			if (!audio->LoadFromFile(rootPath)) {
-				BT_CORE_ERROR("[{}] AudioManager: Failed to load audio: {}", ErrorCodeToString(BoltErrorCode::LoadFailed), std::string(path));
-				return AudioHandle();
-			}
-			fullpath = rootPath;
-		}
-
+		const std::string requestedPath(path);
+		const std::string fullpath = NormalizeAudioPath(std::filesystem::path(requestedPath));
 		if (const AudioHandle existing = FindAudioByPath(fullpath); existing.IsValid()) {
 			return existing;
+		}
+
+		const std::string rootPath = NormalizeAudioPath(std::filesystem::path(Path::Combine(s_RootPath, requestedPath)));
+		if (!rootPath.empty() && rootPath != fullpath) {
+			if (const AudioHandle existing = FindAudioByPath(rootPath); existing.IsValid()) {
+				return existing;
+			}
+		}
+
+		std::string resolvedPath = fullpath;
+		auto audio = std::make_unique<Audio>();
+		if (!audio->LoadFromFile(resolvedPath)) {
+			resolvedPath = rootPath;
+			audio = std::make_unique<Audio>();
+			if (resolvedPath.empty() || !audio->LoadFromFile(resolvedPath)) {
+				BT_CORE_ERROR("[{}] AudioManager: Failed to load audio: {}", ErrorCodeToString(BoltErrorCode::LoadFailed), requestedPath);
+				return AudioHandle();
+			}
 		}
 
 		AudioHandle::HandleType id = GenerateHandle();
