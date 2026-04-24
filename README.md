@@ -66,3 +66,6 @@ make config=debug -j$(nproc) Bolt-Editor
 ## Notes
 - Runtime assets are copied to the runtime output directory after build (`{targetdir}/Assets`).
 - Linux builds use GLFW's X11 backend via vendored GLFW sources.
+
+  
+![Views](https://komarev.com/ghpvc/?username=ben-scr-repo-name&label=Repo%20views&color=218a45&style=flat)
