@@ -49,3 +49,6 @@ project "Bolt-Editor"
         optimize "Full"
         symbols "Off"
         defines { "BT_DIST", "NDEBUG" }
+
+    filter { "system:windows", "configurations:Dist" }
+        kind "WindowedApp"

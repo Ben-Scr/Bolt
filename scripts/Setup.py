@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import os
 import platform
@@ -7,8 +9,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+MINIMUM_PYTHON = (3, 10)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def ensure_supported_python() -> None:
+    if sys.version_info < MINIMUM_PYTHON:
+        required = ".".join(str(part) for part in MINIMUM_PYTHON)
+        found = ".".join(str(part) for part in sys.version_info[:3])
+        raise SystemExit(
+            f"[Bolt Setup] Python {required}+ is required. "
+            f"Found Python {found}. Please install a newer Python version and try again."
+        )
 
 def run_step(cmd, cwd, label, allow_failure=False):
     print(f"[Bolt Setup] {label}...")
@@ -116,6 +129,7 @@ def parse_args() -> argparse.Namespace:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    ensure_supported_python()
     args = parse_args()
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent

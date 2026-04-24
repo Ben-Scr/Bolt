@@ -33,6 +33,18 @@ project "Bolt-Engine"
         "BOLT_ALL_MODULES=1"
     }
 
+    includedirs
+    {
+        "../External/glfw/include",
+        "../External/glad/include",
+        "../External/miniaudio",
+        "../External/box2d/include",
+        "../External/Bolt-Physics/include",
+        "../External/dotnet",
+        "../External/imgui",
+        "../External/imgui/backends"
+    }
+
     local function AddPrivateIncludes(filePatterns, includePaths)
         for _, pattern in ipairs(filePatterns) do
             filter("files:" .. pattern)

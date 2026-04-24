@@ -129,6 +129,7 @@ namespace Bolt {
 		bool m_IsGameViewHovered = false;
 		bool m_IsGameViewFocused = false;
 		int m_GameViewAspectPresetIndex = 0;
+		bool m_GameViewAspectLoaded = false;
 
 		Viewport m_EditorViewport{ 1, 1 };
 		bool m_IsViewportHovered = false;

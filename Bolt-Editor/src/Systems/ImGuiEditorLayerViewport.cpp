@@ -267,6 +267,17 @@ namespace Bolt {
 
 		const int aspectPresetIndex = std::clamp(m_GameViewAspectPresetIndex, 0, static_cast<int>(k_GameViewAspectPresets.size()) - 1);
 		m_GameViewAspectPresetIndex = aspectPresetIndex;
+		if (!m_GameViewAspectLoaded) {
+			if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+				for (int i = 0; i < static_cast<int>(k_GameViewAspectPresets.size()); ++i) {
+					if (project->GameViewAspect == k_GameViewAspectPresets[i].Label) {
+						m_GameViewAspectPresetIndex = i;
+						break;
+					}
+				}
+			}
+			m_GameViewAspectLoaded = true;
+		}
 
 		ImGui::SetNextItemWidth(140.0f);
 		if (ImGui::BeginCombo("##GameViewAspect", k_GameViewAspectPresets[m_GameViewAspectPresetIndex].Label)) {
@@ -274,6 +285,10 @@ namespace Bolt {
 				const bool selected = (i == m_GameViewAspectPresetIndex);
 				if (ImGui::Selectable(k_GameViewAspectPresets[i].Label, selected)) {
 					m_GameViewAspectPresetIndex = i;
+					if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+						project->GameViewAspect = k_GameViewAspectPresets[i].Label;
+						project->Save();
+					}
 				}
 				if (selected) {
 					ImGui::SetItemDefaultFocus();

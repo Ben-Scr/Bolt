@@ -238,6 +238,7 @@ namespace Bolt {
 		root.AddMember("engineVersion", project.EngineVersion);
 		root.AddMember("startupScene", project.StartupScene);
 		root.AddMember("lastOpenedScene", project.LastOpenedScene);
+		root.AddMember("gameViewAspect", project.GameViewAspect);
 		root.AddMember("buildWidth", project.BuildWidth);
 		root.AddMember("buildHeight", project.BuildHeight);
 		root.AddMember("buildFullscreen", project.BuildFullscreen);
@@ -374,6 +375,12 @@ namespace Bolt {
 					const std::string lastScene = lastSceneValue->AsStringOr();
 					if (!lastScene.empty()) {
 						project.LastOpenedScene = lastScene;
+					}
+				}
+				if (const Json::Value* gameViewAspectValue = root.FindMember("gameViewAspect")) {
+					const std::string gameViewAspect = gameViewAspectValue->AsStringOr();
+					if (!gameViewAspect.empty()) {
+						project.GameViewAspect = gameViewAspect;
 					}
 				}
 				if (const Json::Value* buildWidthValue = root.FindMember("buildWidth")) {

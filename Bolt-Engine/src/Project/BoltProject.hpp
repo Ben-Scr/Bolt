@@ -27,6 +27,7 @@ namespace Bolt {
 		// Persistence
 		std::string StartupScene = "SampleScene";
 		std::string LastOpenedScene = "SampleScene";
+		std::string GameViewAspect = "Free Aspect";
 
 		// Build settings
 		int BuildWidth = 1280;

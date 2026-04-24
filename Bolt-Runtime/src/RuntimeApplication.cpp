@@ -1,4 +1,5 @@
 #include <Bolt.hpp>
+#include "Core/Application.hpp"
 #include "Scene/SceneDefinition.hpp"
 #include "Scene/SceneManager.hpp"
 
