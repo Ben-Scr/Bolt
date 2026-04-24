@@ -1,5 +1,7 @@
 #include "pch.hpp"
 #include "Memory.hpp"
+
+#include <cstdio>
 #include <mutex>
 
 namespace Bolt {
@@ -7,6 +9,65 @@ namespace Bolt {
 	static Bolt::AllocationStats s_GlobalStats;
 	static bool s_InInit = false;
 	static bool s_IsShutdown = false;
+
+	namespace {
+
+#ifndef BT_DIST
+		void WriteMemoryReportLine(const char* message)
+		{
+			std::fputs(message, stderr);
+
+#ifdef BT_PLATFORM_WINDOWS
+			OutputDebugStringA(message);
+#endif
+		}
+
+		void WriteAllocationLeakReport(const AllocatorData& data)
+		{
+			const auto& allocations = data.m_AllocationMap;
+			if (allocations.empty())
+				return;
+
+			size_t totalLeaked = 0;
+			for (const auto& [memory, allocation] : allocations)
+				totalLeaked += allocation.Size;
+
+			char buffer[512];
+			std::snprintf(
+				buffer,
+				sizeof(buffer),
+				"[Memory] Detected %zu live allocation(s), %zu byte(s), during allocator shutdown.\n",
+				allocations.size(),
+				totalLeaked);
+			WriteMemoryReportLine(buffer);
+
+			size_t reportedAllocations = 0;
+			for (const auto& [memory, allocation] : allocations)
+			{
+				std::snprintf(
+					buffer,
+					sizeof(buffer),
+					"[Memory]  leak: address=%p size=%zu category=%s\n",
+					memory,
+					allocation.Size,
+					allocation.Category ? allocation.Category : "<uncategorized>");
+				WriteMemoryReportLine(buffer);
+
+				if (++reportedAllocations == 32 && reportedAllocations < allocations.size())
+				{
+					std::snprintf(
+						buffer,
+						sizeof(buffer),
+						"[Memory]  ... %zu additional allocation(s) omitted.\n",
+						allocations.size() - reportedAllocations);
+					WriteMemoryReportLine(buffer);
+					break;
+				}
+			}
+		}
+#endif
+
+	}
 
 	void Allocator::Init()
 	{
@@ -26,6 +87,12 @@ namespace Bolt {
 			return;
 
 		s_InInit = true;
+#ifndef BT_DIST
+		{
+			std::scoped_lock<std::mutex> lock(s_Data->m_Mutex);
+			WriteAllocationLeakReport(*s_Data);
+		}
+#endif
 		s_Data->~AllocatorData();
 		free(s_Data);
 		s_Data = nullptr;

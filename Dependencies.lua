@@ -36,7 +36,7 @@ local function AppendUnique(target, values)
     end
 end
 
-local function MergeDependencies(...)
+function MergeDependencySets(...)
     local merged =
     {
         IncludeDirs = {},
@@ -45,7 +45,8 @@ local function MergeDependencies(...)
         Links = {}
     }
 
-    for _, dependency in ipairs({ ... }) do
+    for index = 1, select("#", ...) do
+        local dependency = select(index, ...)
         if dependency then
             AppendUnique(merged.IncludeDirs, dependency.IncludeDirs)
             AppendUnique(merged.LibDirs, dependency.LibDirs)
@@ -56,6 +57,8 @@ local function MergeDependencies(...)
 
     return merged
 end
+
+local MergeDependencies = MergeDependencySets
 
 Library = {}
 Library["GLFW"] = "glfw3.lib"

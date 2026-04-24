@@ -12,8 +12,6 @@ from pathlib import Path
 MINIMUM_PYTHON = (3, 10)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
 def ensure_supported_python() -> None:
     if sys.version_info < MINIMUM_PYTHON:
         required = ".".join(str(part) for part in MINIMUM_PYTHON)
@@ -23,7 +21,8 @@ def ensure_supported_python() -> None:
             f"Found Python {found}. Please install a newer Python version and try again."
         )
 
-def run_step(cmd, cwd, label, allow_failure=False):
+
+def run_step(cmd: list[str], cwd: Path, label: str, allow_failure: bool = False) -> bool:
     print(f"[Bolt Setup] {label}...")
     print(f"[Bolt Setup] > {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd)
@@ -32,7 +31,7 @@ def run_step(cmd, cwd, label, allow_failure=False):
     return result.returncode == 0
 
 
-def check_tool(name, cmd=None):
+def check_tool(name: str, cmd: str | None = None) -> bool:
     """Return True if *name* is reachable on PATH."""
     exe = shutil.which(cmd or name)
     if exe:
@@ -50,7 +49,8 @@ def submodules_need_update(repo_root: Path) -> bool:
     result = subprocess.run(
         ["git", "submodule", "status", "--recursive"],
         cwd=repo_root,
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         return True
@@ -77,7 +77,7 @@ def dotnet_files_present(repo_root: Path) -> bool:
     return all(f.is_file() for f in required)
 
 
-def resolve_premake_executable(repo_root: Path):
+def resolve_premake_executable(repo_root: Path) -> str | None:
     if platform.system() == "Windows":
         vendored = repo_root / "vendor" / "bin" / "premake5.exe"
     else:
@@ -85,6 +85,29 @@ def resolve_premake_executable(repo_root: Path):
     if vendored.is_file():
         return str(vendored)
     return shutil.which("premake5")
+
+
+def describe_premake_expectation(repo_root: Path) -> str:
+    if platform.system() == "Windows":
+        vendored = repo_root / "vendor" / "bin" / "premake5.exe"
+    else:
+        vendored = repo_root / "vendor" / "bin" / "premake5"
+    return (
+        f"Premake 5 was not found. Expected vendored executable at '{vendored}' "
+        "or a 'premake5' executable on PATH."
+    )
+
+
+def has_lfs_patterns(repo_root: Path) -> bool:
+    """Return True if tracked attributes declare Git LFS filters."""
+    gitattributes = repo_root / ".gitattributes"
+    if not gitattributes.is_file():
+        return False
+    try:
+        text = gitattributes.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "filter=lfs" in text
 
 
 def normalize_host_architecture(raw_arch: str | None) -> str:
@@ -123,12 +146,20 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("BOLT_DOTNET_ARCH"),
         help="Windows .NET host-pack architecture to copy (for example: x64 or arm64).",
     )
+    parser.add_argument(
+        "--skip-lfs",
+        action="store_true",
+        help="Skip Git LFS pull even if this checkout declares LFS attributes.",
+    )
+    parser.add_argument(
+        "--require-lfs",
+        action="store_true",
+        help="Fail setup if Git LFS assets are declared and git lfs pull fails.",
+    )
     return parser.parse_args()
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
-
-def main():
+def main() -> int:
     ensure_supported_python()
     args = parse_args()
     script_dir = Path(__file__).resolve().parent
@@ -141,7 +172,6 @@ def main():
 
     os.environ["BOLT_DIR"] = str(repo_root)
 
-    # ── 1. Dependency check ──────────────────────────────────────────────
     print("[Bolt Setup] Checking prerequisites...")
     missing = []
 
@@ -155,7 +185,7 @@ def main():
     if premake_path:
         print(f"  [OK] premake5 found: {premake_path}")
     else:
-        print("  [!!] premake5 NOT found (vendor/bin or PATH)")
+        print(f"  [!!] {describe_premake_expectation(repo_root)}")
         missing.append("premake5")
 
     is_windows = platform.system() == "Windows"
@@ -181,7 +211,7 @@ def main():
         if detected_ver:
             print(f"  [OK] .NET host pack found: {detected_ver}")
         else:
-            print("  [!!] No .NET host pack found — setup-dotnet will fail")
+            print("  [!!] No .NET host pack found - setup-dotnet will fail")
             if not dotnet_files_present(repo_root):
                 missing.append("dotnet-host-pack")
 
@@ -191,31 +221,37 @@ def main():
         print("[Bolt Setup] The setup will continue but some steps may fail.")
         print()
 
-    # ── 2. Git submodules ────────────────────────────────────────────────
     run_step(
         ["git", "submodule", "sync", "--recursive"],
-        repo_root, "Syncing git submodule URLs",
+        repo_root,
+        "Syncing git submodule URLs",
     )
     if submodules_need_update(repo_root):
         run_step(
             ["git", "submodule", "update", "--init", "--recursive", "--jobs", "8"],
-            repo_root, "Updating git submodules",
+            repo_root,
+            "Updating git submodules",
         )
     else:
         print("[Bolt Setup] Submodules already match the recorded revisions.")
 
-    # ── 3. Git LFS ──────────────────────────────────────────────────────
-    lfs_ok = run_step(
-        ["git", "lfs", "pull"], repo_root,
-        "Pulling Git LFS assets", allow_failure=True,
-    )
-    if not lfs_ok:
-        print("[Bolt Setup] Warning: git lfs pull failed or Git LFS is unavailable. Continuing...")
+    if args.skip_lfs:
+        print("[Bolt Setup] Git LFS skipped by --skip-lfs.")
+    elif has_lfs_patterns(repo_root):
+        lfs_ok = run_step(
+            ["git", "lfs", "pull"],
+            repo_root,
+            "Pulling Git LFS assets",
+            allow_failure=not args.require_lfs,
+        )
+        if not lfs_ok:
+            print("[Bolt Setup] Warning: git lfs pull failed or Git LFS is unavailable. Continuing...")
+    else:
+        print("[Bolt Setup] No Git LFS attributes found - skipping git lfs pull.")
 
-    # ── 4. .NET hosting files (Windows only) ─────────────────────────────
     if is_windows:
         if dotnet_files_present(repo_root):
-            print("[Bolt Setup] .NET hosting files already present — skipping.")
+            print("[Bolt Setup] .NET hosting files already present - skipping.")
         else:
             print("[Bolt Setup] Setting up .NET hosting files...")
             ps_script = script_dir / "setup-dotnet.ps1"
@@ -229,12 +265,11 @@ def main():
                     ps_args += ["-DotNetArch", dotnet_arch]
                 run_step(ps_args, script_dir, "Copying .NET hosting files", allow_failure=True)
 
-    # ── 5. Premake ───────────────────────────────────────────────────────
-    if premake_path:
-        action = args.generator or ("vs2022" if is_windows else "gmake2")
-        run_step([premake_path, action], repo_root, f"Generating {action} files via Premake")
-    else:
-        print("[Bolt Setup] Skipping project generation — premake5 not available.")
+    if not premake_path:
+        raise RuntimeError(describe_premake_expectation(repo_root))
+
+    action = args.generator or ("vs2022" if is_windows else "gmake2")
+    run_step([premake_path, action], repo_root, f"Generating {action} files via Premake")
 
     print()
     print("[Bolt Setup] Setup complete.")
