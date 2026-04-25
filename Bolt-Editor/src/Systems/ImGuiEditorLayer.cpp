@@ -36,6 +36,24 @@
 #include <unordered_set>
 
 namespace Bolt {
+	namespace {
+		void StartPlayOnAwakeComponents(Scene& scene)
+		{
+			auto audioView = scene.GetRegistry().view<AudioSourceComponent>(entt::exclude<DisabledTag>);
+			for (auto [ent, audio] : audioView.each()) {
+				if (audio.GetPlayOnAwake() && audio.GetAudioHandle().IsValid()) {
+					audio.Play();
+				}
+			}
+
+			auto particleView = scene.GetRegistry().view<ParticleSystem2DComponent>(entt::exclude<DisabledTag>);
+			for (auto [ent, particleSystem] : particleView.each()) {
+				if (particleSystem.PlayOnAwake) {
+					particleSystem.Play();
+				}
+			}
+		}
+	}
 
 
 
@@ -288,12 +306,7 @@ namespace Bolt {
 				Application::SetIsPlaying(true);
 
 				if (active) {
-					auto audioView = active->GetRegistry().view<AudioSourceComponent>(entt::exclude<DisabledTag>);
-					for (auto [ent, audio] : audioView.each()) {
-						if (audio.GetPlayOnAwake() && audio.GetAudioHandle().IsValid()) {
-							audio.Play();
-						}
-					}
+					StartPlayOnAwakeComponents(*active);
 				}
 			}
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play (Enter playmode)");

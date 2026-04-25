@@ -428,6 +428,10 @@ namespace Bolt {
 			return;
 		}
 
+		if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+			project->EnsureNativeScriptBootstrapFiles();
+		}
+
 		BT_INFO_TAG("ScriptSystem", "Rebuilding native scripts...");
 		const std::string nativeProjectDirectory = m_NativeProjectDirectory;
 		const std::string buildConfig = GetActiveNativeBuildConfig();

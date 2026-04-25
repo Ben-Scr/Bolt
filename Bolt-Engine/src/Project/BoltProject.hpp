@@ -40,6 +40,7 @@ namespace Bolt {
 		std::string GetUserAssemblyOutputPath(std::string_view configuration = {}) const;
 		std::string GetNativeDllPath() const;
 		std::string GetSceneFilePath(const std::string& sceneName) const;
+		void EnsureNativeScriptBootstrapFiles() const;
 
 		void Save() const;
 

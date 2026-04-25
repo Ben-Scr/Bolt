@@ -190,6 +190,48 @@ namespace Bolt {
 
 			return {};
 		}
+
+		std::string BuildNativeScriptExportsSource() {
+			return R"(#include <Scripting/NativeScript.hpp>
+
+#if defined(_WIN32)
+#define BOLT_NATIVE_SCRIPT_EXPORT extern "C" __declspec(dllexport)
+#elif defined(__GNUC__)
+#define BOLT_NATIVE_SCRIPT_EXPORT extern "C" __attribute__((visibility("default")))
+#else
+#define BOLT_NATIVE_SCRIPT_EXPORT extern "C"
+#endif
+
+BOLT_NATIVE_SCRIPT_EXPORT void BoltInitialize(void* engineAPI) {
+	Bolt::g_EngineAPI = static_cast<Bolt::NativeEngineAPI*>(engineAPI);
+}
+
+BOLT_NATIVE_SCRIPT_EXPORT Bolt::NativeScript* BoltCreateScript(const char* className) {
+	return Bolt::NativeScriptRegistry::Create(className);
+}
+
+BOLT_NATIVE_SCRIPT_EXPORT void BoltDestroyScript(Bolt::NativeScript* script) {
+	delete script;
+}
+)";
+		}
+
+		void EnsureNativeScriptExportsFile(const BoltProject& project) {
+			if (project.NativeSourceDir.empty()) {
+				return;
+			}
+
+			const std::filesystem::path sourceDirectory = project.NativeSourceDir;
+			std::error_code ec;
+			std::filesystem::create_directories(sourceDirectory, ec);
+
+			const std::filesystem::path exportsPath = sourceDirectory / "NativeScriptExports.cpp";
+			if (std::filesystem::exists(exportsPath, ec)) {
+				return;
+			}
+
+			File::WriteAllText(exportsPath.string(), BuildNativeScriptExportsSource());
+		}
 	}
 
 	static std::string GenerateGUID() {
@@ -327,6 +369,10 @@ namespace Bolt {
 		return Path::Combine(ScenesDirectory, sceneName + ".scene");
 	}
 
+	void BoltProject::EnsureNativeScriptBootstrapFiles() const {
+		EnsureNativeScriptExportsFile(*this);
+	}
+
 	void BoltProject::Save() const {
 		File::WriteAllText(ProjectFilePath, Json::Stringify(BuildProjectJson(*this), true));
 	}
@@ -419,6 +465,7 @@ namespace Bolt {
 			project.EngineVersion = BT_VERSION;
 
 		ResolvePaths(project);
+		project.EnsureNativeScriptBootstrapFiles();
 		return project;
 	}
 
@@ -702,6 +749,7 @@ foreach(config Debug Release Dist)
 endforeach()
 )";
 		File::WriteAllText(Path::Combine(project.NativeScriptsDir, "CMakeLists.txt"), cmakeFile);
+		project.EnsureNativeScriptBootstrapFiles();
 
 		// Generate .gitignore
 		File::WriteAllText(Path::Combine(project.RootDirectory, ".gitignore"),

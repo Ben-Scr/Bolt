@@ -37,6 +37,8 @@ public:
 	}
 
 	void ConfigureScenes() override {
+		Application::SetIsPlaying(false);
+
 		SceneDefinition& editorScene = GetSceneManager()->RegisterScene("SampleScene");
 		editorScene.OnLoad([](Scene& scene) {
 			BoltProject* project = ProjectManager::GetCurrentProject();
