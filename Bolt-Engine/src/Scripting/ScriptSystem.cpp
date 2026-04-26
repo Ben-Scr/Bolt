@@ -114,9 +114,7 @@ namespace Bolt {
 				".hpp",
 				".hxx",
 				".inl",
-				".ipp",
-				".cmake",
-				"CMakeLists.txt"
+				".ipp"
 			};
 		}
 
@@ -132,8 +130,6 @@ namespace Bolt {
 			};
 
 			appendTarget(sourceDirectory);
-			appendTarget(projectDirectory / "CMakeLists.txt");
-			appendTarget(projectDirectory / "cmake");
 			appendTarget(projectDirectory / "Include");
 
 			if (targets.empty()) {
@@ -151,11 +147,7 @@ namespace Bolt {
 				return;
 			}
 
-			for (const std::weak_ptr<Scene>& weakScene : app->GetSceneManager()->GetLoadedScenes()) {
-				if (std::shared_ptr<Scene> loadedScene = weakScene.lock()) {
-					func(*loadedScene);
-				}
-			}
+			app->GetSceneManager()->ForeachLoadedScene(std::forward<TFunc>(func));
 		}
 
 		void RemovePendingFieldValuesForClass(ScriptComponent& scriptComp, const std::string& className)
@@ -253,6 +245,38 @@ namespace Bolt {
 
 			task.reset();
 			return true;
+		}
+
+		bool NativeBuildNeedsConfigure(const std::filesystem::path& nativeProjectDirectory, const std::filesystem::path& buildDirectory)
+		{
+			std::error_code ec;
+			const std::filesystem::path cachePath = buildDirectory / "CMakeCache.txt";
+			if (!std::filesystem::exists(cachePath, ec) || ec) {
+				return true;
+			}
+
+			const std::filesystem::path cmakeListsPath = nativeProjectDirectory / "CMakeLists.txt";
+			if (!std::filesystem::exists(cmakeListsPath, ec) || ec) {
+				return false;
+			}
+
+			const auto cacheWriteTime = std::filesystem::last_write_time(cachePath, ec);
+			if (ec) {
+				return true;
+			}
+
+			const auto cmakeWriteTime = std::filesystem::last_write_time(cmakeListsPath, ec);
+			if (ec) {
+				return false;
+			}
+
+			return cmakeWriteTime > cacheWriteTime;
+		}
+
+		bool NativeBuildCacheExists(const std::filesystem::path& buildDirectory)
+		{
+			std::error_code ec;
+			return std::filesystem::exists(buildDirectory / "CMakeCache.txt", ec) && !ec;
 		}
 
 		void AbandonTask(std::shared_ptr<ProcessTaskState>& task, std::string_view description)
@@ -361,6 +385,7 @@ namespace Bolt {
 			}
 			const std::filesystem::path nativeDll = ResolveProjectNativeDLLPath(*project);
 			m_NativeDLLPath = nativeDll.string();
+			m_NativeTargetName = project->Name + "-NativeScripts";
 			if (std::filesystem::exists(nativeDll))
 			{
 				m_NativeHost.LoadDLL(m_NativeDLLPath);
@@ -381,6 +406,7 @@ namespace Bolt {
 			}
 			const std::filesystem::path nativeDll = ResolveStandaloneNativeDLLPath(exeDir);
 			m_NativeDLLPath = nativeDll.string();
+			m_NativeTargetName = "Bolt-NativeScripts";
 			if (std::filesystem::exists(nativeDll))
 			{
 				m_NativeHost.LoadDLL(m_NativeDLLPath);
@@ -401,11 +427,15 @@ namespace Bolt {
 
 	void ScriptSystem::RebuildAndReloadScripts()
 	{
-		if (IsTaskRunning(m_RebuildTask)) {
+		if (m_RebuildTask) {
+			return;
+		}
+		if (m_SandboxProjectPath.empty()) {
 			return;
 		}
 
 		BT_INFO_TAG("ScriptSystem", "Rebuilding C# scripts...");
+		m_LastRebuildFailed = false;
 		const std::string sandboxProjectPath = m_SandboxProjectPath;
 		m_RebuildTask = LaunchTask([sandboxProjectPath]() {
 			return Process::Run({
@@ -424,7 +454,7 @@ namespace Bolt {
 
 	void ScriptSystem::RebuildAndReloadNativeScripts()
 	{
-		if (IsTaskRunning(m_NativeRebuildTask) || m_NativeProjectDirectory.empty()) {
+		if (m_NativeRebuildTask || m_NativeProjectDirectory.empty()) {
 			return;
 		}
 
@@ -433,31 +463,69 @@ namespace Bolt {
 		}
 
 		BT_INFO_TAG("ScriptSystem", "Rebuilding native scripts...");
+		m_LastRebuildFailed = false;
 		const std::string nativeProjectDirectory = m_NativeProjectDirectory;
 		const std::string buildConfig = GetActiveNativeBuildConfig();
-		m_NativeRebuildTask = LaunchTask([nativeProjectDirectory, buildConfig]() {
+		const std::string nativeTargetName = m_NativeTargetName;
+		m_NativeRebuildTask = LaunchTask([nativeProjectDirectory, buildConfig, nativeTargetName]() {
 			const std::filesystem::path buildDirectory = std::filesystem::path(nativeProjectDirectory) / "build";
 
-			Process::Result configureResult = Process::Run({
-				"cmake",
-				"-B", buildDirectory.string(),
-				"-S", nativeProjectDirectory,
-				"-DCMAKE_BUILD_TYPE=" + buildConfig
-			}, nativeProjectDirectory);
-			if (!configureResult.Succeeded()) {
-				return configureResult;
+			Process::Result configureResult{};
+			if (NativeBuildNeedsConfigure(nativeProjectDirectory, buildDirectory)) {
+				std::vector<std::string> configureCommand = {
+					"cmake",
+					"-B", buildDirectory.string(),
+					"-S", nativeProjectDirectory,
+					"-DCMAKE_BUILD_TYPE=" + buildConfig
+				};
+
+#if defined(BT_PLATFORM_WINDOWS)
+				if (!NativeBuildCacheExists(buildDirectory)) {
+					configureCommand.push_back("-G");
+					configureCommand.push_back("Visual Studio 17 2022");
+					configureCommand.push_back("-A");
+					configureCommand.push_back("x64");
+				}
+#endif
+
+				configureResult = Process::Run(configureCommand, nativeProjectDirectory);
+				if (!configureResult.Succeeded()) {
+					return configureResult;
+				}
 			}
 
-			Process::Result buildResult = Process::Run({
+			std::vector<std::string> buildCommand = {
 				"cmake",
 				"--build", buildDirectory.string(),
 				"--config", buildConfig
-			}, nativeProjectDirectory);
+			};
+			if (!nativeTargetName.empty()) {
+				buildCommand.push_back("--target");
+				buildCommand.push_back(nativeTargetName);
+			}
+
+			Process::Result buildResult = Process::Run(buildCommand, nativeProjectDirectory);
 			if (!configureResult.Output.empty()) {
 				buildResult.Output = configureResult.Output + buildResult.Output;
 			}
 			return buildResult;
 		});
+	}
+
+	bool ScriptSystem::RequestRebuildAndReloadAll()
+	{
+		const bool wasRebuilding = IsRebuilding();
+		m_LastRebuildFailed = false;
+
+		RebuildAndReloadScripts();
+		RebuildAndReloadNativeScripts();
+
+		return IsRebuilding() || wasRebuilding;
+	}
+
+	bool ScriptSystem::IsRebuilding() const
+	{
+		return m_RebuildTask != nullptr || m_NativeRebuildTask != nullptr;
 	}
 
 	// ── OnGui: hot-reload polling + build overlay ──────────────────────
@@ -573,6 +641,7 @@ namespace Bolt {
 			}
 			else
 			{
+				m_LastRebuildFailed = true;
 				BT_ERROR_TAG("ScriptSystem", "C# build failed (exit code {})", result.ExitCode);
 				if (!result.Output.empty()) {
 					BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
@@ -594,6 +663,7 @@ namespace Bolt {
 				}
 
 				if (!std::filesystem::exists(m_NativeDLLPath)) {
+					m_LastRebuildFailed = true;
 					BT_ERROR_TAG("ScriptSystem", "Native scripts built, but DLL was not found at '{}'", m_NativeDLLPath);
 				}
 				else {
@@ -601,6 +671,7 @@ namespace Bolt {
 					ForEachLoadedScene([this](Scene& loadedScene) { TeardownNativeScripts(loadedScene); });
 
 					if (!m_NativeHost.LoadDLL(m_NativeDLLPath)) {
+						m_LastRebuildFailed = true;
 						BT_ERROR_TAG("ScriptSystem", "Native scripts built, but failed to load '{}'", m_NativeDLLPath);
 						BT_WARN_TAG("ScriptSystem", "Keeping the previous native script DLL loaded; instances will be recreated on the next update.");
 					}
@@ -611,6 +682,7 @@ namespace Bolt {
 			}
 			else
 			{
+				m_LastRebuildFailed = true;
 				BT_ERROR_TAG("ScriptSystem", "Native build failed (exit code {})", result.ExitCode);
 				if (!result.Output.empty()) {
 					BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
@@ -783,6 +855,7 @@ namespace Bolt {
 		m_SandboxProjectPath.clear();
 		m_NativeProjectDirectory.clear();
 		m_NativeDLLPath.clear();
+		m_NativeTargetName.clear();
 		m_SuppressRecompile = false;
 		m_PollingOwner = nullptr;
 	}

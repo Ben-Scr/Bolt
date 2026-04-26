@@ -25,6 +25,7 @@ namespace Bolt {
 	void AssetBrowser::BeginRename(const std::string& path, const std::string& currentName) {
 		m_IsRenaming = true;
 		m_RenamePath = path;
+		m_PressedPath.clear();
 		m_RenameFrameCounter = 0;
 		std::snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", currentName.c_str());
 	}
@@ -153,12 +154,29 @@ namespace Bolt {
 		return m_IsRenaming && m_RenamePath == path;
 	}
 
+	bool AssetBrowser::BeginRenameSelected() {
+		if (m_SelectedPath.empty() || m_IsRenaming) {
+			return false;
+		}
+
+		std::error_code ec;
+		if (!std::filesystem::exists(m_SelectedPath, ec) || ec) {
+			return false;
+		}
+
+		BeginRename(m_SelectedPath, std::filesystem::path(m_SelectedPath).filename().string());
+		return true;
+	}
+
 	void AssetBrowser::DeleteEntry(const std::string& path) {
 		m_Thumbnails.Invalidate(path);
 
 		if (Directory::Delete(path)) {
 			if (m_SelectedPath == path) {
 				m_SelectedPath.clear();
+			}
+			if (m_PressedPath == path) {
+				m_PressedPath.clear();
 			}
 			CancelRename();
 			m_NeedsRefresh = true;
@@ -267,11 +285,6 @@ namespace Bolt {
 			counter++;
 		}
 
-		{
-			std::ofstream placeholder(scriptPath);
-			placeholder << "// Rename this script to generate boilerplate\n";
-		}
-
 		m_PendingScriptType = PendingScriptType::CSharp;
 		m_PendingScriptDir = parentDir;
 
@@ -291,11 +304,6 @@ namespace Bolt {
 		while (std::filesystem::exists(scriptPath)) {
 			scriptPath = (std::filesystem::path(parentDir) / (baseName + std::to_string(counter) + ext)).string();
 			counter++;
-		}
-
-		{
-			std::ofstream placeholder(scriptPath);
-			placeholder << "// Rename this script to generate boilerplate\n";
 		}
 
 		m_PendingScriptType = PendingScriptType::Native;

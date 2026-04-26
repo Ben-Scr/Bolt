@@ -74,6 +74,7 @@ namespace Bolt {
 	namespace {
 		using NativeCreateFn = NativeScript* (*)(const char*);
 		using NativeDestroyFn = void (*)(NativeScript*);
+		using NativeHasFn = int (*)(const char*);
 		using NativeInitFn = void (*)(void* engineAPI);
 
 		std::filesystem::path NormalizeLibraryPath(const std::string& dllPath)
@@ -188,6 +189,7 @@ namespace Bolt {
 
 		NativeCreateFn newCreateFn = reinterpret_cast<NativeCreateFn>(getSymbol("BoltCreateScript"));
 		NativeDestroyFn newDestroyFn = reinterpret_cast<NativeDestroyFn>(getSymbol("BoltDestroyScript"));
+		NativeHasFn newHasFn = reinterpret_cast<NativeHasFn>(getSymbol("BoltHasScript"));
 
 		if (!newCreateFn || !newDestroyFn)
 		{
@@ -208,6 +210,7 @@ namespace Bolt {
 		m_DllHandle = newDllHandle;
 		m_CreateFn = newCreateFn;
 		m_DestroyFn = newDestroyFn;
+		m_HasFn = newHasFn;
 		m_DllPath = sourcePath.string();
 		m_LoadedDllPath = shadowPath;
 
@@ -224,6 +227,7 @@ namespace Bolt {
 		m_DllHandle = nullptr;
 		m_CreateFn = nullptr;
 		m_DestroyFn = nullptr;
+		m_HasFn = nullptr;
 		m_LoadedDllPath.clear();
 	}
 
@@ -242,6 +246,8 @@ namespace Bolt {
 		if (!script) return nullptr;
 
 		script->m_EntityID = static_cast<uint32_t>(entity);
+		script->m_Entity = entity;
+		script->m_Scene = scene;
 		m_LiveInstances.push_back(script);
 		return script;
 	}
@@ -255,6 +261,10 @@ namespace Bolt {
 		if (it != m_LiveInstances.end())
 			m_LiveInstances.erase(it);
 
+		script->m_EntityID = 0;
+		script->m_Entity = entt::null;
+		script->m_Scene = nullptr;
+
 		if (m_DestroyFn)
 			m_DestroyFn(script);
 	}
@@ -264,6 +274,9 @@ namespace Bolt {
 		for (auto* script : m_LiveInstances)
 		{
 			script->OnDestroy();
+			script->m_EntityID = 0;
+			script->m_Entity = entt::null;
+			script->m_Scene = nullptr;
 			if (m_DestroyFn) m_DestroyFn(script);
 		}
 		m_LiveInstances.clear();
@@ -272,6 +285,8 @@ namespace Bolt {
 	bool NativeScriptHost::HasClass(const std::string& className)
 	{
 		if (!m_CreateFn) return false;
+		if (m_HasFn) return m_HasFn(className.c_str()) != 0;
+
 		NativeScript* test = m_CreateFn(className.c_str());
 		if (!test) return false;
 		if (m_DestroyFn) m_DestroyFn(test);

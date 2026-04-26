@@ -5,6 +5,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <new>
 #include <utility>
 
 namespace Bolt {
@@ -87,7 +88,7 @@ namespace Bolt {
 
 }
 
-#ifdef BT_TRACK_MEMORY
+#if defined(BT_TRACK_MEMORY) && defined(BT_DEBUG)
 
 #ifdef BT_PLATFORM_WINDOWS
 

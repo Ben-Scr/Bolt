@@ -1,16 +1,37 @@
 #include "pch.hpp"
 #include "Memory.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <mutex>
 
 namespace Bolt {
 
 	static Bolt::AllocationStats s_GlobalStats;
-	static bool s_InInit = false;
-	static bool s_IsShutdown = false;
+	static thread_local bool s_InInit = false;
+	static std::atomic<bool> s_IsShutdown = false;
+	static std::once_flag s_InitOnce;
 
 	namespace {
+		size_t NormalizeAllocationSize(size_t size)
+		{
+			return size == 0 ? 1 : size;
+		}
+
+		void* AllocateOrThrow(size_t size)
+		{
+			if (void* memory = std::malloc(NormalizeAllocationSize(size))) {
+				return memory;
+			}
+
+			throw std::bad_alloc();
+		}
+
+		struct ScopedInitGuard
+		{
+			ScopedInitGuard() { s_InInit = true; }
+			~ScopedInitGuard() { s_InInit = false; }
+		};
 
 #ifndef BT_DIST
 		void WriteMemoryReportLine(const char* message)
@@ -71,14 +92,15 @@ namespace Bolt {
 
 	void Allocator::Init()
 	{
-		if (s_Data || s_IsShutdown)
+		if (s_Data || s_IsShutdown.load(std::memory_order_acquire))
 			return;
 
-		s_InInit = true;
-		AllocatorData* data = (AllocatorData*)Allocator::AllocateRaw(sizeof(AllocatorData));
-		new(data) AllocatorData();
-		s_Data = data;
-		s_InInit = false;
+		std::call_once(s_InitOnce, []() {
+			ScopedInitGuard guard;
+			AllocatorData* data = static_cast<AllocatorData*>(Allocator::AllocateRaw(sizeof(AllocatorData)));
+			new(data) AllocatorData();
+			s_Data = data;
+		});
 	}
 
 	void Allocator::Shutdown()
@@ -86,7 +108,7 @@ namespace Bolt {
 		if (!s_Data)
 			return;
 
-		s_InInit = true;
+		ScopedInitGuard guard;
 #ifndef BT_DIST
 		{
 			std::scoped_lock<std::mutex> lock(s_Data->m_Mutex);
@@ -96,24 +118,23 @@ namespace Bolt {
 		s_Data->~AllocatorData();
 		free(s_Data);
 		s_Data = nullptr;
-		s_InInit = false;
-		s_IsShutdown = true;
+		s_IsShutdown.store(true, std::memory_order_release);
 	}
 
 	void* Allocator::AllocateRaw(size_t size)
 	{
-		return malloc(size);
+		return AllocateOrThrow(size);
 	}
 
 	void* Allocator::Allocate(size_t size)
 	{
-		if (s_InInit || s_IsShutdown)
+		if (s_InInit || s_IsShutdown.load(std::memory_order_acquire))
 			return AllocateRaw(size);
 
 		if (!s_Data)
 			Init();
 
-		void* memory = malloc(size);
+		void* memory = AllocateOrThrow(size);
 
 		{
 			std::scoped_lock<std::mutex> lock(s_Data->m_Mutex);
@@ -133,13 +154,13 @@ namespace Bolt {
 
 	void* Allocator::Allocate(size_t size, const char* desc)
 	{
-		if (s_InInit || s_IsShutdown)
+		if (s_InInit || s_IsShutdown.load(std::memory_order_acquire))
 			return AllocateRaw(size);
 
 		if (!s_Data)
 			Init();
 
-		void* memory = malloc(size);
+		void* memory = AllocateOrThrow(size);
 
 		{
 			std::scoped_lock<std::mutex> lock(s_Data->m_Mutex);
@@ -162,13 +183,13 @@ namespace Bolt {
 
 	void* Allocator::Allocate(size_t size, const char* file, int line)
 	{
-		if (s_InInit || s_IsShutdown)
+		if (s_InInit || s_IsShutdown.load(std::memory_order_acquire))
 			return AllocateRaw(size);
 
 		if (!s_Data)
 			Init();
 
-		void* memory = malloc(size);
+		void* memory = AllocateOrThrow(size);
 
 		{
 			std::scoped_lock<std::mutex> lock(s_Data->m_Mutex);
@@ -193,7 +214,7 @@ namespace Bolt {
 		if (memory == nullptr)
 			return;
 
-		if (!s_Data || s_IsShutdown) {
+		if (!s_Data || s_IsShutdown.load(std::memory_order_acquire)) {
 			free(memory);
 			return;
 		}
@@ -235,7 +256,7 @@ namespace Bolt {
 	}
 }
 
-#if BT_TRACK_MEMORY && BT_PLATFORM_WINDOWS
+#if defined(BT_TRACK_MEMORY) && defined(BT_DEBUG) && defined(BT_PLATFORM_WINDOWS)
 
 _NODISCARD _Ret_notnull_ _Post_writable_byte_size_(size) _VCRT_ALLOCATOR
 void* __CRTDECL operator new(size_t size)

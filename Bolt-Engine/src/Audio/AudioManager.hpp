@@ -52,8 +52,10 @@ namespace Bolt {
 
 
 		struct SoundInstance {
-			ma_sound Sound;
+			ma_resource_manager_data_source DataSource{};
+			ma_sound Sound{};
 			AudioHandle AudioHandle;
+			bool HasDataSource = false;
 			bool IsValid = false;
 		};
 
@@ -116,10 +118,14 @@ namespace Bolt {
 
 		static AudioHandle::HandleType GenerateHandle();
 		static AudioHandle FindAudioByPath(const std::string& path);
+		static bool RegisterAudioData(const Audio& audio);
+		static void UnregisterAudioData(const Audio& audio);
 		static uint32_t CreateSoundInstance(const AudioHandle& audioHandle);
 		static void DestroySoundInstance(uint32_t instanceId);
 		static void RecycleSoundInstance(uint32_t index);
 		static void CleanupFinishedSounds();
+		static void RecalculateActiveSoundCount();
+		static bool StartOneShotInstance(const AudioHandle& audioHandle, float volume);
 
 		static void UpdateListener();
 		static void UpdateSoundInstances();

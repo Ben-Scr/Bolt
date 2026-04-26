@@ -171,7 +171,7 @@ project "Bolt-Engine"
     filter "configurations:Debug"
         runtime "Debug"
         symbols "On"
-        defines { "BT_DEBUG", "_DEBUG" }
+        defines { "BT_DEBUG", "_DEBUG", "BT_TRACK_MEMORY" }
 
     filter "configurations:Release"
         runtime "Release"

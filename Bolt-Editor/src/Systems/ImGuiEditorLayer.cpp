@@ -53,6 +53,14 @@ namespace Bolt {
 				}
 			}
 		}
+
+		bool IsLeftMouseDragPastClickThreshold()
+		{
+			const ImGuiIO& io = ImGui::GetIO();
+			const ImVec2 delta(io.MousePos.x - io.MouseClickedPos[ImGuiMouseButton_Left].x,
+				io.MousePos.y - io.MouseClickedPos[ImGuiMouseButton_Left].y);
+			return (delta.x * delta.x + delta.y * delta.y) > (io.MouseDragThreshold * io.MouseDragThreshold);
+		}
 	}
 
 
@@ -278,6 +286,54 @@ namespace Bolt {
 		return ImGui::Button(id + 2);
 	}
 
+	void ImGuiEditorLayer::BeginPlayModeRequest(Scene& scene) {
+		BoltProject* project = ProjectManager::GetCurrentProject();
+		if (project) {
+			std::string scenePath = project->GetSceneFilePath(scene.GetName());
+			if (scene.IsDirty()) {
+				SceneSerializer::SaveToFile(scene, scenePath);
+				project->LastOpenedScene = scene.GetName();
+				project->Save();
+			}
+			m_PlayModeScenePath = scenePath;
+		}
+
+		m_LogEntries.clear();
+		Application::SetPlaymodePaused(false);
+
+		ScriptSystem* scriptSys = scene.HasSystem<ScriptSystem>() ? scene.GetSystem<ScriptSystem>() : nullptr;
+		if (scriptSys && scriptSys->RequestRebuildAndReloadAll()) {
+			m_PlayModeRecompilePending = true;
+			return;
+		}
+
+		CompletePlayModeEntry(scene);
+	}
+
+	void ImGuiEditorLayer::CompletePlayModeEntry(Scene& scene) {
+		m_PlayModeRecompilePending = false;
+		Application::SetPlaymodePaused(false);
+		Application::SetIsPlaying(true);
+		StartPlayOnAwakeComponents(scene);
+	}
+
+	void ImGuiEditorLayer::PollPendingPlayModeRequest(Scene& scene) {
+		if (!m_PlayModeRecompilePending || Application::GetIsPlaying()) {
+			return;
+		}
+
+		ScriptSystem* scriptSys = scene.HasSystem<ScriptSystem>() ? scene.GetSystem<ScriptSystem>() : nullptr;
+		if (!scriptSys || !scriptSys->IsRebuilding()) {
+			if (!scriptSys || scriptSys->DidLastRebuildSucceed()) {
+				CompletePlayModeEntry(scene);
+			}
+			else {
+				m_PlayModeRecompilePending = false;
+				BT_ERROR_TAG("PlayMode", "Script compilation failed. Play Mode was not started.");
+			}
+		}
+	}
+
 	void ImGuiEditorLayer::RenderToolbar() {
 		ImGui::Begin("Toolbar");
 
@@ -289,25 +345,17 @@ namespace Bolt {
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
 
 		if (!isPlaying) {
+			if (m_PlayModeRecompilePending) {
+				ImGui::BeginDisabled();
+			}
 			if (IconButton("##Play", "play", iconSize, btnSize)) {
 				Scene* active = SceneManager::Get().GetActiveScene();
-				BoltProject* project = ProjectManager::GetCurrentProject();
-				if (active && project) {
-					std::string scenePath = project->GetSceneFilePath(active->GetName());
-					if (active->IsDirty()) {
-						SceneSerializer::SaveToFile(*active, scenePath);
-						project->LastOpenedScene = active->GetName();
-						project->Save();
-					}
-					m_PlayModeScenePath = scenePath;
-				}
-				m_LogEntries.clear();
-				Application::SetPlaymodePaused(false);
-				Application::SetIsPlaying(true);
-
 				if (active) {
-					StartPlayOnAwakeComponents(*active);
+					BeginPlayModeRequest(*active);
 				}
+			}
+			if (m_PlayModeRecompilePending) {
+				ImGui::EndDisabled();
 			}
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play (Enter playmode)");
 		}
@@ -372,6 +420,10 @@ namespace Bolt {
 		ImGui::SameLine();
 		const char* statusText = !isPlaying ? "Editor" : (isPaused ? "Paused" : "Playing");
 		ImGui::TextUnformatted(statusText);
+		if (m_PlayModeRecompilePending) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("Compiling scripts before Play...");
+		}
 		ImGui::End();
 
 		// Handle step-frame logic: pause again after stepping one frame
@@ -393,6 +445,7 @@ namespace Bolt {
 		m_SelectedEntity = entt::null;
 		m_RenamingEntity = entt::null;
 		m_EntityOrder.clear();
+		m_PlayModeRecompilePending = false;
 
 		Application::SetPlaymodePaused(false);
 		Application::SetIsPlaying(false);
@@ -432,6 +485,7 @@ namespace Bolt {
 
 	void ImGuiEditorLayer::ClearEntitySelection() {
 		m_SelectedEntity = entt::null;
+		m_PressedEntity = entt::null;
 		m_RenamingEntity = entt::null;
 		m_EntityRenameFrameCounter = 0;
 	}
@@ -718,11 +772,20 @@ namespace Bolt {
 					else {
 						bool entityLabelTruncated = false;
 						const std::string entityLabel = ImGuiUtils::Ellipsize(entity.GetName(), ImGui::GetContentRegionAvail().x, &entityLabelTruncated);
-						if (ImGui::Selectable(entityLabel.c_str(), selected)) {
-							SelectEntity(entityHandle);
-						}
+						ImGui::Selectable(entityLabel.c_str(), selected);
 						if (entityLabelTruncated && ImGui::IsItemHovered()) {
 							ImGui::SetTooltip("%s", entity.GetName().c_str());
+						}
+						if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+							m_PressedEntity = entityHandle;
+						}
+						if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+							if (ImGui::IsItemHovered() && m_PressedEntity == entityHandle && !IsLeftMouseDragPastClickThreshold()) {
+								SelectEntity(entityHandle);
+							}
+							if (m_PressedEntity == entityHandle) {
+								m_PressedEntity = entt::null;
+							}
 						}
 
 						if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -857,7 +920,8 @@ namespace Bolt {
 		}
 
 		if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)
-			&& ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+			&& ImGui::IsMouseReleased(ImGuiMouseButton_Left)
+			&& !IsLeftMouseDragPastClickThreshold()
 			&& !ImGui::IsAnyItemHovered()) {
 			ClearEntitySelection();
 		}
@@ -1012,6 +1076,7 @@ namespace Bolt {
 				// Flat filtered list when searching
 				registry.ForEachComponentInfo([&](const std::type_index&, const ComponentInfo& info) {
 					if (info.category != ComponentCategory::Component) return;
+					if (info.displayName == "Scripts") return;
 					if (info.has(entity)) return;
 
 					std::string lowerName = info.displayName;
@@ -1076,6 +1141,7 @@ namespace Bolt {
 
 				registry.ForEachComponentInfo([&](const std::type_index&, const ComponentInfo& info) {
 					if (info.category != ComponentCategory::Component) return;
+					if (info.displayName == "Scripts") return;
 					if (info.has(entity)) return;
 
 					std::string sub = info.subcategory.empty() ? "General" : info.subcategory;
@@ -1089,7 +1155,7 @@ namespace Bolt {
 				});
 
 				for (const auto& [subcategory, components] : categories) {
-					if (components.empty() && subcategory != "Scripting") continue;
+					if (components.empty()) continue;
 
 					if (ImGui::TreeNode(subcategory.c_str())) {
 						for (const auto* info : components) {

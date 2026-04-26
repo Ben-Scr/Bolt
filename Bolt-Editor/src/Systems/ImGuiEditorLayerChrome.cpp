@@ -303,6 +303,8 @@ namespace Bolt {
 					scriptSys->SetRecompileSuppressed(m_AssetBrowser.IsCreatingScript());
 		}
 
+		PollPendingPlayModeRequest(scene);
+
 		RenderToolbar();
 		RenderEntitiesPanel();
 		RenderInspectorPanel(scene);

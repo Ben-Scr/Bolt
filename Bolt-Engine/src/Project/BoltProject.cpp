@@ -210,6 +210,10 @@ BOLT_NATIVE_SCRIPT_EXPORT Bolt::NativeScript* BoltCreateScript(const char* class
 	return Bolt::NativeScriptRegistry::Create(className);
 }
 
+BOLT_NATIVE_SCRIPT_EXPORT int BoltHasScript(const char* className) {
+	return Bolt::NativeScriptRegistry::Has(className) ? 1 : 0;
+}
+
 BOLT_NATIVE_SCRIPT_EXPORT void BoltDestroyScript(Bolt::NativeScript* script) {
 	delete script;
 }
@@ -698,6 +702,8 @@ endif()
 		std::string cmakeFile = R"(cmake_minimum_required(VERSION 3.20)
 project()" + name + R"(-NativeScripts LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_CONFIGURATION_TYPES "Debug;Release;Dist" CACHE STRING "" FORCE)
@@ -718,12 +724,32 @@ function(bt_normalize_native_arch out_var raw_arch)
 endfunction()
 
 )" + boltRootBootstrap + R"(
-file(GLOB_RECURSE NATIVE_SOURCES "Source/*.cpp" "Source/*.h" "Source/*.hpp")
+file(GLOB_RECURSE NATIVE_SOURCES CONFIGURE_DEPENDS "Source/*.cpp" "Source/*.h" "Source/*.hpp")
 add_library(${PROJECT_NAME} SHARED ${NATIVE_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${BOLT_DIR}/Bolt-Engine/src"
+    "${BOLT_DIR}/External/spdlog/include"
+    "${BOLT_DIR}/External/glm"
+    "${BOLT_DIR}/External/entt/src"
+    "${BOLT_DIR}/External/stb"
+    "${BOLT_DIR}/External/magic_enum/include"
+    "${BOLT_DIR}/External/cereal/include"
+    "${BOLT_DIR}/External/glfw/include"
+    "${BOLT_DIR}/External/glad/include"
+    "${BOLT_DIR}/External/miniaudio"
+    "${BOLT_DIR}/External/box2d/include"
+    "${BOLT_DIR}/External/Bolt-Physics/include"
+    "${BOLT_DIR}/External/dotnet"
 )
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    BOLT_ALL_MODULES=1
+    $<$<CONFIG:Debug>:BT_DEBUG;_DEBUG>
+    $<$<CONFIG:Release>:BT_RELEASE;NDEBUG>
+    $<$<CONFIG:Dist>:BT_DIST;NDEBUG>
+)
+
 if(WIN32)
     bt_normalize_native_arch(BT_NATIVE_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
     set(BT_NATIVE_PLATFORM "windows-${BT_NATIVE_ARCH}")
@@ -735,6 +761,14 @@ elseif(UNIX AND NOT APPLE)
 else()
     message(FATAL_ERROR "Unsupported platform for native scripts")
 endif()
+
+target_link_directories(${PROJECT_NAME} PRIVATE
+    "$<$<CONFIG:Debug>:${BOLT_DIR}/bin/Debug-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+    "$<$<CONFIG:Release>:${BOLT_DIR}/bin/Release-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+    "$<$<CONFIG:Dist>:${BOLT_DIR}/bin/Dist-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+)
+target_link_libraries(${PROJECT_NAME} PRIVATE Bolt-Engine)
+
 if(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
 endif()

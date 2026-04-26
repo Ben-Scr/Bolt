@@ -29,6 +29,10 @@ namespace Bolt {
 		void SetRecompileSuppressed(bool suppressed) { m_SuppressRecompile = suppressed; }
 		bool IsRecompileSuppressed() const { return m_SuppressRecompile; }
 
+		bool RequestRebuildAndReloadAll();
+		bool IsRebuilding() const;
+		bool DidLastRebuildSucceed() const { return !m_LastRebuildFailed; }
+
 	private:
 		void RebuildAndReloadScripts();
 		void RebuildAndReloadNativeScripts();
@@ -48,11 +52,13 @@ namespace Bolt {
 		// C# hot-reload
 		static inline FileWatcher m_ScriptWatcher;
 		static inline std::shared_ptr<ScriptSystemProcessTaskState> m_RebuildTask;
+		static inline bool m_LastRebuildFailed = false;
 
 		// C++ native scripts
 		static inline NativeScriptHost m_NativeHost;
 		static inline FileWatcher m_NativeWatcher;
 		static inline std::string m_NativeDLLPath;
+		static inline std::string m_NativeTargetName;
 		static inline std::shared_ptr<ScriptSystemProcessTaskState> m_NativeRebuildTask;
 	};
 

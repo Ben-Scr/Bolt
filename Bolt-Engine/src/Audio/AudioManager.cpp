@@ -91,20 +91,14 @@ namespace Bolt {
 			return;
 		}
 
-		for (auto& instance : s_soundInstances) {
-			if (instance.IsValid) {
-				ma_sound_stop(&instance.Sound);
-				ma_sound_uninit(&instance.Sound);
-			}
-		}
+		UnloadAllAudio();
+
 		s_soundInstances.clear();
 		s_freeInstanceIndices.clear();
 		s_soundLimits.clear();
 		s_activeSoundCount = 0;
 		s_soundsPlayedThisFrame = 0;
 		s_soundQueue = {};
-
-		UnloadAllAudio();
 
 		ma_engine_uninit(&s_Engine);
 		s_IsInitialized = false;
@@ -116,19 +110,12 @@ namespace Bolt {
 		}
 
 		s_soundsPlayedThisFrame = 0;
-
-		ProcessSoundQueue();
 		CleanupFinishedSounds();
+		RecalculateActiveSoundCount();
+		ProcessSoundQueue();
 		UpdateListener();
 		UpdateSoundInstances();
-
-
-		s_activeSoundCount = 0;
-		for (const auto& instance : s_soundInstances) {
-			if (instance.IsValid && ma_sound_is_playing(&instance.Sound)) {
-				s_activeSoundCount++;
-			}
-		}
+		RecalculateActiveSoundCount();
 	}
 
 	bool AudioManager::CanPlaySound(const AudioHandle& audioHandle, float priority) {
@@ -172,11 +159,11 @@ namespace Bolt {
 				continue;
 			}
 
-			PlayOneShot(request.GetHandle, request.Volume);
-
-
-			s_soundsPlayedThisFrame++;
-			ThrottleSound(request.GetHandle);
+			if (StartOneShotInstance(request.GetHandle, request.Volume)) {
+				s_soundsPlayedThisFrame++;
+				ThrottleSound(request.GetHandle);
+				s_activeSoundCount++;
+			}
 			processed++;
 		}
 	}
@@ -243,6 +230,9 @@ namespace Bolt {
 		}
 
 		AudioHandle::HandleType id = GenerateHandle();
+		if (!RegisterAudioData(*audio)) {
+			BT_CORE_WARN_TAG("AudioManager", "Falling back to on-demand audio loading for '{}'", resolvedPath);
+		}
 		s_audioMap[id] = std::move(audio);
 		return AudioHandle(id);
 	}
@@ -274,6 +264,7 @@ namespace Bolt {
 				}
 			}
 
+			UnregisterAudioData(*it->second);
 			s_audioMap.erase(it);
 			s_soundLimits.erase(audioHandle.GetHandle());
 		}
@@ -284,6 +275,12 @@ namespace Bolt {
 		for (auto& instance : s_soundInstances) {
 			if (instance.IsValid) {
 				RecycleSoundInstance(static_cast<uint32_t>(&instance - s_soundInstances.data()));
+			}
+		}
+
+		for (const auto& [id, audio] : s_audioMap) {
+			if (audio) {
+				UnregisterAudioData(*audio);
 			}
 		}
 
@@ -334,6 +331,7 @@ namespace Bolt {
 		else {
 			BT_CORE_ERROR("[{}] Failed to retrieve sound instance after creation", ErrorCodeToString(BoltErrorCode::NullReference));
 			source.SetInstanceId(0);
+			DestroySoundInstance(instanceId);
 		}
 	}
 
@@ -381,28 +379,56 @@ namespace Bolt {
 			return;
 		}
 
-		const Audio* audio = GetAudio(audioHandle);
-		if (!audio) {
+		SoundRequest request{};
+		request.GetHandle = audioHandle;
+		request.Volume = volume;
+		request.Priority = 1.0f;
+		request.RequestTime = std::chrono::steady_clock::now();
+
+		if (IsThrottled(audioHandle) || !CanPlaySound(audioHandle, request.Priority)) {
+			s_soundQueue.push(request);
 			return;
 		}
 
-		const uint32_t instanceId = CreateSoundInstance(audioHandle);
-		if (instanceId == 0) {
-			BT_CORE_WARN("[{}] Failed to create one-shot sound instance", ErrorCodeToString(BoltErrorCode::LoadFailed));
-			return;
+		if (StartOneShotInstance(audioHandle, volume)) {
+			s_soundsPlayedThisFrame++;
+			ThrottleSound(audioHandle);
+		}
+	}
+
+	bool AudioManager::RegisterAudioData(const Audio& audio) {
+		if (!s_IsInitialized || !audio.IsLoaded() || audio.GetData() == nullptr || audio.GetFrameCount() == 0) {
+			return false;
 		}
 
-		SoundInstance* instance = GetSoundInstance(instanceId);
-		if (!instance) {
-			BT_CORE_WARN("[{}] Failed to retrieve one-shot sound instance", ErrorCodeToString(BoltErrorCode::NullReference));
-			return;
+		ma_resource_manager* resourceManager = ma_engine_get_resource_manager(&s_Engine);
+		if (!resourceManager) {
+			return false;
 		}
 
-		ma_sound_set_volume(&instance->Sound, volume * s_masterVolume);
-		ma_result result = ma_sound_start(&instance->Sound);
+		const ma_result result = ma_resource_manager_register_decoded_data(
+			resourceManager,
+			audio.GetFilepath().c_str(),
+			audio.GetData(),
+			audio.GetFrameCount(),
+			audio.GetFormat(),
+			audio.GetChannels(),
+			audio.GetSampleRate());
 		if (result != MA_SUCCESS) {
-			BT_CORE_WARN("[{}] Failed to start one-shot sound. Error: {}", ErrorCodeToString(BoltErrorCode::LoadFailed), static_cast<int>(result));
-			DestroySoundInstance(instanceId);
+			BT_CORE_WARN_TAG("AudioManager", "Failed to register decoded audio data for '{}': {}", audio.GetFilepath(), static_cast<int>(result));
+			return false;
+		}
+
+		return true;
+	}
+
+	void AudioManager::UnregisterAudioData(const Audio& audio) {
+		if (!s_IsInitialized || audio.GetFilepath().empty()) {
+			return;
+		}
+
+		if (ma_resource_manager* resourceManager = ma_engine_get_resource_manager(&s_Engine)) {
+			ma_resource_manager_unregister_data(resourceManager, audio.GetFilepath().c_str());
 		}
 	}
 
@@ -474,10 +500,29 @@ namespace Bolt {
 		}
 
 		SoundInstance& instance = s_soundInstances[instanceId];
-
-		ma_result result = ma_sound_init_from_file(&s_Engine, audio->GetFilepath().c_str(),
-			0, nullptr, nullptr, &instance.Sound);
+		const ma_uint32 dataSourceFlags = MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE;
+		ma_result result = ma_resource_manager_data_source_init(
+			ma_engine_get_resource_manager(&s_Engine),
+			audio->GetFilepath().c_str(),
+			dataSourceFlags,
+			nullptr,
+			&instance.DataSource);
 		if (result != MA_SUCCESS) {
+			BT_CORE_WARN("[{}] AudioManager: Failed to create sound data source. Error: {}", ErrorCodeToString(BoltErrorCode::LoadFailed), static_cast<int>(result));
+			if (instanceId == s_soundInstances.size() - 1) {
+				s_soundInstances.pop_back();
+			}
+			else {
+				s_freeInstanceIndices.push_back(instanceId);
+			}
+			return 0;
+		}
+
+		instance.HasDataSource = true;
+		result = ma_sound_init_from_data_source(&s_Engine, &instance.DataSource, 0, nullptr, &instance.Sound);
+		if (result != MA_SUCCESS) {
+			ma_resource_manager_data_source_uninit(&instance.DataSource);
+			instance.HasDataSource = false;
 			BT_CORE_WARN("[{}] AudioManager: Failed to create sound instance. Error: {}", ErrorCodeToString(BoltErrorCode::LoadFailed), static_cast<int>(result));
 			if (instanceId == s_soundInstances.size() - 1) {
 				s_soundInstances.pop_back();
@@ -538,6 +583,10 @@ namespace Bolt {
 
 		ma_sound_stop(&instance.Sound);
 		ma_sound_uninit(&instance.Sound);
+		if (instance.HasDataSource) {
+			ma_resource_manager_data_source_uninit(&instance.DataSource);
+			instance.HasDataSource = false;
+		}
 		instance.IsValid = false;
 		instance.AudioHandle = AudioHandle();
 		s_freeInstanceIndices.push_back(index);
@@ -563,6 +612,40 @@ namespace Bolt {
 		if (!s_IsInitialized) {
 			return;
 		}
+	}
+
+	void AudioManager::RecalculateActiveSoundCount() {
+		s_activeSoundCount = 0;
+		for (const auto& instance : s_soundInstances) {
+			if (instance.IsValid && ma_sound_is_playing(&instance.Sound)) {
+				s_activeSoundCount++;
+			}
+		}
+	}
+
+	bool AudioManager::StartOneShotInstance(const AudioHandle& audioHandle, float volume) {
+		const uint32_t instanceId = CreateSoundInstance(audioHandle);
+		if (instanceId == 0) {
+			BT_CORE_WARN("[{}] Failed to create one-shot sound instance", ErrorCodeToString(BoltErrorCode::LoadFailed));
+			return false;
+		}
+
+		SoundInstance* instance = GetSoundInstance(instanceId);
+		if (!instance) {
+			BT_CORE_WARN("[{}] Failed to retrieve one-shot sound instance", ErrorCodeToString(BoltErrorCode::NullReference));
+			DestroySoundInstance(instanceId);
+			return false;
+		}
+
+		ma_sound_set_volume(&instance->Sound, volume * s_masterVolume);
+		const ma_result result = ma_sound_start(&instance->Sound);
+		if (result != MA_SUCCESS) {
+			BT_CORE_WARN("[{}] Failed to start one-shot sound. Error: {}", ErrorCodeToString(BoltErrorCode::LoadFailed), static_cast<int>(result));
+			DestroySoundInstance(instanceId);
+			return false;
+		}
+
+		return true;
 	}
 
 }

@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 project(Bolt-NativeScripts LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_CONFIGURATION_TYPES "Debug;Release;Dist" CACHE STRING "" FORCE)
@@ -21,7 +23,9 @@ function(bt_normalize_native_arch out_var raw_arch)
     endif()
 endfunction()
 
-file(GLOB_RECURSE NATIVE_SCRIPT_SOURCES
+set(BOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+file(GLOB_RECURSE NATIVE_SCRIPT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/*.hpp"
@@ -29,10 +33,29 @@ file(GLOB_RECURSE NATIVE_SCRIPT_SOURCES
 
 add_library(Bolt-NativeScripts SHARED ${NATIVE_SCRIPT_SOURCES})
 
-# Only NativeScript.hpp needed — it's self-contained, no engine link required.
-# Engine access goes through the NativeEngineAPI function pointers.
+# Native scripts include the engine public headers for IntelliSense and template APIs.
+# Non-inline runtime calls should still go through NativeEngineAPI or exported bindings.
 target_include_directories(Bolt-NativeScripts PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Bolt-Engine/src
+    "${BOLT_DIR}/Bolt-Engine/src"
+    "${BOLT_DIR}/External/spdlog/include"
+    "${BOLT_DIR}/External/glm"
+    "${BOLT_DIR}/External/entt/src"
+    "${BOLT_DIR}/External/stb"
+    "${BOLT_DIR}/External/magic_enum/include"
+    "${BOLT_DIR}/External/cereal/include"
+    "${BOLT_DIR}/External/glfw/include"
+    "${BOLT_DIR}/External/glad/include"
+    "${BOLT_DIR}/External/miniaudio"
+    "${BOLT_DIR}/External/box2d/include"
+    "${BOLT_DIR}/External/Bolt-Physics/include"
+    "${BOLT_DIR}/External/dotnet"
+)
+
+target_compile_definitions(Bolt-NativeScripts PRIVATE
+    BOLT_ALL_MODULES=1
+    $<$<CONFIG:Debug>:BT_DEBUG;_DEBUG>
+    $<$<CONFIG:Release>:BT_RELEASE;NDEBUG>
+    $<$<CONFIG:Dist>:BT_DIST;NDEBUG>
 )
 
 if(WIN32)
@@ -46,6 +69,13 @@ elseif(UNIX AND NOT APPLE)
 else()
     message(FATAL_ERROR "Unsupported platform for native scripts")
 endif()
+
+target_link_directories(Bolt-NativeScripts PRIVATE
+    "$<$<CONFIG:Debug>:${BOLT_DIR}/bin/Debug-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+    "$<$<CONFIG:Release>:${BOLT_DIR}/bin/Release-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+    "$<$<CONFIG:Dist>:${BOLT_DIR}/bin/Dist-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+)
+target_link_libraries(Bolt-NativeScripts PRIVATE Bolt-Engine)
 
 if(MSVC)
     target_compile_options(Bolt-NativeScripts PRIVATE /utf-8)

@@ -1,6 +1,10 @@
 #pragma once
 #include <miniaudio.h>
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 namespace Bolt {
 
     class Audio {
@@ -14,8 +18,9 @@ namespace Bolt {
         Audio& operator=(Audio&& other) noexcept;
 
         bool LoadFromFile(const std::string& filepath);
-       
-        const ma_decoder& GetDecoder() const { return m_Decoder; }  
+
+        const void* GetData() const { return m_DecodedFrames.empty() ? nullptr : m_DecodedFrames.data(); }
+        ma_format GetFormat() const { return m_Format; }
         bool IsLoaded() const { return m_IsLoaded; }
         const std::string& GetFilepath() const { return m_Filepath; }
 
@@ -26,7 +31,11 @@ namespace Bolt {
         float GetDurationSeconds() const;
 
     private:
-        ma_decoder m_Decoder{};
+        std::vector<float> m_DecodedFrames;
+        ma_format m_Format = ma_format_unknown;
+        ma_uint32 m_Channels = 0;
+        ma_uint32 m_SampleRate = 0;
+        ma_uint64 m_FrameCount = 0;
         bool m_IsLoaded = false;
         std::string m_Filepath;
 

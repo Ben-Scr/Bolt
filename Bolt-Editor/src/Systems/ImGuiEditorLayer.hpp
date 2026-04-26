@@ -75,6 +75,9 @@ namespace Bolt {
 		void ExecuteBuild();
 		void RenderPackageManagerPanel();
 		void RenderAssetInspector();
+		void BeginPlayModeRequest(Scene& scene);
+		void CompletePlayModeEntry(Scene& scene);
+		void PollPendingPlayModeRequest(Scene& scene);
 		void RestoreEditorSceneAfterPlaymode();
 		void SelectEntity(EntityHandle entity);
 		void ClearEntitySelection();
@@ -97,12 +100,14 @@ namespace Bolt {
 			const Color& clearColor = Color::Background());
 
 		EntityHandle m_SelectedEntity = entt::null;
+		EntityHandle m_PressedEntity = entt::null;
 		EventId m_LogSubscriptionId{};
 		std::vector<LogEntry> m_LogEntries;
 		std::shared_ptr<LogDispatchState> m_LogDispatchState;
 		bool m_ShowLogInfo = true;
 		bool m_ShowLogWarn = true;
 		bool m_ShowLogError = true;
+		std::vector<char> m_LogTextBuffer;
 		std::vector<PreviewTextureEntry> m_PreviewTextureCache;
 		std::unordered_map<std::string, size_t> m_PreviewTextureLookup;
 		std::uint64_t m_PreviewTextureTick = 0;
@@ -148,6 +153,7 @@ namespace Bolt {
 		std::string m_SelectedAssetPath;
 
 		std::string m_PlayModeScenePath;
+		bool m_PlayModeRecompilePending = false;
 		int m_StepFrames = 0;
 
 		bool m_ShowQuitSaveDialog = false;

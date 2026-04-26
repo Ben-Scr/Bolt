@@ -19,9 +19,12 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <algorithm>
+#include <limits>
 #include <system_error>
 
 #ifdef BT_PLATFORM_WINDOWS
+#include <shellapi.h>
 #include <shobjidl.h>
 #endif
 
@@ -99,6 +102,95 @@ namespace Bolt {
 	}
 #endif
 
+	static void AddSaturating(std::uintmax_t& total, std::uintmax_t value) {
+		const std::uintmax_t maxValue = std::numeric_limits<std::uintmax_t>::max();
+		total = value > maxValue - total ? maxValue : total + value;
+	}
+
+	static std::uintmax_t CalculateProjectDirectorySize(const std::filesystem::path& root, std::string& errorMessage) {
+		std::error_code ec;
+		if (!std::filesystem::exists(root, ec) || ec) {
+			errorMessage = ec ? ec.message() : "Project folder not found.";
+			return 0;
+		}
+
+		if (!std::filesystem::is_directory(root, ec) || ec) {
+			errorMessage = ec ? ec.message() : "Project path is not a folder.";
+			return 0;
+		}
+
+		std::uintmax_t total = 0;
+		std::vector<std::filesystem::path> pendingDirectories;
+		pendingDirectories.push_back(root);
+
+		while (!pendingDirectories.empty()) {
+			std::filesystem::path current = std::move(pendingDirectories.back());
+			pendingDirectories.pop_back();
+
+			ec.clear();
+			std::filesystem::directory_iterator it(
+				current,
+				std::filesystem::directory_options::skip_permission_denied,
+				ec);
+			if (ec) {
+				if (current == root) {
+					errorMessage = ec.message();
+					return 0;
+				}
+				continue;
+			}
+
+			const std::filesystem::directory_iterator end;
+			while (it != end) {
+				const std::filesystem::directory_entry& entry = *it;
+
+				std::error_code entryError;
+				if (entry.is_symlink(entryError) && !entryError) {
+					// Avoid counting linked directories outside the project or following cycles.
+				}
+				else {
+					entryError.clear();
+					if (entry.is_directory(entryError) && !entryError) {
+						pendingDirectories.push_back(entry.path());
+					}
+					else {
+						entryError.clear();
+						if (entry.is_regular_file(entryError) && !entryError) {
+							entryError.clear();
+							const std::uintmax_t fileSize = entry.file_size(entryError);
+							if (!entryError) {
+								AddSaturating(total, fileSize);
+							}
+						}
+					}
+				}
+
+				ec.clear();
+				it.increment(ec);
+				if (ec) {
+					break;
+				}
+			}
+		}
+
+		return total;
+	}
+
+	static bool IsSafeProjectDeleteRoot(const std::filesystem::path& path) {
+		if (path.empty()) {
+			return false;
+		}
+
+		std::error_code ec;
+		std::filesystem::path absolutePath = std::filesystem::absolute(path, ec);
+		if (ec) {
+			return false;
+		}
+
+		absolutePath = absolutePath.lexically_normal();
+		return absolutePath.has_filename() && absolutePath != absolutePath.root_path();
+	}
+
 	// ── Lifecycle ───────────────────────────────────────────────────
 
 	void LauncherLayer::OnAttach(Application& app) {
@@ -126,6 +218,7 @@ namespace Bolt {
 	void LauncherLayer::OnDetach(Application& app) {
 		(void)app;
 		ResetCreateProjectTask();
+		m_ProjectSizeTasks.clear();
 	}
 
 	void LauncherLayer::ResetCreateProjectTask(bool clearWorker) {
@@ -357,10 +450,16 @@ namespace Bolt {
 			ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", m_OpenError.c_str());
 		}
 
+		if (!m_ProjectActionError.empty()) {
+			ImGui::Spacing();
+			ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", m_ProjectActionError.c_str());
+		}
+
 		ImGui::EndChild();
 
 		// L6: Render create popup modal inside the launcher window context
 		RenderCreateProjectPopup();
+		RenderDeleteProjectPopups();
 
 		ImGui::End();
 	}
@@ -384,19 +483,29 @@ namespace Bolt {
 			ImGui::PushID(i);
 
 			std::string timeStr = FormatRelativeTime(entry.lastOpened);
+			std::string sizeStr = GetProjectSizeDisplayText(entry);
 
 			ImVec2 cursorPos = ImGui::GetCursorScreenPos();
 			float rowWidth = ImGui::GetContentRegionAvail().x;
 			float buttonWidth = 60.0f;
-			float rowHeight = 50.0f;
+			float rowHeight = 68.0f;
 
 			// Draw an invisible item spanning the row for layout + right-click context
 			ImGui::InvisibleButton("##Row", ImVec2(rowWidth - buttonWidth - 8, rowHeight));
 
 			// Right-click context menu per item
 			if (ImGui::BeginPopupContextItem("##RowCtx")) {
+				if (ImGui::MenuItem("Open in Explorer")) {
+					OpenProjectInExplorer(entry);
+				}
+
 				if (ImGui::MenuItem("Remove from List")) {
 					removeIndex = i;
+				}
+
+				ImGui::Separator();
+				if (ImGui::MenuItem("Delete Project...")) {
+					RequestProjectDelete(entry);
 				}
 				ImGui::EndPopup();
 			}
@@ -417,6 +526,10 @@ namespace Bolt {
 			// Draw path
 			ImGui::SetCursorScreenPos(ImVec2(cursorPos.x + 8, cursorPos.y + 24));
 			ImGui::TextDisabled("%s", entry.path.c_str());
+
+			// Draw size with a placeholder while the background scan is running.
+			ImGui::SetCursorScreenPos(ImVec2(cursorPos.x + 8, cursorPos.y + 44));
+			ImGui::TextDisabled("Size: %s", sizeStr.c_str());
 
 			// Draw relative time in upper-right (offset left to leave room for button)
 			if (!timeStr.empty()) {
@@ -445,8 +558,150 @@ namespace Bolt {
 
 		// Deferred removal to avoid modifying the list during iteration
 		if (removeIndex >= 0) {
-			m_Registry.RemoveProject(projects[removeIndex].path);
+			const std::string removedPath = projects[removeIndex].path;
+			m_Registry.RemoveProject(removedPath);
 			m_Registry.Save();
+			m_ProjectSizeTasks.erase(removedPath);
+		}
+	}
+
+	std::shared_ptr<LauncherLayer::ProjectSizeTaskState> LauncherLayer::GetOrStartProjectSizeTask(const LauncherProjectEntry& entry) {
+		auto existing = m_ProjectSizeTasks.find(entry.path);
+		if (existing != m_ProjectSizeTasks.end()) {
+			return existing->second;
+		}
+
+		auto task = std::make_shared<ProjectSizeTaskState>();
+		m_ProjectSizeTasks.emplace(entry.path, task);
+
+		std::thread([task, path = entry.path]() {
+			std::string error;
+			const std::uintmax_t bytes = CalculateProjectDirectorySize(std::filesystem::path(path), error);
+
+			std::scoped_lock lock(task->Mutex);
+			task->Bytes = bytes;
+			task->Error = std::move(error);
+			task->Failed = !task->Error.empty();
+			task->Finished = true;
+		}).detach();
+
+		return task;
+	}
+
+	std::string LauncherLayer::GetProjectSizeDisplayText(const LauncherProjectEntry& entry) {
+		std::shared_ptr<ProjectSizeTaskState> task = GetOrStartProjectSizeTask(entry);
+
+		std::scoped_lock lock(task->Mutex);
+		if (!task->Finished) {
+			return "calculating...";
+		}
+		if (task->Failed) {
+			return "unavailable";
+		}
+
+		const std::uintmax_t maxSize = static_cast<std::uintmax_t>(std::numeric_limits<std::size_t>::max());
+		const std::size_t formattedSize = static_cast<std::size_t>(std::min(task->Bytes, maxSize));
+		return StringHelper::ToIEC(formattedSize);
+	}
+
+	void LauncherLayer::RequestProjectDelete(const LauncherProjectEntry& entry) {
+		m_PendingDeleteProject = entry;
+		m_DeleteError.clear();
+		m_ProjectActionError.clear();
+		m_OpenDeleteConfirmPopup = true;
+		m_OpenDeleteFinalConfirmPopup = false;
+	}
+
+	void LauncherLayer::RenderDeleteProjectPopups() {
+		if (m_OpenDeleteConfirmPopup) {
+			ImGui::OpenPopup("Delete Project?");
+			m_OpenDeleteConfirmPopup = false;
+		}
+		if (m_OpenDeleteFinalConfirmPopup) {
+			ImGui::OpenPopup("Permanently Delete Project?");
+			m_OpenDeleteFinalConfirmPopup = false;
+		}
+
+		ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+		ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Appearing);
+
+		if (ImGui::BeginPopupModal("Delete Project?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			if (!m_PendingDeleteProject.has_value()) {
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return;
+			}
+
+			const LauncherProjectEntry& entry = *m_PendingDeleteProject;
+			ImGui::TextWrapped("Delete project '%s'?", entry.name.c_str());
+			ImGui::Spacing();
+			ImGui::TextWrapped("This will permanently delete the project folder from disk and remove it from the launcher list.");
+			ImGui::Spacing();
+			ImGui::TextWrapped("Folder: %s", entry.path.c_str());
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::Spacing();
+
+			if (ImGui::Button("Continue", ImVec2(140, 0))) {
+				m_OpenDeleteFinalConfirmPopup = true;
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+				m_PendingDeleteProject.reset();
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::EndPopup();
+		}
+
+		ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
+
+		if (ImGui::BeginPopupModal("Permanently Delete Project?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			if (!m_PendingDeleteProject.has_value()) {
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return;
+			}
+
+			const LauncherProjectEntry& entry = *m_PendingDeleteProject;
+			ImGui::TextWrapped("Final confirmation: permanently delete '%s'?", entry.name.c_str());
+			ImGui::Spacing();
+			ImGui::TextWrapped("This action cannot be undone. The folder below will be deleted from disk.");
+			ImGui::Spacing();
+			ImGui::TextWrapped("Folder: %s", entry.path.c_str());
+
+			if (!m_DeleteError.empty()) {
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", m_DeleteError.c_str());
+			}
+
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::Spacing();
+
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.12f, 0.12f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.18f, 0.18f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.08f, 0.08f, 1.0f));
+			const bool deleteClicked = ImGui::Button("Permanently Delete", ImVec2(180, 0));
+			ImGui::PopStyleColor(3);
+
+			if (deleteClicked && DeleteProjectFromDisk(entry)) {
+				m_PendingDeleteProject.reset();
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+				m_PendingDeleteProject.reset();
+				m_DeleteError.clear();
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::EndPopup();
 		}
 	}
 
@@ -628,6 +883,97 @@ namespace Bolt {
 			BT_ERROR_TAG("Launcher", "Bolt-Editor.exe not found");
 		}
 #endif
+	}
+
+	void LauncherLayer::OpenProjectInExplorer(const LauncherProjectEntry& entry) {
+		m_ProjectActionError.clear();
+
+		std::error_code ec;
+		if (!std::filesystem::exists(entry.path, ec) || ec) {
+			m_ProjectActionError = ec ? "Project folder could not be checked: " + ec.message() : "Project folder not found";
+			return;
+		}
+
+#ifdef BT_PLATFORM_WINDOWS
+		const std::wstring projectPath = Utf8ToWide(entry.path);
+		if (projectPath.empty() && !entry.path.empty()) {
+			m_ProjectActionError = "Project path is not valid UTF-8";
+			return;
+		}
+
+		const HINSTANCE result = ShellExecuteW(nullptr, L"open", projectPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+		const INT_PTR resultCode = reinterpret_cast<INT_PTR>(result);
+		if (resultCode <= 32) {
+			m_ProjectActionError = "Failed to open project in Explorer (code " + std::to_string(resultCode) + ")";
+		}
+#elif defined(BT_PLATFORM_LINUX)
+		if (!Process::LaunchDetached({ "xdg-open", entry.path })) {
+			m_ProjectActionError = "Failed to open project in file manager";
+		}
+#else
+		m_ProjectActionError = "Open in Explorer is not supported on this platform";
+#endif
+	}
+
+	bool LauncherLayer::DeleteProjectFromDisk(const LauncherProjectEntry& entry) {
+		auto fail = [this](std::string message) -> bool {
+			m_DeleteError = std::move(message);
+			m_ProjectActionError = m_DeleteError;
+			return false;
+		};
+
+		m_DeleteError.clear();
+		m_ProjectActionError.clear();
+
+		std::error_code ec;
+		std::filesystem::path projectPath = std::filesystem::weakly_canonical(entry.path, ec);
+		if (ec) {
+			ec.clear();
+			projectPath = std::filesystem::absolute(entry.path, ec);
+			if (ec) {
+				return fail("Project folder could not be resolved: " + ec.message());
+			}
+		}
+		projectPath = projectPath.lexically_normal();
+
+		if (!IsSafeProjectDeleteRoot(projectPath)) {
+			return fail("Refusing to delete an unsafe project folder path.");
+		}
+
+		const bool exists = std::filesystem::exists(projectPath, ec);
+		if (ec) {
+			return fail("Project folder could not be checked: " + ec.message());
+		}
+		if (!exists) {
+			m_Registry.RemoveProject(entry.path);
+			m_Registry.Save();
+			m_ProjectSizeTasks.erase(entry.path);
+			return true;
+		}
+
+		const bool isDirectory = std::filesystem::is_directory(projectPath, ec);
+		if (ec) {
+			return fail("Project folder could not be checked: " + ec.message());
+		}
+		if (!isDirectory) {
+			return fail("Project path is not a folder. Use Remove from List instead.");
+		}
+
+		if (!BoltProject::Validate(projectPath.string())) {
+			return fail("Folder no longer looks like a Bolt project. Use Remove from List instead.");
+		}
+
+		std::filesystem::remove_all(projectPath, ec);
+		if (ec) {
+			return fail("Failed to delete project folder: " + ec.message());
+		}
+
+		m_Registry.RemoveProject(entry.path);
+		m_Registry.Save();
+		m_ProjectSizeTasks.erase(entry.path);
+
+		BT_INFO_TAG("Launcher", "Deleted project '{}' at {}", entry.name, projectPath.string());
+		return true;
 	}
 
 	// ── Browse for Existing Project ─────────────────────────────────

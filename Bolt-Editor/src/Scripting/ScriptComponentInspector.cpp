@@ -505,11 +505,7 @@ namespace Bolt {
 		
 		static float GetEditorLabelColumnWidth()
 		{
-			const float avail = ImGui::GetContentRegionAvail().x;
-
-			const float width = avail * 0.45f;
-
-			return std::clamp(width, 120.0f, std::numeric_limits<float>().max());
+			return 160.0f;
 		}
 
 		static void BeginEditorFieldRow(const char* label)

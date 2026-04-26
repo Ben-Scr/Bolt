@@ -14,6 +14,7 @@ namespace Bolt {
 
 		/// Returns true when the user is currently naming a new script (rename in progress).
 		bool IsCreatingScript() const { return m_PendingScriptType != PendingScriptType::None; }
+		bool BeginRenameSelected();
 
 		std::string TakePendingSceneLoad() {
 			std::string p = std::move(m_PendingSceneLoad);
@@ -28,6 +29,7 @@ namespace Bolt {
 		const std::string& GetSelectedPath() const { return m_SelectedPath; }
 		void ClearSelection() {
 			m_SelectedPath.clear();
+			m_PressedPath.clear();
 			m_SelectionActivated = false;
 			CancelRename();
 		}
@@ -70,6 +72,7 @@ namespace Bolt {
 		std::string m_CurrentDirectory;
 		std::vector<DirectoryEntry> m_Entries;
 		std::string m_SelectedPath;
+		std::string m_PressedPath;
 		bool m_SelectionActivated = false;
 		bool m_NeedsRefresh = true;
 
@@ -84,7 +87,7 @@ namespace Bolt {
 		bool m_ItemRightClicked = false;
 		std::string m_PendingSceneLoad;
 
-		// Deferred script creation — file is only written after rename is committed
+		// Deferred script creation - boilerplate/project script is written after rename is committed.
 		enum class PendingScriptType { None, CSharp, Native };
 		PendingScriptType m_PendingScriptType = PendingScriptType::None;
 		std::string m_PendingScriptDir;  // parent directory for the new script

@@ -8,6 +8,7 @@ namespace Bolt {
 
 	void InitializeCore()
 	{
+		Allocator::Init();
 		Log::Initialize();
 
 		BT_CORE_TRACE_TAG("Core", "Bolt Engine {}", BT_VERSION);

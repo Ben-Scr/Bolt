@@ -57,8 +57,25 @@ namespace Bolt {
 
 		std::vector<std::string> GetRegisteredSceneNames() const;
 		std::vector<std::string> GetLoadedSceneNames() const;
+		size_t GetLoadedSceneCount() const { return m_LoadedScenes.size(); }
+		Scene* GetLoadedSceneAt(size_t index) {
+			return index < m_LoadedScenes.size() ? m_LoadedScenes[index].get() : nullptr;
+		}
+		const Scene* GetLoadedSceneAt(size_t index) const {
+			return index < m_LoadedScenes.size() ? m_LoadedScenes[index].get() : nullptr;
+		}
 
-		void ForeachLoadedScene(const std::function<void(const Scene&)>& func) const {
+		template<typename TFunc>
+		void ForeachLoadedScene(TFunc&& func) {
+			for (const std::shared_ptr<Scene>& scenePointer : m_LoadedScenes) {
+				if (scenePointer) {
+					func(*scenePointer);
+				}
+			}
+		}
+
+		template<typename TFunc>
+		void ForeachLoadedScene(TFunc&& func) const {
 			for (const std::shared_ptr<Scene>& scenePointer : m_LoadedScenes) {
 				if (scenePointer) {
 					func(*scenePointer);

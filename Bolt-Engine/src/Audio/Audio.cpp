@@ -1,8 +1,7 @@
 #include "pch.hpp"
 #include "Audio/Audio.hpp"
 
-#include <cstring>
-#include <iostream>
+#include <limits>
 
 namespace Bolt {
 
@@ -11,11 +10,18 @@ namespace Bolt {
 	}
 
 	Audio::Audio(Audio&& other) noexcept
-		: m_Decoder(other.m_Decoder)
+		: m_DecodedFrames(std::move(other.m_DecodedFrames))
+		, m_Format(other.m_Format)
+		, m_Channels(other.m_Channels)
+		, m_SampleRate(other.m_SampleRate)
+		, m_FrameCount(other.m_FrameCount)
 		, m_IsLoaded(other.m_IsLoaded)
 		, m_Filepath(std::move(other.m_Filepath))
 	{
-		std::memset(&other.m_Decoder, 0, sizeof(ma_decoder));
+		other.m_Format = ma_format_unknown;
+		other.m_Channels = 0;
+		other.m_SampleRate = 0;
+		other.m_FrameCount = 0;
 		other.m_IsLoaded = false;
 		other.m_Filepath.clear();
 	}
@@ -24,11 +30,18 @@ namespace Bolt {
 		if (this != &other) {
 			Cleanup();
 
-			m_Decoder = other.m_Decoder;
+			m_DecodedFrames = std::move(other.m_DecodedFrames);
+			m_Format = other.m_Format;
+			m_Channels = other.m_Channels;
+			m_SampleRate = other.m_SampleRate;
+			m_FrameCount = other.m_FrameCount;
 			m_IsLoaded = other.m_IsLoaded;
 			m_Filepath = std::move(other.m_Filepath);
 
-			std::memset(&other.m_Decoder, 0, sizeof(ma_decoder));
+			other.m_Format = ma_format_unknown;
+			other.m_Channels = 0;
+			other.m_SampleRate = 0;
+			other.m_FrameCount = 0;
 			other.m_IsLoaded = false;
 			other.m_Filepath.clear();
 		}
@@ -43,15 +56,98 @@ namespace Bolt {
 
 		Cleanup();
 
-
-		ma_decoder_config config = ma_decoder_config_init_default();
-		ma_result result = ma_decoder_init_file(filepath.c_str(), &config, &m_Decoder);
+		ma_decoder decoder{};
+		ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+		ma_result result = ma_decoder_init_file(filepath.c_str(), &config, &decoder);
 
 		if (result != MA_SUCCESS) {
 			BT_CORE_ERROR_TAG("Audio", "Failed to load audio: {}", filepath);
 			return false;
 		}
 
+		m_Format = decoder.outputFormat;
+		m_Channels = decoder.outputChannels;
+		m_SampleRate = decoder.outputSampleRate;
+
+		ma_uint64 frameCount = 0;
+		result = ma_decoder_get_length_in_pcm_frames(&decoder, &frameCount);
+		if (result == MA_SUCCESS && frameCount > 0) {
+			const ma_uint64 channelCount = static_cast<ma_uint64>(m_Channels);
+			const ma_uint64 sampleCount = frameCount * channelCount;
+			const ma_uint64 maxSamples = static_cast<ma_uint64>(std::numeric_limits<size_t>::max() / sizeof(float));
+			if (sampleCount > maxSamples) {
+				BT_CORE_ERROR_TAG("Audio", "Audio file is too large to cache in memory: {}", filepath);
+				ma_decoder_uninit(&decoder);
+				Cleanup();
+				return false;
+			}
+
+			m_DecodedFrames.resize(static_cast<size_t>(sampleCount));
+
+			ma_uint64 totalFramesRead = 0;
+			while (totalFramesRead < frameCount) {
+				ma_uint64 framesRead = 0;
+				result = ma_decoder_read_pcm_frames(
+					&decoder,
+					m_DecodedFrames.data() + static_cast<size_t>(totalFramesRead * channelCount),
+					frameCount - totalFramesRead,
+					&framesRead);
+				if (result != MA_SUCCESS || framesRead == 0) {
+					break;
+				}
+
+				totalFramesRead += framesRead;
+			}
+
+			if (totalFramesRead == 0) {
+				BT_CORE_ERROR_TAG("Audio", "Failed to decode audio frames: {}", filepath);
+				ma_decoder_uninit(&decoder);
+				Cleanup();
+				return false;
+			}
+
+			if (totalFramesRead < frameCount) {
+				m_DecodedFrames.resize(static_cast<size_t>(totalFramesRead * channelCount));
+				frameCount = totalFramesRead;
+			}
+
+			m_FrameCount = frameCount;
+		}
+		else {
+			constexpr ma_uint64 chunkFrames = 4096;
+			std::vector<float> decodedFrames;
+			decodedFrames.reserve(static_cast<size_t>(chunkFrames * (m_Channels == 0 ? 1u : m_Channels)));
+
+			while (true) {
+				const size_t chunkSampleCount = static_cast<size_t>(chunkFrames * static_cast<ma_uint64>(m_Channels));
+				const size_t oldSize = decodedFrames.size();
+				decodedFrames.resize(oldSize + chunkSampleCount);
+
+				ma_uint64 framesRead = 0;
+				result = ma_decoder_read_pcm_frames(&decoder, decodedFrames.data() + oldSize, chunkFrames, &framesRead);
+				if (result != MA_SUCCESS) {
+					decodedFrames.clear();
+					break;
+				}
+
+				decodedFrames.resize(oldSize + static_cast<size_t>(framesRead * m_Channels));
+				if (framesRead == 0) {
+					break;
+				}
+			}
+
+			if (decodedFrames.empty()) {
+				BT_CORE_ERROR_TAG("Audio", "Failed to decode audio frames: {}", filepath);
+				ma_decoder_uninit(&decoder);
+				Cleanup();
+				return false;
+			}
+
+			m_FrameCount = static_cast<ma_uint64>(decodedFrames.size() / m_Channels);
+			m_DecodedFrames = std::move(decodedFrames);
+		}
+
+		ma_decoder_uninit(&decoder);
 		m_Filepath = filepath;
 		m_IsLoaded = true;
 
@@ -59,34 +155,15 @@ namespace Bolt {
 	}
 
 	uint32_t Audio::GetSampleRate() const {
-		if (!m_IsLoaded) {
-			return 0;
-		}
-
-		return m_Decoder.outputSampleRate;
+		return m_IsLoaded ? m_SampleRate : 0;
 	}
 
 	uint32_t Audio::GetChannels() const {
-		if (!m_IsLoaded) {
-			return 0;
-		}
-
-		return m_Decoder.outputChannels;
+		return m_IsLoaded ? m_Channels : 0;
 	}
 
 	uint64_t Audio::GetFrameCount() const {
-		if (!m_IsLoaded) {
-			return 0;
-		}
-
-		ma_uint64 frameCount = 0;
-		ma_result result = ma_decoder_get_length_in_pcm_frames(const_cast<ma_decoder*>(&m_Decoder), &frameCount);
-		if (result != MA_SUCCESS) {
-			BT_CORE_WARN_TAG("Audio", "Failed to get frame count for '{}': {}", m_Filepath, static_cast<int>(result));
-			return 0;
-		}
-
-		return frameCount;
+		return m_IsLoaded ? m_FrameCount : 0;
 	}
 
 	float Audio::GetDurationSeconds() const {
@@ -105,14 +182,13 @@ namespace Bolt {
 	}
 
 	void Audio::Cleanup() {
-		if (m_IsLoaded) {
-			ma_decoder_uninit(&m_Decoder);
-			m_IsLoaded = false;
-			m_Filepath.clear();
-			std::memset(&m_Decoder, 0, sizeof(ma_decoder));
-		}
+		m_DecodedFrames.clear();
+		m_DecodedFrames.shrink_to_fit();
+		m_Format = ma_format_unknown;
+		m_Channels = 0;
+		m_SampleRate = 0;
+		m_FrameCount = 0;
+		m_IsLoaded = false;
+		m_Filepath.clear();
 	}
-
-
-
 }

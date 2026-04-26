@@ -113,7 +113,6 @@ Dependency.EditorRuntimeCommon = MergeDependencySets(
 function GetBoltModuleDefines()
     local defines =
     {
-        "BT_TRACK_MEMORY",
         "BOLT_WITH_RENDER=" .. (BoltModules.Render and "1" or "0"),
         "BOLT_WITH_AUDIO=" .. (BoltModules.Audio and "1" or "0"),
         "BOLT_WITH_PHYSICS=" .. (BoltModules.Physics and "1" or "0"),

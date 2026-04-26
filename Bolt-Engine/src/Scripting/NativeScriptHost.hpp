@@ -27,11 +27,13 @@ namespace Bolt {
 	private:
 		using CreateFn  = NativeScript* (*)(const char*);
 		using DestroyFn = void (*)(NativeScript*);
+		using HasFn     = int (*)(const char*);
 		using InitFn    = void (*)(void* engineAPI);
 
 		void* m_DllHandle = nullptr;
 		CreateFn  m_CreateFn = nullptr;
 		DestroyFn m_DestroyFn = nullptr;
+		HasFn     m_HasFn = nullptr;
 		std::string m_DllPath;
 		std::filesystem::path m_LoadedDllPath;
 

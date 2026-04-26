@@ -19,6 +19,17 @@ namespace Bolt {
 		inline static Entry* s_Head = nullptr;
 
 		static void Register(const char* name, Factory factory) {
+			if (!name || !factory) {
+				return;
+			}
+
+			for (Entry* entry = s_Head; entry; entry = entry->next) {
+				if (std::strcmp(name, entry->name) == 0) {
+					entry->factory = factory;
+					return;
+				}
+			}
+
 			static Entry entries[256];
 			static int count = 0;
 			if (count < 256) {
@@ -28,6 +39,10 @@ namespace Bolt {
 		}
 
 		static NativeScript* Create(const char* name) {
+			if (!name) {
+				return nullptr;
+			}
+
 			for (auto* e = s_Head; e; e = e->next) {
 				if (std::strcmp(name, e->name) == 0) {
 					return e->factory();
@@ -38,6 +53,10 @@ namespace Bolt {
 		}
 
 		static bool Has(const char* name) {
+			if (!name) {
+				return false;
+			}
+
 			for (auto* e = s_Head; e; e = e->next) {
 				if (std::strcmp(name, e->name) == 0) {
 					return true;

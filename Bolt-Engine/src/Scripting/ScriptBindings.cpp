@@ -298,16 +298,16 @@ namespace Bolt {
 	}
 
 	static int Bolt_Scene_GetLoadedCount() {
-		return static_cast<int>(SceneManager::Get().GetLoadedScenes().size());
+		return static_cast<int>(SceneManager::Get().GetLoadedSceneCount());
 	}
 
 	static const char* Bolt_Scene_GetLoadedSceneNameAt(int index) {
-		auto scenes = SceneManager::Get().GetLoadedScenes();
-		if (index < 0 || index >= static_cast<int>(scenes.size())) {
+		if (index < 0) {
 			s_StringReturnBuffer.clear();
 			return s_StringReturnBuffer.c_str();
 		}
-		auto scene = scenes[index].lock();
+
+		const Scene* scene = SceneManager::Get().GetLoadedSceneAt(static_cast<size_t>(index));
 		s_StringReturnBuffer = scene ? scene->GetName() : "";
 		return s_StringReturnBuffer.c_str();
 	}

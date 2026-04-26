@@ -24,6 +24,16 @@
 #endif
 
 namespace Bolt {
+	namespace {
+		bool IsLeftMouseDragPastClickThreshold()
+		{
+			const ImGuiIO& io = ImGui::GetIO();
+			const ImVec2 delta(io.MousePos.x - io.MouseClickedPos[ImGuiMouseButton_Left].x,
+				io.MousePos.y - io.MouseClickedPos[ImGuiMouseButton_Left].y);
+			return (delta.x * delta.x + delta.y * delta.y) > (io.MouseDragThreshold * io.MouseDragThreshold);
+		}
+	}
+
 	static const char* GetFileTypeIconName(const std::string& extension) {
 		std::string ext = extension;
 		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -54,6 +64,7 @@ namespace Bolt {
 	void AssetBrowser::NavigateTo(const std::string& directory) {
 		m_CurrentDirectory = directory;
 		m_SelectedPath.clear();
+		m_PressedPath.clear();
 		CancelRename();
 		m_NeedsRefresh = true;
 	}
@@ -114,6 +125,12 @@ namespace Bolt {
 
 		RenderBreadcrumb();
 		ImGui::Separator();
+		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+			&& ImGui::IsKeyPressed(ImGuiKey_F2)
+			&& !ImGui::GetIO().WantTextInput
+			&& !ImGui::IsAnyItemActive()) {
+			BeginRenameSelected();
+		}
 		RenderGrid();
 
 		ImGui::End();
@@ -194,19 +211,34 @@ namespace Bolt {
 
 		m_ItemRightClicked = false;
 
-		if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) {
+		if (ImGui::IsWindowHovered()
+			&& ImGui::IsMouseReleased(ImGuiMouseButton_Left)
+			&& !IsLeftMouseDragPastClickThreshold()
+			&& !ImGui::IsAnyItemHovered()) {
 			m_SelectedPath.clear();
+			m_PressedPath.clear();
 			CancelRename();
 		}
 
-		for (int i = 0; i < static_cast<int>(m_Entries.size()); i++) {
+		std::vector<DirectoryEntry> visibleEntries = m_Entries;
+		if (m_PendingScriptType != PendingScriptType::None
+			&& m_PendingScriptDir == m_CurrentDirectory
+			&& !m_RenamePath.empty()) {
+			DirectoryEntry pendingEntry;
+			pendingEntry.Path = m_RenamePath;
+			pendingEntry.Name = std::filesystem::path(m_RenamePath).filename().string();
+			pendingEntry.IsDirectory = false;
+			visibleEntries.push_back(std::move(pendingEntry));
+		}
+
+		for (int i = 0; i < static_cast<int>(visibleEntries.size()); i++) {
 			if (i % columns != 0) {
 				ImGui::SameLine();
 			}
-			RenderAssetTile(m_Entries[i], i);
+			RenderAssetTile(visibleEntries[i], i);
 		}
 
-		if (m_Entries.empty()) {
+		if (visibleEntries.empty()) {
 			ImGui::TextDisabled("Empty folder");
 		}
 
@@ -373,10 +405,19 @@ namespace Bolt {
 		ImGui::EndGroup();
 
 		if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-			m_SelectedPath = entry.Path;
-			m_SelectionActivated = true;
-			if (!IsRenamingEntry(entry.Path)) {
-				CancelRename();
+			m_PressedPath = entry.Path;
+		}
+
+		if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+			if (ImGui::IsItemHovered() && m_PressedPath == entry.Path && !IsLeftMouseDragPastClickThreshold()) {
+				m_SelectedPath = entry.Path;
+				m_SelectionActivated = true;
+				if (!IsRenamingEntry(entry.Path)) {
+					CancelRename();
+				}
+			}
+			if (m_PressedPath == entry.Path) {
+				m_PressedPath.clear();
 			}
 		}
 
@@ -474,6 +515,9 @@ namespace Bolt {
 						m_Thumbnails.Invalidate(sourcePath);
 						if (m_SelectedPath == sourcePath) {
 							m_SelectedPath.clear();
+						}
+						if (m_PressedPath == sourcePath) {
+							m_PressedPath.clear();
 						}
 						m_NeedsRefresh = true;
 					}

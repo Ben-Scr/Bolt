@@ -98,6 +98,45 @@ namespace Bolt {
 
 			return normalized.lexically_normal().make_preferred().string();
 		}
+
+		bool IsLogEntryVisible(Log::Level level, bool showInfo, bool showWarn, bool showError) {
+			if (level <= Log::Level::Info) return showInfo;
+			if (level == Log::Level::Warn) return showWarn;
+			return showError;
+		}
+
+		const char* GetLogLevelPrefix(Log::Level level) {
+			if (level <= Log::Level::Info) return "[Info] ";
+			if (level == Log::Level::Warn) return "[Warn] ";
+			return "[Error] ";
+		}
+
+		void AppendWrappedLine(std::string& out, const std::string& line, float wrapWidth) {
+			if (line.empty()) {
+				out.push_back('\n');
+				return;
+			}
+
+			ImFont* font = ImGui::GetFont();
+			const float fontSize = ImGui::GetFontSize();
+			const char* lineStart = line.c_str();
+			const char* lineEnd = lineStart + line.size();
+
+			while (lineStart < lineEnd) {
+				const char* wrapPos = font->CalcWordWrapPosition(fontSize, lineStart, lineEnd, wrapWidth);
+				if (wrapPos <= lineStart) {
+					wrapPos = lineStart + 1;
+				}
+
+				out.append(lineStart, wrapPos);
+				out.push_back('\n');
+
+				while (wrapPos < lineEnd && *wrapPos == ' ') {
+					++wrapPos;
+				}
+				lineStart = wrapPos;
+			}
+		}
 	}
 
 	void ImGuiEditorLayer::RenderLogPanel() {
@@ -181,72 +220,38 @@ namespace Bolt {
 
 		ImGui::Separator();
 
-		ImGui::BeginChild("LogScroll");
-		const bool stickToBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
-		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		const ImGuiStyle& style = ImGui::GetStyle();
-		for (int i = 0; i < static_cast<int>(m_LogEntries.size()); i++) {
-			const LogEntry& entry = m_LogEntries[i];
-			if (entry.Level <= Log::Level::Info && !m_ShowLogInfo) continue;
-			if (entry.Level == Log::Level::Warn && !m_ShowLogWarn) continue;
-			if (entry.Level >= Log::Level::Error && !m_ShowLogError) continue;
+		const ImVec2 logRegion = ImGui::GetContentRegionAvail();
+		const float wrapWidth = std::max(logRegion.x - ImGui::GetStyle().FramePadding.x * 2.0f, 1.0f);
 
-			ImVec4 color = ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
-			if (entry.Level == Log::Level::Warn) color = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
-			else if (entry.Level >= Log::Level::Error) color = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
-
-			ImGui::PushID(i);
-			const float rowWidth = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
-			const float wrapWidth = std::max(rowWidth - style.FramePadding.x * 2.0f, 1.0f);
-			const ImVec2 textSize = ImGui::CalcTextSize(entry.Message.c_str(), nullptr, false, wrapWidth);
-			const float rowHeight = std::max(textSize.y, ImGui::GetTextLineHeight()) + style.FramePadding.y * 2.0f;
-			const ImVec2 rowMin = ImGui::GetCursorScreenPos();
-			const ImVec2 rowMax(rowMin.x + rowWidth, rowMin.y + rowHeight);
-
-			ImGui::InvisibleButton("##LogEntry", ImVec2(rowWidth, rowHeight));
-			if (ImGui::IsItemHovered()) {
-				drawList->AddRectFilled(rowMin, rowMax, IM_COL32(70, 78, 92, 120), 4.0f);
+		std::string visibleLogText;
+		for (const auto& entry : m_LogEntries) {
+			if (!IsLogEntryVisible(entry.Level, m_ShowLogInfo, m_ShowLogWarn, m_ShowLogError)) {
+				continue;
 			}
 
-			if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-				ImGui::SetClipboardText(entry.Message.c_str());
-			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Click to copy");
-			}
+			AppendWrappedLine(visibleLogText, std::string(GetLogLevelPrefix(entry.Level)) + entry.Message, wrapWidth);
+		}
 
-			if (ImGui::BeginPopupContextItem("##LogCtx")) {
-				if (ImGui::MenuItem("Copy")) {
-					ImGui::SetClipboardText(entry.Message.c_str());
-				}
-				if (ImGui::MenuItem("Copy All Visible")) {
-					std::string all;
-					for (const auto& visibleEntry : m_LogEntries) {
-						if (visibleEntry.Level <= Log::Level::Info && !m_ShowLogInfo) continue;
-						if (visibleEntry.Level == Log::Level::Warn && !m_ShowLogWarn) continue;
-						if (visibleEntry.Level >= Log::Level::Error && !m_ShowLogError) continue;
-						all += visibleEntry.Message + "\n";
+		m_LogTextBuffer.assign(visibleLogText.begin(), visibleLogText.end());
+		m_LogTextBuffer.push_back('\0');
+
+		ImGuiInputTextFlags logFlags = ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoUndoRedo;
+		ImGui::InputTextMultiline("##LogText", m_LogTextBuffer.data(), m_LogTextBuffer.size(),
+			ImVec2(-1.0f, -1.0f), logFlags);
+
+		if (ImGui::BeginPopupContextItem("##LogTextCtx")) {
+			if (ImGui::MenuItem("Copy All Visible")) {
+				std::string all;
+				for (const auto& visibleEntry : m_LogEntries) {
+					if (!IsLogEntryVisible(visibleEntry.Level, m_ShowLogInfo, m_ShowLogWarn, m_ShowLogError)) {
+						continue;
 					}
-					ImGui::SetClipboardText(all.c_str());
+					all += std::string(GetLogLevelPrefix(visibleEntry.Level)) + visibleEntry.Message + "\n";
 				}
-				ImGui::EndPopup();
+				ImGui::SetClipboardText(all.c_str());
 			}
-
-			ImGui::SetCursorScreenPos(ImVec2(rowMin.x + style.FramePadding.x, rowMin.y + style.FramePadding.y));
-			ImGui::PushStyleColor(ImGuiCol_Text, color);
-			ImGui::PushTextWrapPos(rowMin.x + rowWidth - style.FramePadding.x);
-			ImGui::TextUnformatted(entry.Message.c_str());
-			ImGui::PopTextWrapPos();
-			ImGui::PopStyleColor();
-			ImGui::SetCursorScreenPos(ImVec2(rowMin.x, rowMin.y + rowHeight));
-			ImGui::PopID();
+			ImGui::EndPopup();
 		}
-
-		if (stickToBottom) {
-			ImGui::SetScrollHereY(1.0f);
-		}
-
-		ImGui::EndChild();
 		ImGui::End();
 	}
 
