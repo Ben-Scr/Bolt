@@ -21,6 +21,93 @@ project "Bolt-Engine"
         "src/**.cpp"
     }
 
+    local function RemoveFilesIfModuleDisabled(moduleEnabled, filePatterns)
+        if not moduleEnabled then
+            removefiles(filePatterns)
+        end
+    end
+
+    local function RemoveFilesUnlessModulesEnabled(requiredModules, filePatterns)
+        for _, moduleName in ipairs(requiredModules) do
+            if not BoltModules[moduleName] then
+                removefiles(filePatterns)
+                return
+            end
+        end
+    end
+
+    -- These integration units still aggregate multiple optional modules.
+    RemoveFilesUnlessModulesEnabled({ "Render", "Audio", "Physics", "Scripting", "Editor" },
+        {
+            "src/Core/Application.*"
+        }
+    )
+
+    RemoveFilesUnlessModulesEnabled({ "Render" },
+        {
+            "src/Core/Input.*",
+            "src/Core/Window.*"
+        }
+    )
+
+    RemoveFilesUnlessModulesEnabled({ "Physics" },
+        {
+            "src/Components/General/Transform2DComponent.cpp"
+        }
+    )
+
+    RemoveFilesUnlessModulesEnabled({ "Render", "Audio", "Physics", "Scripting" },
+        {
+            "src/Scene/BuiltInComponentRegistration.cpp",
+            "src/Scene/Entity.cpp",
+            "src/Scene/EntityHelper.cpp",
+            "src/Scene/Scene.cpp",
+            "src/Scene/SceneDefinition.cpp",
+            "src/Scene/SceneManager.cpp",
+            "src/Serialization/SceneSerializer.cpp",
+            "src/Serialization/SceneSerializerDeserialize.cpp"
+        }
+    )
+
+    RemoveFilesIfModuleDisabled(BoltModules.Render,
+        {
+            "src/Components/Graphics/**",
+            "src/Graphics/**",
+            "src/Gui/GuiRenderer.*",
+            "src/Systems/GizmosDebugSystem.*",
+            "src/Systems/ParticleUpdateSystem.*"
+        }
+    )
+
+    RemoveFilesIfModuleDisabled(BoltModules.Audio,
+        {
+            "src/Audio/**",
+            "src/Components/Audio/**",
+            "src/Systems/AudioUpdateSystem.*"
+        }
+    )
+
+    RemoveFilesIfModuleDisabled(BoltModules.Physics,
+        {
+            "src/Components/Physics/**",
+            "src/Physics/**"
+        }
+    )
+
+    RemoveFilesIfModuleDisabled(BoltModules.Scripting,
+        {
+            "src/Scripting/**"
+        }
+    )
+
+    RemoveFilesIfModuleDisabled(BoltModules.Editor,
+        {
+            "src/Gui/ImGuiRenderer.*",
+            "src/Systems/ImGuiDebugSystem.*",
+            "src/Systems/LauncherLayer.*"
+        }
+    )
+
     UseBoltEngineModuleDependencies()
     defines(GetBoltModuleDefines())
 

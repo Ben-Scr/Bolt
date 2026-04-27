@@ -9,6 +9,7 @@
 #include "Components/General/Transform2DComponent.hpp"
 
 #include <chrono>
+#include <exception>
 
 #if defined(BT_PLATFORM_WINDOWS)
 #include <windows.h>
@@ -129,6 +130,22 @@ namespace Bolt {
 
 			std::error_code ec;
 			std::filesystem::remove(shadowPath, ec);
+		}
+
+		bool TryInvokeNativeHostCallback(const char* callbackName, NativeScript* script)
+		{
+			try {
+				script->OnDestroy();
+				return true;
+			}
+			catch (const std::exception& e) {
+				BT_CORE_ERROR_TAG("NativeScriptHost", "Native script failed during {}: {}", callbackName, e.what());
+			}
+			catch (...) {
+				BT_CORE_ERROR_TAG("NativeScriptHost", "Native script failed during {} with an unknown exception", callbackName);
+			}
+
+			return false;
 		}
 	}
 
@@ -255,7 +272,7 @@ namespace Bolt {
 	void NativeScriptHost::DestroyInstance(NativeScript* script)
 	{
 		if (!script) return;
-		script->OnDestroy();
+		TryInvokeNativeHostCallback("OnDestroy", script);
 
 		auto it = std::find(m_LiveInstances.begin(), m_LiveInstances.end(), script);
 		if (it != m_LiveInstances.end())
@@ -273,7 +290,7 @@ namespace Bolt {
 	{
 		for (auto* script : m_LiveInstances)
 		{
-			script->OnDestroy();
+			TryInvokeNativeHostCallback("OnDestroy", script);
 			script->m_EntityID = 0;
 			script->m_Entity = entt::null;
 			script->m_Scene = nullptr;

@@ -128,9 +128,13 @@ python scripts\Setup.py --generator vs2022 --skip-lfs
 dotnet restore Bolt.sln
 ```
 
+## Generated File Hygiene
+- Generated solution/project files, build folders, and local editor state are ignored. Source folders such as `Bolt-Engine/src/Debugging` and `Bolt-Engine/src/Packages` are intentionally trackable.
+- To audit ignored generated files without deleting anything, run `git clean -ndX -- . ':!External/'` from the repository root. Keep submodule cleanup separate from generated-file cleanup.
+- If a submodule looks dirty, inspect it first with `git submodule status --recursive` and `git -C External/<name> status --short`; do not remove submodule contents just to refresh generated files.
+
 ## Notes
 - Runtime assets are copied to the runtime output directory after build (`{targetdir}/Assets`).
 - Linux builds use GLFW's X11 backend via vendored GLFW sources.
-- Generated solution/project files, build folders, and local editor state should stay untracked.
 
 ![Views](https://komarev.com/ghpvc/?username=ben-scr-repo-name&label=Repo%20views&color=218a45&style=flat)

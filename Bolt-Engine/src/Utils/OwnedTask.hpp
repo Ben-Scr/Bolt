@@ -1,8 +1,11 @@
 #pragma once
 
+#include "Core/Log.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -24,6 +27,7 @@ namespace Bolt {
 			mutable std::mutex FinishedMutex;
 			std::condition_variable FinishedCondition;
 			bool Finished = false;
+			std::exception_ptr Exception;
 		};
 
 	public:
@@ -155,6 +159,20 @@ namespace Bolt {
 			return m_Task.joinable();
 		}
 
+		bool HasException() const
+		{
+			return GetException() != nullptr;
+		}
+
+		std::exception_ptr GetException() const
+		{
+			if (!m_State)
+				return nullptr;
+
+			std::scoped_lock lock(m_State->FinishedMutex);
+			return m_State->Exception;
+		}
+
 	private:
 		template<typename>
 		inline static constexpr bool AlwaysFalse = false;
@@ -179,11 +197,47 @@ namespace Bolt {
 			}
 			catch (...)
 			{
-				MarkFinished(state);
-				throw;
+				std::exception_ptr exception = std::current_exception();
+				StoreException(state, exception);
+				LogUnhandledException(exception);
 			}
 
 			MarkFinished(state);
+		}
+
+		static void StoreException(const std::shared_ptr<State>& state, std::exception_ptr exception)
+		{
+			std::scoped_lock lock(state->FinishedMutex);
+			state->Exception = std::move(exception);
+		}
+
+		static void LogUnhandledException(const std::exception_ptr& exception) noexcept
+		{
+			try
+			{
+				if (exception)
+					std::rethrow_exception(exception);
+			}
+			catch (const std::exception& e)
+			{
+				try
+				{
+					BT_CORE_ERROR_TAG("OwnedTask", "Background task failed: {}", e.what());
+				}
+				catch (...)
+				{
+				}
+			}
+			catch (...)
+			{
+				try
+				{
+					BT_CORE_ERROR_TAG("OwnedTask", "Background task failed with an unknown exception");
+				}
+				catch (...)
+				{
+				}
+			}
 		}
 
 		static void MarkFinished(const std::shared_ptr<State>& state)

@@ -13,6 +13,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
+#include <exception>
 #include <filesystem>
 #include <optional>
 
@@ -240,6 +241,25 @@ namespace Bolt {
 				nativeHost.DestroyInstance(instance.GetNativePtr());
 			}
 			instance.Unbind();
+		}
+
+		template<typename Fn>
+		bool TryInvokeNativeScript(const ScriptInstance& instance, const char* callbackName, Fn&& callback)
+		{
+			try {
+				callback();
+				return true;
+			}
+			catch (const std::exception& e) {
+				BT_CORE_ERROR_TAG("ScriptSystem", "Native script '{}' failed during {}: {}",
+					instance.GetClassName(), callbackName, e.what());
+			}
+			catch (...) {
+				BT_CORE_ERROR_TAG("ScriptSystem", "Native script '{}' failed during {} with an unknown exception",
+					instance.GetClassName(), callbackName);
+			}
+
+			return false;
 		}
 
 		bool IsTaskRunning(const std::shared_ptr<ProcessTaskState>& task)
@@ -885,10 +905,23 @@ namespace Bolt {
 
 					if (!instance.HasStarted())
 					{
+						if (!TryInvokeNativeScript(instance, "Start", [nativeInstance]() {
+							nativeInstance->Start();
+						})) {
+							m_NativeHost.DestroyInstance(nativeInstance);
+							instance.Unbind();
+							continue;
+						}
 						instance.MarkStarted();
-						nativeInstance->Start();
 					}
-					nativeInstance->Update(dt);
+
+					if (!TryInvokeNativeScript(instance, "Update", [nativeInstance, dt]() {
+						nativeInstance->Update(dt);
+					})) {
+						m_NativeHost.DestroyInstance(nativeInstance);
+						instance.Unbind();
+						continue;
+					}
 				}
 			}
 		}

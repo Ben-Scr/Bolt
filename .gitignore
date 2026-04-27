@@ -13,8 +13,15 @@ bin-int/
 **/[Oo]ut/
 **/.vs/
 **/.vscode/.ropeproject/
-**/[Dd]ebug*/
-**/[Rr]elease*/
+# Generated configuration folders. Keep source folders like src/Debugging trackable.
+**/[Dd]ebug/
+**/[Dd]ebug-*/
+**/[Dd]ebug_*/
+**/[Dd]ebug[Pp]ublic/
+**/[Rr]elease/
+**/[Rr]elease-*/
+**/[Rr]elease_*/
+**/[Rr]eleases/
 *.ilk
 *.recipe
 *.tlog/
@@ -30,9 +37,6 @@ bin-int/
 !Bolt-Runtime/imgui.ini
 !vendor/bin/
 !vendor/bin/**
-!src/Packages/
-!src/Packages/*.hpp
-!src/Packages/*.cpp
 *.sln
 *.vcxproj
 *.vcxproj.filters
@@ -238,6 +242,9 @@ PublishScripts/
 **/[Pp]ackages/*
 # except build/, which is used as an MSBuild target.
 !**/[Pp]ackages/build/
+# Keep source package systems trackable; the rule above is only for restored NuGet packages.
+!**/src/[Pp]ackages/
+!**/src/[Pp]ackages/**
 # Uncomment if necessary however generally it will be regenerated when needed
 #!**/[Pp]ackages/repositories.config
 # NuGet v3's project.json files produces more ignorable files

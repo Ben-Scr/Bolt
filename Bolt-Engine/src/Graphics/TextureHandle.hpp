@@ -1,6 +1,9 @@
 #pragma once
 #include "Core/Export.hpp"
 
+#include <cstdint>
+#include <limits>
+
 namespace Bolt {
     struct BOLT_API TextureHandle {
         uint16_t index;
@@ -10,9 +13,9 @@ namespace Bolt {
         static TextureHandle Invalid() { return TextureHandle(k_InvalidIndex, 0); }
 
         TextureHandle(uint16_t index, uint16_t generation) : index{ index }, generation{ generation } {}
-        TextureHandle() : index{ 0 }, generation{ 0 } {}
+        TextureHandle() : index{ k_InvalidIndex }, generation{ 0 } {}
 
-        bool IsValid() const { return index != UINT16_MAX; }
+        bool IsValid() const { return index != k_InvalidIndex; }
 
         bool operator==(const TextureHandle& other) const {
             return index == other.index && generation == other.generation;
