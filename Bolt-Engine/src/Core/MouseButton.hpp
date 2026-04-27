@@ -14,4 +14,4 @@ namespace Bolt {
 		return os;
 	}
 
-} // namespace Bolt
+}

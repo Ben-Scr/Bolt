@@ -43,6 +43,22 @@ namespace Bolt {
 
 			return absolutePath.lexically_normal().make_preferred();
 		}
+
+		template <typename TSnapshot>
+		bool HasSnapshotChanged(const TSnapshot& currentSnapshot, const TSnapshot& nextSnapshot) {
+			if (nextSnapshot.size() != currentSnapshot.size()) {
+				return true;
+			}
+
+			for (const auto& [path, writeTime] : nextSnapshot) {
+				const auto it = currentSnapshot.find(path);
+				if (it == currentSnapshot.end() || it->second != writeTime) {
+					return true;
+				}
+			}
+
+			return false;
+		}
 	}
 
 	FileWatcher::~FileWatcher() {
@@ -139,16 +155,7 @@ namespace Bolt {
 			}
 
 			Snapshot nextSnapshot = BuildSnapshot();
-			bool changed = nextSnapshot.size() != m_FileTimestamps.size();
-			if (!changed) {
-				for (const auto& [path, writeTime] : nextSnapshot) {
-					const auto it = m_FileTimestamps.find(path);
-					if (it == m_FileTimestamps.end() || it->second != writeTime) {
-						changed = true;
-						break;
-					}
-				}
-			}
+			const bool changed = HasSnapshotChanged(m_FileTimestamps, nextSnapshot);
 
 			m_FileTimestamps = std::move(nextSnapshot);
 			if (changed) {
@@ -249,7 +256,12 @@ namespace Bolt {
 			}
 
 			if (waitResult >= WAIT_OBJECT_0 && waitResult < WAIT_OBJECT_0 + handles.size()) {
-				m_PendingChanges.store(true);
+				Snapshot nextSnapshot = BuildSnapshot();
+				const bool changed = HasSnapshotChanged(m_FileTimestamps, nextSnapshot);
+				m_FileTimestamps = std::move(nextSnapshot);
+				if (changed) {
+					m_PendingChanges.store(true);
+				}
 
 				const HANDLE changedHandle = handles[waitResult - WAIT_OBJECT_0];
 				if (!FindNextChangeNotification(changedHandle)) {

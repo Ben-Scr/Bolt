@@ -11,6 +11,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -21,6 +22,47 @@
 #endif
 
 namespace Bolt {
+	namespace {
+		bool IsNativeScriptSourceExtension(std::string extension) {
+			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+				return static_cast<char>(std::tolower(ch));
+			});
+			return extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx"
+				|| extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx"
+				|| extension == ".inl" || extension == ".ipp";
+		}
+
+		std::filesystem::path GetNativeSourceDirectory(bool ensureProjectFiles = false) {
+			if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+				if (ensureProjectFiles) {
+					project->EnsureNativeScriptProjectFiles();
+				}
+				return project->NativeSourceDir;
+			}
+
+			return std::filesystem::path(Path::ExecutableDir()) / ".." / ".." / ".." / "Bolt-NativeScripts" / "Source";
+		}
+
+		std::filesystem::path ResolveNativeScriptMirrorPath(const std::string& path, bool ensureProjectFiles = false) {
+			const std::filesystem::path sourcePath(path);
+			if (!IsNativeScriptSourceExtension(sourcePath.extension().string())) {
+				return {};
+			}
+
+			std::filesystem::path nativeSourceDir = GetNativeSourceDirectory(ensureProjectFiles);
+			if (nativeSourceDir.empty()) {
+				return {};
+			}
+
+			const std::filesystem::path mirrorPath = nativeSourceDir / sourcePath.filename();
+			std::error_code ec;
+			if (std::filesystem::equivalent(sourcePath, mirrorPath, ec)) {
+				return {};
+			}
+
+			return mirrorPath;
+		}
+	}
 
 	void AssetBrowser::BeginRename(const std::string& path, const std::string& currentName) {
 		m_IsRenaming = true;
@@ -109,11 +151,11 @@ namespace Bolt {
 				std::ofstream file(finalPath);
 				if (file.is_open()) { file << boilerplate; file.close(); }
 
-				BoltProject* project = ProjectManager::GetCurrentProject();
-				std::string nativeDir = project ? project->NativeSourceDir
-					: (std::filesystem::path(Path::ExecutableDir()) / ".." / ".." / ".." / "Bolt-NativeScripts" / "Source").string();
-				if (std::filesystem::exists(nativeDir)) {
-					auto dst = std::filesystem::path(nativeDir) / finalFileName;
+				std::filesystem::path nativeDir = GetNativeSourceDirectory(true);
+				if (!nativeDir.empty()) {
+					std::error_code ec;
+					std::filesystem::create_directories(nativeDir, ec);
+					auto dst = nativeDir / finalFileName;
 					if (!std::filesystem::exists(dst)) {
 						std::ofstream f(dst); if (f.is_open()) { f << boilerplate; f.close(); }
 					}
@@ -170,8 +212,14 @@ namespace Bolt {
 
 	void AssetBrowser::DeleteEntry(const std::string& path) {
 		m_Thumbnails.Invalidate(path);
+		const std::filesystem::path nativeMirrorPath = ResolveNativeScriptMirrorPath(path);
 
 		if (Directory::Delete(path)) {
+			if (!nativeMirrorPath.empty()) {
+				std::error_code ec;
+				std::filesystem::remove(nativeMirrorPath, ec);
+			}
+
 			if (m_SelectedPath == path) {
 				m_SelectedPath.clear();
 			}
@@ -199,36 +247,52 @@ namespace Bolt {
 			std::string ext = std::filesystem::path(newName).extension().string();
 			std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 			std::string newStem = std::filesystem::path(newName).stem().string();
-			auto exeDir = std::filesystem::path(Path::ExecutableDir());
+			const bool oldIsNativeScript = IsNativeScriptSourceExtension(oldExt);
+			const bool newIsNativeScript = IsNativeScriptSourceExtension(ext);
 
 			std::filesystem::path projectSourceDir;
 			BoltProject* project = ProjectManager::GetCurrentProject();
-			if (ext == ".cs")
+			if (oldIsNativeScript || newIsNativeScript)
+			{
+				projectSourceDir = GetNativeSourceDirectory(newIsNativeScript);
+			}
+			else if (ext == ".cs")
 			{
 				if (project)
 					projectSourceDir = project->ScriptsDirectory;
 				else
-					projectSourceDir = exeDir / ".." / ".." / ".." / "Bolt-Sandbox" / "Source";
-			}
-			else if (ext == ".cpp" || ext == ".h" || ext == ".hpp")
-			{
-				if (project)
-					projectSourceDir = project->NativeSourceDir;
-				else
-					projectSourceDir = exeDir / ".." / ".." / ".." / "Bolt-NativeScripts" / "Source";
+					projectSourceDir = std::filesystem::path(Path::ExecutableDir()) / ".." / ".." / ".." / "Bolt-Sandbox" / "Source";
 			}
 
-			if (!projectSourceDir.empty() && std::filesystem::exists(projectSourceDir))
+			if (!projectSourceDir.empty() && (std::filesystem::exists(projectSourceDir) || newIsNativeScript))
 			{
+				if (newIsNativeScript) {
+					std::error_code ec;
+					std::filesystem::create_directories(projectSourceDir, ec);
+				}
+
 				auto oldProjectFile = projectSourceDir / (oldStem + oldExt);
 				auto newProjectFile = projectSourceDir / newName;
 
-				if (std::filesystem::exists(oldProjectFile))
+				if (oldIsNativeScript && !newIsNativeScript)
 				{
 					std::error_code ec;
-					std::filesystem::rename(oldProjectFile, newProjectFile, ec);
+					std::filesystem::remove(oldProjectFile, ec);
+				}
+				else if (newIsNativeScript)
+				{
+					if (std::filesystem::exists(oldProjectFile))
+					{
+						std::error_code ec;
+						std::filesystem::rename(oldProjectFile, newProjectFile, ec);
+					}
+					else if (std::filesystem::exists(newPath) && !std::filesystem::exists(newProjectFile))
+					{
+						std::error_code ec;
+						std::filesystem::copy_file(newPath, newProjectFile, std::filesystem::copy_options::none, ec);
+					}
 
-					if (!ec)
+					if (std::filesystem::exists(newProjectFile))
 					{
 						std::ifstream in(newProjectFile);
 						std::string content((std::istreambuf_iterator<char>(in)),
@@ -382,7 +446,12 @@ namespace Bolt {
 
 			if (ExternalEditor::IsScriptExtension(ext))
 			{
-				ExternalEditor::OpenFile(entry.Path);
+				std::filesystem::path scriptPath = entry.Path;
+				const std::filesystem::path nativeMirrorPath = ResolveNativeScriptMirrorPath(entry.Path);
+				if (!nativeMirrorPath.empty() && std::filesystem::exists(nativeMirrorPath)) {
+					scriptPath = nativeMirrorPath;
+				}
+				ExternalEditor::OpenFile(scriptPath.string());
 				return;
 			}
 

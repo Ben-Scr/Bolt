@@ -41,6 +41,8 @@ namespace Bolt {
 		std::string GetNativeDllPath() const;
 		std::string GetSceneFilePath(const std::string& sceneName) const;
 		void EnsureNativeScriptBootstrapFiles() const;
+		void EnsureNativeScriptProjectFiles() const;
+		bool HasNativeScriptSources() const;
 
 		void Save() const;
 

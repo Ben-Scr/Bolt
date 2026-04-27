@@ -345,7 +345,8 @@ namespace Bolt {
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
 
 		if (!isPlaying) {
-			if (m_PlayModeRecompilePending) {
+			const bool playButtonDisabled = m_PlayModeRecompilePending;
+			if (playButtonDisabled) {
 				ImGui::BeginDisabled();
 			}
 			if (IconButton("##Play", "play", iconSize, btnSize)) {
@@ -354,7 +355,7 @@ namespace Bolt {
 					BeginPlayModeRequest(*active);
 				}
 			}
-			if (m_PlayModeRecompilePending) {
+			if (playButtonDisabled) {
 				ImGui::EndDisabled();
 			}
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play (Enter playmode)");
@@ -422,7 +423,7 @@ namespace Bolt {
 		ImGui::TextUnformatted(statusText);
 		if (m_PlayModeRecompilePending) {
 			ImGui::SameLine();
-			ImGui::TextDisabled("Compiling scripts before Play...");
+			ImGui::TextDisabled("Waiting for script compilation...");
 		}
 		ImGui::End();
 

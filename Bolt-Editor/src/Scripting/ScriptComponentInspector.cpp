@@ -903,6 +903,10 @@ namespace Bolt {
 			return ext == ".cs" || ext == ".cpp";
 		}
 
+		static bool IsNativeScriptBootstrapFile(const std::filesystem::path& path) {
+			return path.filename().string() == "NativeScriptExports.cpp";
+		}
+
 		static void CollectScriptFiles(const std::filesystem::path& dir,
 			std::vector<ScriptPickerEntry>& entries) {
 			if (!std::filesystem::exists(dir)) return;
@@ -911,6 +915,7 @@ namespace Bolt {
 				std::string ext = entry.path().extension().string();
 				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 				if (!IsScriptExtension(ext)) continue;
+				if (ext == ".cpp" && IsNativeScriptBootstrapFile(entry.path())) continue;
 
 				ScriptPickerEntry e;
 				e.ClassName = entry.path().stem().string();

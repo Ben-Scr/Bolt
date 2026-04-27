@@ -8,6 +8,7 @@
 #include "Core/Version.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <ctime>
@@ -236,6 +237,172 @@ BOLT_NATIVE_SCRIPT_EXPORT void BoltDestroyScript(Bolt::NativeScript* script) {
 
 			File::WriteAllText(exportsPath.string(), BuildNativeScriptExportsSource());
 		}
+
+		bool IsNativeScriptBootstrapFile(const std::filesystem::path& path) {
+			return path.filename().string() == "NativeScriptExports.cpp";
+		}
+
+		bool IsNativeScriptSourceExtension(const std::filesystem::path& path) {
+			std::string extension = path.extension().string();
+			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+				return static_cast<char>(std::tolower(ch));
+			});
+
+			return extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx";
+		}
+
+		bool HasNativeScriptSourceFiles(const std::filesystem::path& sourceDirectory) {
+			std::error_code ec;
+			if (sourceDirectory.empty() || !std::filesystem::exists(sourceDirectory, ec) || ec) {
+				return false;
+			}
+
+			for (std::filesystem::recursive_directory_iterator it(sourceDirectory, std::filesystem::directory_options::skip_permission_denied, ec), end;
+				 it != end;
+				 it.increment(ec)) {
+				if (ec) {
+					ec.clear();
+					continue;
+				}
+
+				if (!it->is_regular_file(ec) || ec) {
+					ec.clear();
+					continue;
+				}
+
+				const std::filesystem::path path = it->path();
+				if (IsNativeScriptBootstrapFile(path)) {
+					continue;
+				}
+
+				if (IsNativeScriptSourceExtension(path)) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		std::string BuildNativeScriptCMakeLists(const BoltProject& project) {
+			const std::filesystem::path engineRoot = ResolveEngineRoot();
+			const std::string nativeBoltRootFallback = engineRoot.empty()
+				? std::string()
+				: MakeRelativePathOrEmpty(std::filesystem::path(project.NativeScriptsDir), engineRoot);
+
+			std::string boltRootBootstrap = R"(set(BOLT_DIR "$ENV{BOLT_DIR}" CACHE PATH "Path to the Bolt repository root")
+)";
+			if (!nativeBoltRootFallback.empty()) {
+				boltRootBootstrap += "if(NOT BOLT_DIR)\n";
+				boltRootBootstrap += "    get_filename_component(BOLT_DIR \"${CMAKE_CURRENT_LIST_DIR}/" + nativeBoltRootFallback + "\" ABSOLUTE)\n";
+				boltRootBootstrap += "endif()\n";
+			}
+			boltRootBootstrap += R"(
+if(NOT BOLT_DIR OR NOT EXISTS "${BOLT_DIR}/Bolt-Engine/src")
+    message(FATAL_ERROR "Bolt engine sources not found. Set BOLT_DIR to the Bolt repository root before configuring native scripts.")
+endif()
+
+)";
+
+			return R"(cmake_minimum_required(VERSION 3.20)
+project()" + project.Name + R"(-NativeScripts LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_CONFIGURATION_TYPES "Debug;Release;Dist" CACHE STRING "" FORCE)
+endif()
+
+set(CMAKE_CXX_FLAGS_DIST "${CMAKE_CXX_FLAGS_RELEASE}" CACHE STRING "Flags used by the C++ compiler for Dist builds." FORCE)
+set(CMAKE_SHARED_LINKER_FLAGS_DIST "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}" CACHE STRING "Flags used by the shared linker for Dist builds." FORCE)
+
+function(bt_normalize_native_arch out_var raw_arch)
+    string(TOLOWER "${raw_arch}" raw_arch_lower)
+    if(raw_arch_lower STREQUAL "amd64" OR raw_arch_lower STREQUAL "x86_64" OR raw_arch_lower STREQUAL "x64")
+        set(${out_var} "x86_64" PARENT_SCOPE)
+    elseif(raw_arch_lower STREQUAL "arm64" OR raw_arch_lower STREQUAL "aarch64")
+        set(${out_var} "arm64" PARENT_SCOPE)
+    else()
+        message(FATAL_ERROR "Unsupported native script architecture: ${raw_arch}")
+    endif()
+endfunction()
+
+)" + boltRootBootstrap + R"(
+file(GLOB_RECURSE NATIVE_SOURCES CONFIGURE_DEPENDS "Source/*.cpp" "Source/*.h" "Source/*.hpp")
+add_library(${PROJECT_NAME} SHARED ${NATIVE_SOURCES})
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "${BOLT_DIR}/Bolt-Engine/src"
+    "${BOLT_DIR}/External/spdlog/include"
+    "${BOLT_DIR}/External/glm"
+    "${BOLT_DIR}/External/entt/src"
+    "${BOLT_DIR}/External/stb"
+    "${BOLT_DIR}/External/magic_enum/include"
+    "${BOLT_DIR}/External/cereal/include"
+    "${BOLT_DIR}/External/glfw/include"
+    "${BOLT_DIR}/External/glad/include"
+    "${BOLT_DIR}/External/miniaudio"
+    "${BOLT_DIR}/External/box2d/include"
+    "${BOLT_DIR}/External/Bolt-Physics/include"
+    "${BOLT_DIR}/External/dotnet"
+)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    BOLT_ALL_MODULES=1
+    $<$<CONFIG:Debug>:BT_DEBUG;_DEBUG>
+    $<$<CONFIG:Release>:BT_RELEASE;NDEBUG>
+    $<$<CONFIG:Dist>:BT_DIST;NDEBUG>
+)
+
+if(WIN32)
+    bt_normalize_native_arch(BT_NATIVE_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+    set(BT_NATIVE_PLATFORM "windows-${BT_NATIVE_ARCH}")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BT_PLATFORM_WINDOWS)
+elseif(UNIX AND NOT APPLE)
+    bt_normalize_native_arch(BT_NATIVE_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+    set(BT_NATIVE_PLATFORM "linux-${BT_NATIVE_ARCH}")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BT_PLATFORM_LINUX)
+else()
+    message(FATAL_ERROR "Unsupported platform for native scripts")
+endif()
+
+target_link_directories(${PROJECT_NAME} PRIVATE
+    "$<$<CONFIG:Debug>:${BOLT_DIR}/bin/Debug-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+    "$<$<CONFIG:Release>:${BOLT_DIR}/bin/Release-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+    "$<$<CONFIG:Dist>:${BOLT_DIR}/bin/Dist-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
+)
+target_link_libraries(${PROJECT_NAME} PRIVATE Bolt-Engine)
+
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+endif()
+
+set(NATIVE_OUTPUT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../bin")
+foreach(config Debug Release Dist)
+    string(TOUPPER "${config}" config_upper)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${NATIVE_OUTPUT_ROOT}/${config}-${BT_NATIVE_PLATFORM}/${PROJECT_NAME}"
+        LIBRARY_OUTPUT_DIRECTORY_${config_upper} "${NATIVE_OUTPUT_ROOT}/${config}-${BT_NATIVE_PLATFORM}/${PROJECT_NAME}"
+    )
+endforeach()
+)";
+		}
+
+		void EnsureNativeScriptCMakeListsFile(const BoltProject& project) {
+			if (project.NativeScriptsDir.empty()) {
+				return;
+			}
+
+			std::error_code ec;
+			std::filesystem::create_directories(project.NativeScriptsDir, ec);
+
+			const std::filesystem::path cmakeListsPath = std::filesystem::path(project.NativeScriptsDir) / "CMakeLists.txt";
+			if (std::filesystem::exists(cmakeListsPath, ec)) {
+				return;
+			}
+
+			File::WriteAllText(cmakeListsPath.string(), BuildNativeScriptCMakeLists(project));
+		}
 	}
 
 	static std::string GenerateGUID() {
@@ -377,6 +544,15 @@ BOLT_NATIVE_SCRIPT_EXPORT void BoltDestroyScript(Bolt::NativeScript* script) {
 		EnsureNativeScriptExportsFile(*this);
 	}
 
+	void BoltProject::EnsureNativeScriptProjectFiles() const {
+		EnsureNativeScriptCMakeListsFile(*this);
+		EnsureNativeScriptExportsFile(*this);
+	}
+
+	bool BoltProject::HasNativeScriptSources() const {
+		return HasNativeScriptSourceFiles(std::filesystem::path(NativeSourceDir));
+	}
+
 	void BoltProject::Save() const {
 		File::WriteAllText(ProjectFilePath, Json::Stringify(BuildProjectJson(*this), true));
 	}
@@ -469,7 +645,6 @@ BOLT_NATIVE_SCRIPT_EXPORT void BoltDestroyScript(Bolt::NativeScript* script) {
 			project.EngineVersion = BT_VERSION;
 
 		ResolvePaths(project);
-		project.EnsureNativeScriptBootstrapFiles();
 		return project;
 	}
 
@@ -546,16 +721,6 @@ BOLT_NATIVE_SCRIPT_EXPORT void BoltDestroyScript(Bolt::NativeScript* script) {
 			sceneRoot.AddMember("entities", Json::Value::MakeArray());
 			File::WriteAllText(project.GetSceneFilePath(project.StartupScene), Json::Stringify(sceneRoot, true));
 		}
-
-		const std::filesystem::path engineRoot = ResolveEngineRoot();
-		const std::string scriptCoreFallback = engineRoot.empty()
-			? std::string()
-			: MakeRelativePathOrEmpty(
-				std::filesystem::path(project.RootDirectory),
-				engineRoot / "Bolt-ScriptCore" / "Bolt-ScriptCore.csproj");
-		const std::string nativeBoltRootFallback = engineRoot.empty()
-			? std::string()
-			: MakeRelativePathOrEmpty(std::filesystem::path(project.NativeScriptsDir), engineRoot);
 
 		// Preserve existing NuGet PackageReference entries if .csproj already exists
 		std::string existingPackageRefs;
@@ -684,106 +849,7 @@ public class GameScript : BoltScript
 })";
 		File::WriteAllText(Path::Combine(project.RootDirectory, ".vscode", "settings.json"), vsCodeSettings);
 
-		std::string boltRootBootstrap = R"(set(BOLT_DIR "$ENV{BOLT_DIR}" CACHE PATH "Path to the Bolt repository root")
-)";
-		if (!nativeBoltRootFallback.empty()) {
-			boltRootBootstrap += "if(NOT BOLT_DIR)\n";
-			boltRootBootstrap += "    get_filename_component(BOLT_DIR \"${CMAKE_CURRENT_LIST_DIR}/" + nativeBoltRootFallback + "\" ABSOLUTE)\n";
-			boltRootBootstrap += "endif()\n";
-		}
-		boltRootBootstrap += R"(
-if(NOT BOLT_DIR OR NOT EXISTS "${BOLT_DIR}/Bolt-Engine/src")
-    message(FATAL_ERROR "Bolt engine sources not found. Set BOLT_DIR to the Bolt repository root before configuring native scripts.")
-endif()
-
-)";
-
-		// Generate NativeScripts CMakeLists.txt
-		std::string cmakeFile = R"(cmake_minimum_required(VERSION 3.20)
-project()" + name + R"(-NativeScripts LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-if(CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_CONFIGURATION_TYPES "Debug;Release;Dist" CACHE STRING "" FORCE)
-endif()
-
-set(CMAKE_CXX_FLAGS_DIST "${CMAKE_CXX_FLAGS_RELEASE}" CACHE STRING "Flags used by the C++ compiler for Dist builds." FORCE)
-set(CMAKE_SHARED_LINKER_FLAGS_DIST "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}" CACHE STRING "Flags used by the shared linker for Dist builds." FORCE)
-
-function(bt_normalize_native_arch out_var raw_arch)
-    string(TOLOWER "${raw_arch}" raw_arch_lower)
-    if(raw_arch_lower STREQUAL "amd64" OR raw_arch_lower STREQUAL "x86_64" OR raw_arch_lower STREQUAL "x64")
-        set(${out_var} "x86_64" PARENT_SCOPE)
-    elseif(raw_arch_lower STREQUAL "arm64" OR raw_arch_lower STREQUAL "aarch64")
-        set(${out_var} "arm64" PARENT_SCOPE)
-    else()
-        message(FATAL_ERROR "Unsupported native script architecture: ${raw_arch}")
-    endif()
-endfunction()
-
-)" + boltRootBootstrap + R"(
-file(GLOB_RECURSE NATIVE_SOURCES CONFIGURE_DEPENDS "Source/*.cpp" "Source/*.h" "Source/*.hpp")
-add_library(${PROJECT_NAME} SHARED ${NATIVE_SOURCES})
-
-target_include_directories(${PROJECT_NAME} PRIVATE
-    "${BOLT_DIR}/Bolt-Engine/src"
-    "${BOLT_DIR}/External/spdlog/include"
-    "${BOLT_DIR}/External/glm"
-    "${BOLT_DIR}/External/entt/src"
-    "${BOLT_DIR}/External/stb"
-    "${BOLT_DIR}/External/magic_enum/include"
-    "${BOLT_DIR}/External/cereal/include"
-    "${BOLT_DIR}/External/glfw/include"
-    "${BOLT_DIR}/External/glad/include"
-    "${BOLT_DIR}/External/miniaudio"
-    "${BOLT_DIR}/External/box2d/include"
-    "${BOLT_DIR}/External/Bolt-Physics/include"
-    "${BOLT_DIR}/External/dotnet"
-)
-
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-    BOLT_ALL_MODULES=1
-    $<$<CONFIG:Debug>:BT_DEBUG;_DEBUG>
-    $<$<CONFIG:Release>:BT_RELEASE;NDEBUG>
-    $<$<CONFIG:Dist>:BT_DIST;NDEBUG>
-)
-
-if(WIN32)
-    bt_normalize_native_arch(BT_NATIVE_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
-    set(BT_NATIVE_PLATFORM "windows-${BT_NATIVE_ARCH}")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE BT_PLATFORM_WINDOWS)
-elseif(UNIX AND NOT APPLE)
-    bt_normalize_native_arch(BT_NATIVE_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
-    set(BT_NATIVE_PLATFORM "linux-${BT_NATIVE_ARCH}")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE BT_PLATFORM_LINUX)
-else()
-    message(FATAL_ERROR "Unsupported platform for native scripts")
-endif()
-
-target_link_directories(${PROJECT_NAME} PRIVATE
-    "$<$<CONFIG:Debug>:${BOLT_DIR}/bin/Debug-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
-    "$<$<CONFIG:Release>:${BOLT_DIR}/bin/Release-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
-    "$<$<CONFIG:Dist>:${BOLT_DIR}/bin/Dist-${BT_NATIVE_PLATFORM}/Bolt-Engine>"
-)
-target_link_libraries(${PROJECT_NAME} PRIVATE Bolt-Engine)
-
-if(MSVC)
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
-endif()
-
-set(NATIVE_OUTPUT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../bin")
-foreach(config Debug Release Dist)
-    string(TOUPPER "${config}" config_upper)
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${NATIVE_OUTPUT_ROOT}/${config}-${BT_NATIVE_PLATFORM}/${PROJECT_NAME}"
-        LIBRARY_OUTPUT_DIRECTORY_${config_upper} "${NATIVE_OUTPUT_ROOT}/${config}-${BT_NATIVE_PLATFORM}/${PROJECT_NAME}"
-    )
-endforeach()
-)";
-		File::WriteAllText(Path::Combine(project.NativeScriptsDir, "CMakeLists.txt"), cmakeFile);
-		project.EnsureNativeScriptBootstrapFiles();
+		project.EnsureNativeScriptProjectFiles();
 
 		// Generate .gitignore
 		File::WriteAllText(Path::Combine(project.RootDirectory, ".gitignore"),

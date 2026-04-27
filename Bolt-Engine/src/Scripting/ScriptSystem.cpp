@@ -11,6 +11,8 @@
 #include "Project/ProjectManager.hpp"
 
 #include <imgui.h>
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <optional>
 
@@ -116,6 +118,54 @@ namespace Bolt {
 				".inl",
 				".ipp"
 			};
+		}
+
+		bool IsNativeScriptBootstrapFile(const std::filesystem::path& path)
+		{
+			return path.filename().string() == "NativeScriptExports.cpp";
+		}
+
+		bool IsNativeScriptSourceExtension(const std::filesystem::path& path)
+		{
+			std::string extension = path.extension().string();
+			std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+				return static_cast<char>(std::tolower(ch));
+			});
+
+			return extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx";
+		}
+
+		bool HasNativeScriptSourceFiles(const std::filesystem::path& sourceDirectory)
+		{
+			std::error_code ec;
+			if (sourceDirectory.empty() || !std::filesystem::exists(sourceDirectory, ec) || ec) {
+				return false;
+			}
+
+			for (std::filesystem::recursive_directory_iterator it(sourceDirectory, std::filesystem::directory_options::skip_permission_denied, ec), end;
+				 it != end;
+				 it.increment(ec)) {
+				if (ec) {
+					ec.clear();
+					continue;
+				}
+
+				if (!it->is_regular_file(ec) || ec) {
+					ec.clear();
+					continue;
+				}
+
+				const std::filesystem::path path = it->path();
+				if (IsNativeScriptBootstrapFile(path)) {
+					continue;
+				}
+
+				if (IsNativeScriptSourceExtension(path)) {
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		std::vector<std::string> BuildNativeWatchTargets(
@@ -380,20 +430,24 @@ namespace Bolt {
 		// Native C++ scripting — project-aware
 		if (project)
 		{
-			if (std::filesystem::exists(project->NativeScriptsDir)) {
-				m_NativeProjectDirectory = std::filesystem::canonical(project->NativeScriptsDir).string();
+			const bool hasNativeScriptSources = project->HasNativeScriptSources();
+			if (hasNativeScriptSources) {
+				project->EnsureNativeScriptProjectFiles();
 			}
+
+			m_NativeProjectDirectory = NormalizeNativePath(project->NativeScriptsDir).string();
+			m_NativeSourceDirectory = NormalizeNativePath(project->NativeSourceDir).string();
 			const std::filesystem::path nativeDll = ResolveProjectNativeDLLPath(*project);
 			m_NativeDLLPath = nativeDll.string();
 			m_NativeTargetName = project->Name + "-NativeScripts";
-			if (std::filesystem::exists(nativeDll))
+			if (hasNativeScriptSources && std::filesystem::exists(nativeDll))
 			{
 				m_NativeHost.LoadDLL(m_NativeDLLPath);
 			}
 			if (!m_NativeProjectDirectory.empty())
 			{
 				m_NativeWatcher.Watch(
-					BuildNativeWatchTargets(std::filesystem::path(project->NativeScriptsDir), std::filesystem::path(project->NativeSourceDir)),
+					BuildNativeWatchTargets(std::filesystem::path(m_NativeProjectDirectory), std::filesystem::path(m_NativeSourceDirectory)),
 					GetNativeWatchPatterns(),
 					[this]() { RebuildAndReloadNativeScripts(); });
 			}
@@ -401,20 +455,22 @@ namespace Bolt {
 		else
 		{
 			auto nativeProjectDir = exeDir / ".." / ".." / ".." / "Bolt-NativeScripts";
-			if (std::filesystem::exists(nativeProjectDir)) {
-				m_NativeProjectDirectory = std::filesystem::canonical(nativeProjectDir).string();
-			}
+			auto nativeSourceDir = nativeProjectDir / "Source";
+			const bool hasNativeScriptSources = HasNativeScriptSourceFiles(nativeSourceDir);
+			m_NativeProjectDirectory = NormalizeNativePath(nativeProjectDir).string();
+			m_NativeSourceDirectory = NormalizeNativePath(nativeSourceDir).string();
+
 			const std::filesystem::path nativeDll = ResolveStandaloneNativeDLLPath(exeDir);
 			m_NativeDLLPath = nativeDll.string();
 			m_NativeTargetName = "Bolt-NativeScripts";
-			if (std::filesystem::exists(nativeDll))
+			if (hasNativeScriptSources && std::filesystem::exists(nativeDll))
 			{
 				m_NativeHost.LoadDLL(m_NativeDLLPath);
 			}
 			if (!m_NativeProjectDirectory.empty())
 			{
 				m_NativeWatcher.Watch(
-					BuildNativeWatchTargets(nativeProjectDir, nativeProjectDir / "Source"),
+					BuildNativeWatchTargets(std::filesystem::path(m_NativeProjectDirectory), std::filesystem::path(m_NativeSourceDirectory)),
 					GetNativeWatchPatterns(),
 					[this]() { RebuildAndReloadNativeScripts(); });
 			}
@@ -458,8 +514,26 @@ namespace Bolt {
 			return;
 		}
 
-		if (BoltProject* project = ProjectManager::GetCurrentProject()) {
-			project->EnsureNativeScriptBootstrapFiles();
+		BoltProject* project = ProjectManager::GetCurrentProject();
+		const bool hasNativeScriptSources = project
+			? project->HasNativeScriptSources()
+			: HasNativeScriptSourceFiles(std::filesystem::path(m_NativeSourceDirectory));
+
+		if (!hasNativeScriptSources) {
+			m_LastRebuildFailed = false;
+			if (m_NativeHost.IsLoaded()) {
+				ForEachLoadedScene([this](Scene& loadedScene) { TeardownNativeScripts(loadedScene); });
+				m_NativeHost.UnloadDLL();
+				BT_INFO_TAG("ScriptSystem", "Native script sources removed; unloaded native script DLL");
+			}
+			return;
+		}
+
+		if (project) {
+			project->EnsureNativeScriptProjectFiles();
+			m_NativeProjectDirectory = NormalizeNativePath(project->NativeScriptsDir).string();
+			m_NativeSourceDirectory = NormalizeNativePath(project->NativeSourceDir).string();
+			m_NativeTargetName = project->Name + "-NativeScripts";
 		}
 
 		BT_INFO_TAG("ScriptSystem", "Rebuilding native scripts...");
@@ -854,6 +928,7 @@ namespace Bolt {
 		m_UserAssemblyPath.clear();
 		m_SandboxProjectPath.clear();
 		m_NativeProjectDirectory.clear();
+		m_NativeSourceDirectory.clear();
 		m_NativeDLLPath.clear();
 		m_NativeTargetName.clear();
 		m_SuppressRecompile = false;

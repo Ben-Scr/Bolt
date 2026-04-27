@@ -57,6 +57,7 @@ namespace Bolt {
 		// C++ native scripts
 		static inline NativeScriptHost m_NativeHost;
 		static inline FileWatcher m_NativeWatcher;
+		static inline std::string m_NativeSourceDirectory;
 		static inline std::string m_NativeDLLPath;
 		static inline std::string m_NativeTargetName;
 		static inline std::shared_ptr<ScriptSystemProcessTaskState> m_NativeRebuildTask;
