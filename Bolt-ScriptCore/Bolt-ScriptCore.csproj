@@ -77,7 +77,12 @@
     <Compile Include="Source\Bolt\Core\KeyCodes.cs" />
     <Compile Include="Source\Bolt\Core\Log.cs" />
     <Compile Include="Source\Bolt\Core\Time.cs" />
+    <Compile Include="Source\Bolt\Cryptography\AesEncryptor.cs" />
+    <Compile Include="Source\Bolt\Cryptography\AesHelper.cs" />
+    <Compile Include="Source\Bolt\Cryptography\AesKey.cs" />
+    <Compile Include="Source\Bolt\Cryptography\Encryptor.cs" />
     <Compile Include="Source\Bolt\Graphics\Gizmo.cs" />
+    <Compile Include="Source\Bolt\Graphics\Renderer2D.cs" />
     <Compile Include="Source\Bolt\Graphics\Texture.cs" />
     <Compile Include="Source\Bolt\Hosting\NativeCallbacks.cs" />
     <Compile Include="Source\Bolt\Hosting\ScriptHostBridge.cs" />
@@ -88,7 +93,7 @@
     <Compile Include="Source\Bolt\Math\Quaternion.cs" />
     <Compile Include="Source\Bolt\Math\Random.cs" />
     <Compile Include="Source\Bolt\Math\RandomHandler.cs" />
-    <Compile Include="Source\Bolt\Math\RandomSecure.cs" />
+    <Compile Include="Source\Bolt\Cryptography\RandomSecure.cs" />
     <Compile Include="Source\Bolt\Math\Vector2.cs" />
     <Compile Include="Source\Bolt\Math\Vector2Int.cs" />
     <Compile Include="Source\Bolt\Math\Vector3.cs" />

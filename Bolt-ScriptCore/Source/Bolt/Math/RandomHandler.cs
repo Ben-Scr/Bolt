@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Bolt.Cryptography;
+using System;
 
 namespace Bolt
 {

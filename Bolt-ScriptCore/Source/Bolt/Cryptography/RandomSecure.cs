@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Security.Cryptography;
 
-namespace Bolt
+namespace Bolt.Cryptography
 {
     public sealed class RandomSecure
     {
