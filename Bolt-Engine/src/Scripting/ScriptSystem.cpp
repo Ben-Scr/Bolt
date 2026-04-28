@@ -12,10 +12,19 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <cstdlib>
 #include <cctype>
 #include <exception>
 #include <filesystem>
 #include <optional>
+
+#if defined(BT_PLATFORM_WINDOWS)
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace Bolt {
 	struct ScriptSystemProcessTaskState {
@@ -68,6 +77,179 @@ namespace Bolt {
 		{
 			return BoltProject::GetActiveBuildConfiguration();
 		}
+
+		std::string TrimWhitespace(std::string value)
+		{
+			const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
+				return std::isspace(ch) != 0;
+			});
+			const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char ch) {
+				return std::isspace(ch) != 0;
+			}).base();
+
+			if (first >= last) {
+				return {};
+			}
+
+			return std::string(first, last);
+		}
+
+#if defined(BT_PLATFORM_WINDOWS)
+		std::optional<std::filesystem::path> NormalizeExecutablePath(std::filesystem::path candidate, const char* executableName)
+		{
+			if (candidate.empty()) {
+				return std::nullopt;
+			}
+
+			std::error_code ec;
+			if (std::filesystem::is_directory(candidate, ec) && !ec) {
+				candidate /= executableName;
+			}
+
+			ec.clear();
+			if (!std::filesystem::is_regular_file(candidate, ec) || ec) {
+				return std::nullopt;
+			}
+
+			ec.clear();
+			const std::filesystem::path canonical = std::filesystem::weakly_canonical(candidate, ec);
+			return ec ? candidate.lexically_normal() : canonical;
+		}
+
+		std::optional<std::filesystem::path> GetEnvironmentExecutablePath(const char* variableName, const char* executableName)
+		{
+			const char* value = std::getenv(variableName);
+			if (value == nullptr || value[0] == '\0') {
+				return std::nullopt;
+			}
+
+			return NormalizeExecutablePath(std::filesystem::path(value), executableName);
+		}
+
+		std::optional<std::filesystem::path> SearchExecutableOnPath(const char* executableName)
+		{
+			char stackBuffer[MAX_PATH]{};
+			char* filePart = nullptr;
+			DWORD length = SearchPathA(nullptr, executableName, nullptr, MAX_PATH, stackBuffer, &filePart);
+			if (length > 0 && length < MAX_PATH) {
+				return NormalizeExecutablePath(std::filesystem::path(stackBuffer), executableName);
+			}
+
+			if (length >= MAX_PATH) {
+				std::string dynamicBuffer(static_cast<size_t>(length) + 1, '\0');
+				length = SearchPathA(nullptr, executableName, nullptr,
+					static_cast<DWORD>(dynamicBuffer.size()), dynamicBuffer.data(), &filePart);
+				if (length > 0 && length < dynamicBuffer.size()) {
+					dynamicBuffer.resize(length);
+					return NormalizeExecutablePath(std::filesystem::path(dynamicBuffer), executableName);
+				}
+			}
+
+			return std::nullopt;
+		}
+
+		void AppendCMakeCandidate(std::vector<std::filesystem::path>& candidates,
+			const char* environmentVariable,
+			const std::filesystem::path& relativePath)
+		{
+			const char* root = std::getenv(environmentVariable);
+			if (root == nullptr || root[0] == '\0') {
+				return;
+			}
+
+			candidates.emplace_back(std::filesystem::path(root) / relativePath);
+		}
+
+		std::optional<std::filesystem::path> ResolveVisualStudioCMakeWithVswhere()
+		{
+			const char* programFilesX86 = std::getenv("ProgramFiles(x86)");
+			if (programFilesX86 == nullptr || programFilesX86[0] == '\0') {
+				return std::nullopt;
+			}
+
+			const std::filesystem::path vswherePath =
+				std::filesystem::path(programFilesX86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
+			auto normalizedVswhere = NormalizeExecutablePath(vswherePath, "vswhere.exe");
+			if (!normalizedVswhere) {
+				return std::nullopt;
+			}
+
+			Process::Result result = Process::Run({
+				normalizedVswhere->string(),
+				"-latest",
+				"-requires", "Microsoft.VisualStudio.Component.VC.CMake.Project",
+				"-property", "installationPath"
+			});
+
+			if (!result.Succeeded()) {
+				return std::nullopt;
+			}
+
+			const std::string installPath = TrimWhitespace(result.Output);
+			if (installPath.empty()) {
+				return std::nullopt;
+			}
+
+			return NormalizeExecutablePath(
+				std::filesystem::path(installPath) / "Common7" / "IDE" / "CommonExtensions" /
+					"Microsoft" / "CMake" / "CMake" / "bin" / "cmake.exe",
+				"cmake.exe");
+		}
+
+		std::optional<std::string> ResolveCMakeExecutable()
+		{
+			static std::optional<std::string> cachedCMakeExecutable;
+			if (cachedCMakeExecutable) {
+				return cachedCMakeExecutable;
+			}
+
+			for (const char* variableName : { "BOLT_CMAKE_PATH", "CMAKE_COMMAND", "CMAKE_EXE" }) {
+				if (auto path = GetEnvironmentExecutablePath(variableName, "cmake.exe")) {
+					cachedCMakeExecutable = path->string();
+					return cachedCMakeExecutable;
+				}
+			}
+
+			if (auto path = SearchExecutableOnPath("cmake.exe")) {
+				cachedCMakeExecutable = path->string();
+				return cachedCMakeExecutable;
+			}
+
+			if (auto path = ResolveVisualStudioCMakeWithVswhere()) {
+				cachedCMakeExecutable = path->string();
+				return cachedCMakeExecutable;
+			}
+
+			std::vector<std::filesystem::path> candidates;
+			AppendCMakeCandidate(candidates, "ProgramFiles", std::filesystem::path("CMake") / "bin" / "cmake.exe");
+			AppendCMakeCandidate(candidates, "ProgramFiles(x86)", std::filesystem::path("CMake") / "bin" / "cmake.exe");
+
+			for (const char* version : { "2022", "2019" }) {
+				for (const char* edition : { "Enterprise", "Professional", "Community", "BuildTools" }) {
+					AppendCMakeCandidate(candidates, "ProgramFiles",
+						std::filesystem::path("Microsoft Visual Studio") / version / edition / "Common7" /
+							"IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "CMake" / "bin" / "cmake.exe");
+					AppendCMakeCandidate(candidates, "ProgramFiles(x86)",
+						std::filesystem::path("Microsoft Visual Studio") / version / edition / "Common7" /
+							"IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "CMake" / "bin" / "cmake.exe");
+				}
+			}
+
+			for (const std::filesystem::path& candidate : candidates) {
+				if (auto path = NormalizeExecutablePath(candidate, "cmake.exe")) {
+					cachedCMakeExecutable = path->string();
+					return cachedCMakeExecutable;
+				}
+			}
+
+			return std::nullopt;
+		}
+#else
+		std::optional<std::string> ResolveCMakeExecutable()
+		{
+			return std::string("cmake");
+		}
+#endif
 
 		std::vector<std::string> GetManagedWatchPatterns()
 		{
@@ -504,9 +686,11 @@ namespace Bolt {
 	void ScriptSystem::RebuildAndReloadScripts()
 	{
 		if (m_RebuildTask) {
+			m_RebuildQueued = true;
 			return;
 		}
 		if (m_SandboxProjectPath.empty()) {
+			m_RebuildQueued = false;
 			return;
 		}
 
@@ -530,7 +714,12 @@ namespace Bolt {
 
 	void ScriptSystem::RebuildAndReloadNativeScripts()
 	{
-		if (m_NativeRebuildTask || m_NativeProjectDirectory.empty()) {
+		if (m_NativeRebuildTask) {
+			m_NativeRebuildQueued = true;
+			return;
+		}
+		if (m_NativeProjectDirectory.empty()) {
+			m_NativeRebuildQueued = false;
 			return;
 		}
 
@@ -563,11 +752,19 @@ namespace Bolt {
 		const std::string nativeTargetName = m_NativeTargetName;
 		m_NativeRebuildTask = LaunchTask([nativeProjectDirectory, buildConfig, nativeTargetName]() {
 			const std::filesystem::path buildDirectory = std::filesystem::path(nativeProjectDirectory) / "build";
+			const std::optional<std::string> cmakeExecutable = ResolveCMakeExecutable();
+			if (!cmakeExecutable) {
+				Process::Result result{};
+				result.Output =
+					"CMake executable was not found. Install CMake, install the Visual Studio C++ CMake tools, "
+					"add cmake.exe to PATH, or set BOLT_CMAKE_PATH to the cmake.exe location.";
+				return result;
+			}
 
 			Process::Result configureResult{};
 			if (NativeBuildNeedsConfigure(nativeProjectDirectory, buildDirectory)) {
 				std::vector<std::string> configureCommand = {
-					"cmake",
+					*cmakeExecutable,
 					"-B", buildDirectory.string(),
 					"-S", nativeProjectDirectory,
 					"-DCMAKE_BUILD_TYPE=" + buildConfig
@@ -589,7 +786,7 @@ namespace Bolt {
 			}
 
 			std::vector<std::string> buildCommand = {
-				"cmake",
+				*cmakeExecutable,
 				"--build", buildDirectory.string(),
 				"--config", buildConfig
 			};
@@ -741,6 +938,11 @@ namespace Bolt {
 					BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
 				}
 			}
+
+			if (m_RebuildQueued) {
+				m_RebuildQueued = false;
+				RebuildAndReloadScripts();
+			}
 		}
 
 		// C++ build completion check
@@ -781,6 +983,11 @@ namespace Bolt {
 				if (!result.Output.empty()) {
 					BT_ERROR_TAG("ScriptSystem", "{}", result.Output);
 				}
+			}
+
+			if (m_NativeRebuildQueued) {
+				m_NativeRebuildQueued = false;
+				RebuildAndReloadNativeScripts();
 			}
 		}
 
@@ -950,6 +1157,8 @@ namespace Bolt {
 
 		AbandonTask(m_RebuildTask, "Managed script rebuild");
 		AbandonTask(m_NativeRebuildTask, "Native script rebuild");
+		m_RebuildQueued = false;
+		m_NativeRebuildQueued = false;
 
 		if (ScriptEngine::IsInitialized()) {
 			ScriptEngine::Shutdown();

@@ -4,6 +4,8 @@
 #include "Events/BoltEvent.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -87,7 +89,7 @@ namespace Bolt {
 
 		EventId Subscribe(Callback callback) {
 			const EventId id(++m_NextId.value);
-			m_Listeners.push_back({ id, std::move(callback) });
+			m_Listeners.push_back({ id, std::move(callback), true });
 			return id;
 		}
 
@@ -110,6 +112,18 @@ namespace Bolt {
 		}
 
 		bool Unsubscribe(EventId id) {
+			if (m_PublishDepth > 0) {
+				for (Entry& entry : m_Listeners) {
+					if (entry.Id == id && entry.Active) {
+						entry.Active = false;
+						m_NeedsCompact = true;
+						return true;
+					}
+				}
+
+				return false;
+			}
+
 			auto it = std::remove_if(m_Listeners.begin(), m_Listeners.end(), [id](const Entry& entry) {
 				return entry.Id == id;
 			});
@@ -119,6 +133,14 @@ namespace Bolt {
 		}
 
 		void Clear() {
+			if (m_PublishDepth > 0) {
+				for (Entry& entry : m_Listeners) {
+					entry.Active = false;
+				}
+				m_NeedsCompact = true;
+				return;
+			}
+
 			m_Listeners.clear();
 		}
 
@@ -128,19 +150,57 @@ namespace Bolt {
 		struct Entry {
 			EventId Id;
 			Callback Listener;
+			bool Active = true;
 		};
 
 		void Publish(BoltEvent& event) {
-			const auto snapshot = m_Listeners;
-			for (const Entry& entry : snapshot) {
-				if (event.Handled) {
-					break;
+			++m_PublishDepth;
+			try {
+				const size_t listenerCount = m_Listeners.size();
+				for (size_t i = 0; i < listenerCount && i < m_Listeners.size(); ++i) {
+					if (event.Handled) {
+						break;
+					}
+
+					if (!m_Listeners[i].Active) {
+						continue;
+					}
+
+					Callback listener = m_Listeners[i].Listener;
+					listener(event);
 				}
-				entry.Listener(event);
 			}
+			catch (...) {
+				FinishPublish();
+				throw;
+			}
+
+			FinishPublish();
+		}
+
+		void FinishPublish() {
+			if (m_PublishDepth == 0) {
+				return;
+			}
+
+			--m_PublishDepth;
+
+			if (m_PublishDepth == 0 && m_NeedsCompact) {
+				CompactInactive();
+			}
+		}
+
+		void CompactInactive() {
+			auto it = std::remove_if(m_Listeners.begin(), m_Listeners.end(), [](const Entry& entry) {
+				return !entry.Active;
+			});
+			m_Listeners.erase(it, m_Listeners.end());
+			m_NeedsCompact = false;
 		}
 
 		std::vector<Entry> m_Listeners;
 		EventId m_NextId{};
+		uint32_t m_PublishDepth = 0;
+		bool m_NeedsCompact = false;
 	};
 }

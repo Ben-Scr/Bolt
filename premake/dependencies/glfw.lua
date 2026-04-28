@@ -1,5 +1,5 @@
 project "GLFW"
-    location (path.join(ROOT_DIR, "External/glfw"))
+    location (path.join(ROOT_DIR, "premake/generated/GLFW"))
     kind "StaticLib"
     language "C"
     staticruntime "off"

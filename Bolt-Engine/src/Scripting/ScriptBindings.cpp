@@ -997,7 +997,6 @@ namespace Bolt {
 
 		b.Scene_GetActiveSceneName = &Bolt_Scene_GetActiveSceneName;
 		b.Scene_GetEntityCount = &Bolt_Scene_GetEntityCount;
-		b.Scene_GetEntityNameByUUID = &Bolt_Scene_GetEntityNameByUUID;
 		b.Scene_LoadAdditive = &Bolt_Scene_LoadAdditive;
 		b.Scene_Load = &Bolt_Scene_Load;
 		b.Scene_Unload = &Bolt_Scene_Unload;
@@ -1005,6 +1004,7 @@ namespace Bolt {
 		b.Scene_Reload = &Bolt_Scene_Reload;
 		b.Scene_GetLoadedCount = &Bolt_Scene_GetLoadedCount;
 		b.Scene_GetLoadedSceneNameAt = &Bolt_Scene_GetLoadedSceneNameAt;
+		b.Scene_GetEntityNameByUUID = &Bolt_Scene_GetEntityNameByUUID;
 		b.Scene_QueryEntities = &Bolt_Scene_QueryEntities;
 		b.Scene_QueryEntitiesFiltered = &Bolt_Scene_QueryEntitiesFiltered;
 

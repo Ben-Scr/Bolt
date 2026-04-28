@@ -14,6 +14,7 @@ project "Bolt-ScriptCore"
         Nullable = "enable",
         AllowUnsafeBlocks = "true",
         EnableDynamicLoading = "true",
+        TreatWarningsAsErrors = "true",
     }
 
     files {

@@ -15,13 +15,13 @@ namespace Bolt
     /// </summary>
     public static class Input
     {
-        public static Action<KeyCode> OnKeyDown;
-        public static Action<KeyCode> OnKeyUp;
+        public static Action<KeyCode>? OnKeyDown;
+        public static Action<KeyCode>? OnKeyUp;
 
-        public static Action<MouseButton> OnMouseDown;
-        public static Action<MouseButton> OnMouseUp;
-        public static Action<MouseButton> OnMouseScroll;
-        public static Action<Vector2> OnMouseMove;
+        public static Action<MouseButton>? OnMouseDown;
+        public static Action<MouseButton>? OnMouseUp;
+        public static Action<MouseButton>? OnMouseScroll;
+        public static Action<Vector2>? OnMouseMove;
 
         public static int KeyCount => 0;
         public static int MouseCount => 3;

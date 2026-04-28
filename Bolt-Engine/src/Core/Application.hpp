@@ -1,13 +1,6 @@
 #pragma once
-#include "Graphics/Renderer2D.hpp"
-#include "Graphics/GizmoRenderer.hpp"
-
-#include "Physics/PhysicsSystem2D.hpp"
-
-#include "Scene/SceneManager.hpp"
-#include "Gui/ImGuiRenderer.hpp"
-#include "Gui/GuiRenderer.hpp"
 #include "Core/ApplicationConfig.hpp"
+#include "Core/Export.hpp"
 #include "Core/Layer.hpp"
 #include "Core/LayerStack.hpp"
 #include "Events/BoltEvent.hpp"
@@ -15,14 +8,27 @@
 
 #include "Input.hpp"
 #include "Time.hpp"
-#include "Window.hpp"
-#include "Export.hpp"
 
 #include <chrono>
+#include <memory>
+#include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
+
+#if !BOLT_WITH_APPLICATION
+#error "Bolt::Application is part of the full runtime surface. Enable the application module profile or include Bolt/Core.hpp for standalone core usage."
+#endif
 
 namespace Bolt {
+	class GuiRenderer;
+	class GizmoRenderer2D;
+	class ImGuiRenderer;
+	class PhysicsSystem2D;
+	class Renderer2D;
+	class SceneManager;
+	class Window;
+
 	class BOLT_API Application {
 		friend class Window;
 		friend class SceneManager;
@@ -44,17 +50,8 @@ namespace Bolt {
 			}
 		};
 
-		Application()
-			: m_SceneManager(std::make_unique<SceneManager>())
-			, m_FixedUpdateAccumulator{ 0 } {
-			Application::s_Instance = this;
-		};
-
-		virtual ~Application() {
-			if (s_Instance == this) {
-				s_Instance = nullptr;
-			}
-		}
+		Application();
+		virtual ~Application();
 
 
 		void Run();

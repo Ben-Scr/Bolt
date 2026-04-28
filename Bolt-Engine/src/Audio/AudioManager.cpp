@@ -43,6 +43,7 @@ namespace Bolt {
 	ma_engine AudioManager::s_Engine{};
 	bool AudioManager::s_IsInitialized = false;
 	std::unordered_map<AudioHandle::HandleType, std::unique_ptr<Audio>> AudioManager::s_audioMap;
+	std::unordered_map<std::string, AudioHandle::HandleType> AudioManager::s_audioPathToHandle;
 	AudioHandle::HandleType AudioManager::s_nextHandle = 1;
 	std::vector<AudioManager::SoundInstance> AudioManager::s_soundInstances;
 	std::vector<uint32_t> AudioManager::s_freeInstanceIndices;
@@ -99,6 +100,7 @@ namespace Bolt {
 		s_activeSoundCount = 0;
 		s_soundsPlayedThisFrame = 0;
 		s_soundQueue = {};
+		s_audioPathToHandle.clear();
 
 		ma_engine_uninit(&s_Engine);
 		s_IsInitialized = false;
@@ -234,6 +236,7 @@ namespace Bolt {
 			BT_CORE_WARN_TAG("AudioManager", "Falling back to on-demand audio loading for '{}'", resolvedPath);
 		}
 		s_audioMap[id] = std::move(audio);
+		s_audioPathToHandle[resolvedPath] = id;
 		return AudioHandle(id);
 	}
 
@@ -257,6 +260,9 @@ namespace Bolt {
 
 		auto it = s_audioMap.find(audioHandle.GetHandle());
 		if (it != s_audioMap.end()) {
+			if (it->second) {
+				s_audioPathToHandle.erase(it->second->GetFilepath());
+			}
 
 			for (auto& instance : s_soundInstances) {
 				if (instance.IsValid && instance.AudioHandle == audioHandle) {
@@ -285,6 +291,7 @@ namespace Bolt {
 		}
 
 		s_audioMap.clear();
+		s_audioPathToHandle.clear();
 		s_nextHandle = 1;
 		s_soundLimits.clear();
 		s_soundQueue = {};
@@ -469,12 +476,17 @@ namespace Bolt {
 	}
 
 	AudioHandle AudioManager::FindAudioByPath(const std::string& path) {
-		for (const auto& [id, audio] : s_audioMap) {
-			if (audio && audio->GetFilepath() == path) {
-				return AudioHandle(id);
-			}
+		auto pathIt = s_audioPathToHandle.find(path);
+		if (pathIt == s_audioPathToHandle.end()) {
+			return AudioHandle();
 		}
 
+		auto audioIt = s_audioMap.find(pathIt->second);
+		if (audioIt != s_audioMap.end() && audioIt->second && audioIt->second->GetFilepath() == path) {
+			return AudioHandle(pathIt->second);
+		}
+
+		s_audioPathToHandle.erase(pathIt);
 		return AudioHandle();
 	}
 

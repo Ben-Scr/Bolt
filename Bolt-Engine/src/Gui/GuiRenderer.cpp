@@ -17,22 +17,43 @@
 
 namespace Bolt {
 	void GuiRenderer::Initialize() {
+		if (m_IsInitialized) {
+			return;
+		}
+
 		m_SpriteShader.Initialize();
 		m_QuadMesh.Initialize();
 
 		m_IsInitialized = true;
 	}
 	void GuiRenderer::Shutdown() {
+		if (!m_IsInitialized) {
+			return;
+		}
+
+		m_QuadMesh.Shutdown();
+		m_SpriteShader.Shutdown();
 		m_IsInitialized = false;
 	}
 
 	void GuiRenderer::BeginFrame(const SceneManager& sceneManager) {
+		if (!m_IsInitialized) {
+			return;
+		}
+
 		sceneManager.ForeachLoadedScene([&](const Scene& scene) { RenderScene(scene); });
 	}
 	void GuiRenderer::EndFrame() {
+		if (!m_IsInitialized) {
+			return;
+		}
 
 	}
 	void GuiRenderer::RenderScene(const Scene& scene) {
+		if (!m_IsInitialized) {
+			return;
+		}
+
 		BT_ASSERT(m_SpriteShader.IsValid(), BoltErrorCode::InvalidHandle, "Invalid Sprite 2D Shader");
 		m_SpriteShader.Bind();
 

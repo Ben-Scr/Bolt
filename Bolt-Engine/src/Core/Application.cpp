@@ -1,12 +1,19 @@
 #include "pch.hpp"
 #include "Application.hpp"
 #include "Scene/SceneManager.hpp"
+#include "Core/Window.hpp"
+#include "Graphics/Renderer2D.hpp"
+#include "Graphics/GizmoRenderer.hpp"
 #include "Graphics/TextureManager.hpp"
 #include "Graphics/OpenGL.hpp"
+#include "Gui/ImGuiRenderer.hpp"
+#include "Gui/GuiRenderer.hpp"
+#include "Math/Math.hpp"
 #include "Core/SingleInstance.hpp"
 #include "Audio/AudioManager.hpp"
 #include "Events/EventDispatcher.hpp"
 #include "Events/WindowEvents.hpp"
+#include "Physics/PhysicsSystem2D.hpp"
 #include <Utils/Timer.hpp>
 #include <Utils/StringHelper.hpp>
 
@@ -20,6 +27,20 @@ namespace Bolt {
 
 	Application* Application::s_Instance = nullptr;
 	Application::CommandLineArgs Application::s_CommandLineArgs{};
+
+	Application::Application()
+		: m_SceneManager(std::make_unique<SceneManager>())
+		, m_FixedUpdateAccumulator{ 0 }
+	{
+		Application::s_Instance = this;
+	}
+
+	Application::~Application()
+	{
+		if (s_Instance == this) {
+			s_Instance = nullptr;
+		}
+	}
 
 	void Application::Run()
 	{

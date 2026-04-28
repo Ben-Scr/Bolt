@@ -86,6 +86,9 @@ local function ResolveBoltModules()
 
     if modules.Editor then
         modules.Render = true
+        modules.Audio = true
+        modules.Physics = true
+        modules.Scripting = true
     end
 
     return modules
@@ -111,13 +114,20 @@ Dependency.EditorRuntimeCommon = MergeDependencySets(
 )
 
 function GetBoltModuleDefines()
+    local hasApplication = BoltModules.Render
+        and BoltModules.Audio
+        and BoltModules.Physics
+        and BoltModules.Scripting
+        and BoltModules.Editor
+
     local defines =
     {
         "BOLT_WITH_RENDER=" .. (BoltModules.Render and "1" or "0"),
         "BOLT_WITH_AUDIO=" .. (BoltModules.Audio and "1" or "0"),
         "BOLT_WITH_PHYSICS=" .. (BoltModules.Physics and "1" or "0"),
         "BOLT_WITH_SCRIPTING=" .. (BoltModules.Scripting and "1" or "0"),
-        "BOLT_WITH_EDITOR=" .. (BoltModules.Editor and "1" or "0")
+        "BOLT_WITH_EDITOR=" .. (BoltModules.Editor and "1" or "0"),
+        "BOLT_WITH_APPLICATION=" .. (hasApplication and "1" or "0")
     }
 
     if BoltModules.FullCompatibility then
@@ -173,7 +183,7 @@ end
 group "Dependencies"
 if BoltModules.Editor then
     project "ImGui"
-        location "External/imgui"
+        location (path.join(ROOT_DIR, "premake/generated/ImGui"))
         kind "StaticLib"
         language "C++"
         cppdialect "C++20"

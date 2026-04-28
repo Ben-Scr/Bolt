@@ -32,6 +32,11 @@ namespace Bolt {
             m_Listeners.clear();
         }
 
+        bool HasListeners() const {
+            std::scoped_lock lock(m_Mutex);
+            return !m_Listeners.empty();
+        }
+
         void Invoke(Args... args) {
             std::vector<Entry> listenersSnapshot;
             {

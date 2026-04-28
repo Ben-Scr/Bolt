@@ -52,6 +52,7 @@ namespace Bolt {
 		// C# hot-reload
 		static inline FileWatcher m_ScriptWatcher;
 		static inline std::shared_ptr<ScriptSystemProcessTaskState> m_RebuildTask;
+		static inline bool m_RebuildQueued = false;
 		static inline bool m_LastRebuildFailed = false;
 
 		// C++ native scripts
@@ -61,6 +62,7 @@ namespace Bolt {
 		static inline std::string m_NativeDLLPath;
 		static inline std::string m_NativeTargetName;
 		static inline std::shared_ptr<ScriptSystemProcessTaskState> m_NativeRebuildTask;
+		static inline bool m_NativeRebuildQueued = false;
 	};
 
 } // namespace Bolt

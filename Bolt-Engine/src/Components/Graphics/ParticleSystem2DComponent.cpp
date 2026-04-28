@@ -2,6 +2,8 @@
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 
 #include "Math/Random.hpp"
+#include "Math/Math.hpp"
+#include "Math/VectorMath.hpp"
 #include "Scene/Scene.hpp"
 
 #include <Core/Time.hpp>

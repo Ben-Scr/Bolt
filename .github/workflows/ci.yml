@@ -13,7 +13,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          lfs: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -25,6 +24,23 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
+      - name: Generate Core Project Files
+        shell: pwsh
+        run: python scripts/Setup.py --module-profile core --skip-lfs
+
+      - name: Build Core Profile
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) {
+            throw 'MSBuild.exe not found via vswhere.'
+          }
+          & $msbuild "Bolt.sln" /m /t:Bolt-Engine /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Generate Project Files
         shell: pwsh
         run: python scripts/Setup.py
@@ -32,6 +48,12 @@ jobs:
       - name: Restore .NET dependencies
         shell: pwsh
         run: dotnet restore Bolt.sln
+
+      - name: Build Package Tool
+        shell: pwsh
+        run: |
+          dotnet restore Bolt-PackageTool/Bolt-PackageTool.csproj
+          dotnet build Bolt-PackageTool/Bolt-PackageTool.csproj --configuration Release --no-restore
 
       - name: Build Solution
         shell: pwsh
@@ -51,7 +73,7 @@ jobs:
 
       - name: Windows Runtime Smoke Test
         shell: pwsh
-        run: python scripts/ci/runtime_smoke_test.py
+        run: python scripts/ci/runtime_smoke_test.py --binary bin/Release-windows-x86_64/Bolt-Runtime/Bolt-Runtime.exe
 
   linux-build:
     runs-on: ubuntu-latest
@@ -61,7 +83,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          lfs: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -73,6 +94,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xorg-dev libglu1-mesa-dev xvfb
 
+      - name: Generate Core Makefiles
+        run: |
+          chmod +x scripts/Setup.sh
+          chmod +x vendor/bin/premake5 || true
+          ./scripts/Setup.sh --module-profile core --skip-lfs
+
+      - name: Build Core Profile
+        run: make config=release -j"$(nproc)" Bolt-Engine
+
       - name: Generate Makefiles
         run: |
           chmod +x scripts/Setup.sh
@@ -82,5 +112,11 @@ jobs:
       - name: Build Linux Targets
         run: make config=release -j"$(nproc)" Bolt-Engine Bolt-Runtime Bolt-Editor
 
+      - name: Build Linux Debug Targets
+        run: make config=debug -j"$(nproc)" Bolt-Engine Bolt-Runtime Bolt-Editor
+
       - name: Linux Runtime Smoke Test
-        run: python3 scripts/ci/runtime_smoke_test.py
+        run: python3 scripts/ci/runtime_smoke_test.py --binary bin/Release-linux-x86_64/Bolt-Runtime/Bolt-Runtime
+
+      - name: Linux Debug Runtime Smoke Test
+        run: python3 scripts/ci/runtime_smoke_test.py --binary bin/Debug-linux-x86_64/Bolt-Runtime/Bolt-Runtime

@@ -4,6 +4,7 @@
 #include "Core/Application.hpp"
 #include "Core/Window.hpp"
 #include "Scene/Scene.hpp"
+#include "Scene/SceneManager.hpp"
 
 #include <glm/glm.hpp>                     
 #include <glm/gtc/matrix_transform.hpp>

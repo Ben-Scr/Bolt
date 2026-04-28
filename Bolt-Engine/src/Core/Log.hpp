@@ -52,6 +52,10 @@ namespace Bolt {
 				return;
 			}
 
+			if (!ShouldLog(type, level)) {
+				return;
+			}
+
 			const std::string message = fmt::format(format, std::forward<Args>(args)...);
 			PrintMessage(type, level, std::string_view(message));
 		}
@@ -59,6 +63,10 @@ namespace Bolt {
 		template <typename... Args>
 		static void PrintMessageTag(const Type type, const Level level, std::string_view tag, fmt::format_string<Args...> format, Args&&... args) {
 			if (!EnsureInitialized()) {
+				return;
+			}
+
+			if (!ShouldLog(type, level)) {
 				return;
 			}
 
@@ -74,6 +82,8 @@ namespace Bolt {
 	private:
 		static bool EnsureInitialized();
 		static std::shared_ptr<spdlog::logger> SelectLogger(Type type);
+		static spdlog::level::level_enum ToSpdlogLevel(Level level);
+		static bool ShouldLog(Type type, Level level);
 		static void Emit(std::shared_ptr<spdlog::logger>& logger, Level level, std::string_view message);
 
 		inline static std::mutex s_StateMutex;

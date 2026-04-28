@@ -10,6 +10,7 @@
 #include "Core/Window.hpp"
 #include "Graphics/Gizmo.hpp"
 #include "Graphics/OpenGL.hpp"
+#include "Graphics/Renderer2D.hpp"
 #include "Scene/EntityHelper.hpp"
 #include "Scene/SceneManager.hpp"
 #include <Utils/StringHelper.hpp>

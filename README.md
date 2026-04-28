@@ -67,12 +67,12 @@ Re-run setup after pulling changes that update dependencies, `.gitmodules`, Prem
 scripts\Setup.bat
 ```
 
-This validates Python 3.10+, syncs and updates submodules, copies .NET hosting files from the installed .NET 9 host pack when needed, and generates Visual Studio 2022 projects with Premake.
+This prefers the Windows `py` launcher when available, validates Python 3.10+, syncs and updates submodules, copies .NET hosting files from the installed .NET 9 host pack when needed, and generates Visual Studio 2022 projects with Premake.
 
 Optional direct invocation:
 
 ```bat
-python scripts\Setup.py --generator vs2022
+py -3 scripts\Setup.py --generator vs2022
 ```
 
 ### Linux (GNU Make)
@@ -89,6 +89,23 @@ Optional direct invocation:
 ```bash
 python3 scripts/Setup.py --generator gmake2
 ```
+
+### Standalone Core Profile
+
+For a lightweight library build without the runtime application/editor stack:
+
+```bash
+python3 scripts/Setup.py --generator gmake2 --module-profile core --skip-lfs
+make config=debug -j"$(nproc)" Bolt-Engine
+```
+
+On Windows:
+
+```bat
+py -3 scripts\Setup.py --generator vs2022 --module-profile core --skip-lfs
+```
+
+Core consumers should include `Bolt/Core.hpp` or the legacy lean `Bolt.hpp`. A minimal consumer source is available at `Docs/Samples/CoreConsumer/main.cpp`. `Bolt/App.hpp`, `Core/Application.hpp`, and `EntryPoint.hpp` are full-runtime APIs and require the application module profile. Setup forwards Premake module flags such as `--module-profile custom --with-render --with-audio` for advanced builds, but the current editor/application surface expects the full runtime stack.
 
 ## Build
 
@@ -124,7 +141,7 @@ On Windows, use:
 ```bat
 git status --short
 git submodule status --recursive
-python scripts\Setup.py --generator vs2022 --skip-lfs
+py -3 scripts\Setup.py --generator vs2022 --skip-lfs
 dotnet restore Bolt.sln
 ```
 
@@ -134,7 +151,7 @@ dotnet restore Bolt.sln
 - If a submodule looks dirty, inspect it first with `git submodule status --recursive` and `git -C External/<name> status --short`; do not remove submodule contents just to refresh generated files.
 
 ## Notes
-- Runtime assets are copied to the runtime output directory after build (`{targetdir}/Assets`).
+- Runtime assets are copied to the runtime output directory after build (`{targetdir}/BoltAssets`).
 - Linux builds use GLFW's X11 backend via vendored GLFW sources.
 
 ![Views](https://komarev.com/ghpvc/?username=ben-scr-repo-name&label=Repo%20views&color=218a45&style=flat)

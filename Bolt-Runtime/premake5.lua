@@ -5,6 +5,7 @@ project "Bolt-Runtime"
     cppdialect "C++20"
     cdialect "C17"
     staticruntime "off"
+    warnings "Extra"
 
     targetdir ("../bin/" .. outputdir .. "/%{prj.name}")
     objdir ("../bin-int/" .. outputdir .. "/%{prj.name}")
@@ -18,6 +19,7 @@ project "Bolt-Runtime"
     }
 
     UseDependencySet(Dependency.EditorRuntimeCommon)
+    defines(GetBoltModuleDefines())
 
     postbuildcommands
     {

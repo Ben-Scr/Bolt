@@ -37,9 +37,7 @@ namespace Bolt {
 
 		TextureHandle ResolveRenderableTextureHandle(TextureHandle requestedTexture, TextureHandle fallbackTexture) {
 			if (TextureManager::IsValid(requestedTexture)) {
-				if (Texture2D* texture = TextureManager::GetTexture(requestedTexture); texture && texture->IsValid()) {
-					return requestedTexture;
-				}
+				return requestedTexture;
 			}
 
 			return fallbackTexture;

@@ -6,6 +6,7 @@ project "Bolt-Launcher"
     cppdialect "C++20"
     cdialect "C17"
     staticruntime "off"
+    warnings "Extra"
 
     targetdir ("../bin/" .. outputdir .. "/%{prj.name}")
     objdir ("../bin-int/" .. outputdir .. "/%{prj.name}")
@@ -19,6 +20,7 @@ project "Bolt-Launcher"
     }
 
     UseDependencySet(Dependency.EditorRuntimeCommon)
+    defines(GetBoltModuleDefines())
     postbuildcommands { CopyBoltAssets }
 
     filter "system:windows"

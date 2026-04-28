@@ -156,7 +156,68 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fail setup if Git LFS assets are declared and git lfs pull fails.",
     )
+    parser.add_argument(
+        "--module-profile",
+        choices=("full", "core", "custom"),
+        help="Premake Bolt module profile to generate.",
+    )
+    parser.add_argument(
+        "--with-render",
+        action="store_true",
+        help="Forward --with-render to Premake when using a custom module profile.",
+    )
+    parser.add_argument(
+        "--with-audio",
+        action="store_true",
+        help="Forward --with-audio to Premake when using a custom module profile.",
+    )
+    parser.add_argument(
+        "--with-physics",
+        action="store_true",
+        help="Forward --with-physics to Premake when using a custom module profile.",
+    )
+    parser.add_argument(
+        "--with-scripting",
+        action="store_true",
+        help="Forward --with-scripting to Premake when using a custom module profile.",
+    )
+    parser.add_argument(
+        "--with-editor",
+        action="store_true",
+        help="Forward --with-editor to Premake. The editor profile enables its required runtime modules.",
+    )
+    parser.add_argument(
+        "--with-imgui-demo",
+        action="store_true",
+        help="Forward --with-imgui-demo to Premake.",
+    )
+    parser.add_argument(
+        "--premake-arg",
+        action="append",
+        default=[],
+        help="Extra raw argument to pass to Premake. May be supplied more than once.",
+    )
     return parser.parse_args()
+
+
+def build_premake_args(args: argparse.Namespace) -> list[str]:
+    premake_args: list[str] = []
+    if args.module_profile:
+        premake_args.append(f"--module-profile={args.module_profile}")
+    if args.with_render:
+        premake_args.append("--with-render")
+    if args.with_audio:
+        premake_args.append("--with-audio")
+    if args.with_physics:
+        premake_args.append("--with-physics")
+    if args.with_scripting:
+        premake_args.append("--with-scripting")
+    if args.with_editor:
+        premake_args.append("--with-editor")
+    if args.with_imgui_demo:
+        premake_args.append("--with-imgui-demo")
+    premake_args.extend(args.premake_arg or [])
+    return premake_args
 
 
 def main() -> int:
@@ -269,7 +330,8 @@ def main() -> int:
         raise RuntimeError(describe_premake_expectation(repo_root))
 
     action = args.generator or ("vs2022" if is_windows else "gmake2")
-    run_step([premake_path, action], repo_root, f"Generating {action} files via Premake")
+    premake_args = build_premake_args(args)
+    run_step([premake_path, *premake_args, action], repo_root, f"Generating {action} files via Premake")
 
     print()
     print("[Bolt Setup] Setup complete.")

@@ -6,6 +6,7 @@ project "Bolt-Editor"
     cppdialect "C++20"
     cdialect "C17"
     staticruntime "off"
+    warnings "Extra"
 
     targetdir ("../bin/" .. outputdir .. "/%{prj.name}")
     objdir ("../bin-int/" .. outputdir .. "/%{prj.name}")
@@ -19,6 +20,7 @@ project "Bolt-Editor"
     }
 
     UseDependencySet(Dependency.EditorRuntimeCommon)
+    defines(GetBoltModuleDefines())
     includedirs { "src" }
     postbuildcommands { CopyBoltAssets }
 

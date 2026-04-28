@@ -18,6 +18,10 @@ namespace Bolt {
 		std::vector<spdlog::sink_ptr> sinks;
 		sinks.emplace_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
 		sinks.emplace_back(std::make_shared<spdlog::sinks::callback_sink_mt>([](const spdlog::details::log_msg& msg) {
+			if (!OnLog.HasListeners()) {
+				return;
+			}
+
 			Entry entry{};
 			entry.Message = fmt::to_string(msg.payload);
 			switch (msg.level) {
@@ -97,6 +101,9 @@ namespace Bolt {
 			return;
 		}
 		auto logger = SelectLogger(type);
+		if (!logger || !logger->should_log(ToSpdlogLevel(level))) {
+			return;
+		}
 		Emit(logger, level, message);
 	}
 
@@ -105,6 +112,9 @@ namespace Bolt {
 			return;
 		}
 		auto logger = SelectLogger(type);
+		if (!logger || !logger->should_log(ToSpdlogLevel(level))) {
+			return;
+		}
 		Emit(logger, level, fmt::format("[{}] {}", tag, message));
 	}
 
@@ -143,17 +153,34 @@ namespace Bolt {
 		}
 	}
 
+	spdlog::level::level_enum Log::ToSpdlogLevel(const Level level) {
+		switch (level) {
+		case Level::Trace: return spdlog::level::trace;
+		case Level::Info: return spdlog::level::info;
+		case Level::Warn: return spdlog::level::warn;
+		case Level::Error: return spdlog::level::err;
+		case Level::Critical: return spdlog::level::critical;
+		default: return spdlog::level::info;
+		}
+	}
+
+	bool Log::ShouldLog(const Type type, const Level level) {
+		auto logger = SelectLogger(type);
+		return logger && logger->should_log(ToSpdlogLevel(level));
+	}
+
 	void Log::Emit(std::shared_ptr<spdlog::logger>& logger, const Level level, const std::string_view message) {
 		if (!logger) {
 			return;
 		}
 
-		switch (level) {
-		case Level::Trace: logger->trace(message); break;
-		case Level::Info: logger->info(message); break;
-		case Level::Warn: logger->warn(message); break;
-		case Level::Error: logger->error(message); break;
-		case Level::Critical: logger->critical(message); break;
+		switch (ToSpdlogLevel(level)) {
+		case spdlog::level::trace: logger->trace(message); break;
+		case spdlog::level::info: logger->info(message); break;
+		case spdlog::level::warn: logger->warn(message); break;
+		case spdlog::level::err: logger->error(message); break;
+		case spdlog::level::critical: logger->critical(message); break;
+		default: logger->info(message); break;
 		}
 	}
 

@@ -3,8 +3,14 @@
 #include "AudioHandle.hpp"
 
 #include <miniaudio.h>
-#include <queue>
 #include <glm/vec3.hpp>
+
+#include <chrono>
+#include <memory>
+#include <queue>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace Bolt {
 	class AudioSourceComponent;
@@ -106,6 +112,7 @@ namespace Bolt {
 
 
 		static std::unordered_map<AudioHandle::HandleType, std::unique_ptr<Audio>> s_audioMap;
+		static std::unordered_map<std::string, AudioHandle::HandleType> s_audioPathToHandle;
 		static AudioHandle::HandleType s_nextHandle;
 
 		static std::vector<SoundInstance> s_soundInstances;

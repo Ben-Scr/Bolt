@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -22,6 +23,16 @@ def fail(message: str, log: str | None = None) -> int:
         print(log, file=sys.stderr)
         print("---------------------------", file=sys.stderr)
     return 1
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the Bolt runtime smoke test.")
+    parser.add_argument(
+        "--binary",
+        type=Path,
+        help="Exact Bolt-Runtime binary to test. Falls back to bin/ auto-discovery when omitted.",
+    )
+    return parser.parse_args()
 
 
 def find_runtime_binary() -> Path:
@@ -192,10 +203,16 @@ def run_runtime(runtime_binary: Path) -> tuple[int, str]:
 
 
 def main() -> int:
-    try:
-        runtime_binary = find_runtime_binary()
-    except FileNotFoundError as error:
-        return fail(str(error))
+    args = parse_args()
+    if args.binary:
+        runtime_binary = args.binary.resolve()
+        if not runtime_binary.is_file():
+            return fail(f"Runtime binary was not found: {runtime_binary}")
+    else:
+        try:
+            runtime_binary = find_runtime_binary()
+        except FileNotFoundError as error:
+            return fail(str(error))
 
     runtime_dir = runtime_binary.parent
     bolt_assets_dir = runtime_dir / "BoltAssets"

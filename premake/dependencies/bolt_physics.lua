@@ -4,7 +4,7 @@ local BOLT_PHYSICS_SOURCE_DIR = path.join(BOLT_PHYSICS_DIR, "src")
 local BOLT_PHYSICS_GLM_INCLUDE_DIR = path.getabsolute(path.join(ROOT_DIR, IncludeDir["GLM"]))
 
 project "Bolt-Physics"
-    location (BOLT_PHYSICS_DIR)
+    location (path.join(ROOT_DIR, "premake/generated/Bolt-Physics"))
     kind "StaticLib"
     language "C++"
     cppdialect "C++23"

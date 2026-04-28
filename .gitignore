@@ -13,6 +13,7 @@ bin-int/
 **/[Oo]ut/
 **/.vs/
 **/.vscode/.ropeproject/
+premake/generated/
 # Generated configuration folders. Keep source folders like src/Debugging trackable.
 **/[Dd]ebug/
 **/[Dd]ebug-*/
@@ -35,8 +36,6 @@ bin-int/
 !Bolt-Editor/imgui.ini
 !Bolt-Launcher/imgui.ini
 !Bolt-Runtime/imgui.ini
-!vendor/bin/
-!vendor/bin/**
 *.sln
 *.vcxproj
 *.vcxproj.filters
@@ -74,6 +73,8 @@ bld/
 [Oo]ut/
 [Ll]og/
 [Ll]ogs/
+!vendor/bin/
+!vendor/bin/**
 
 # Visual Studio 2015/2017 cache/options directory
 .vs/

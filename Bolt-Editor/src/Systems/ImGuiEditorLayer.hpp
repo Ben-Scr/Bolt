@@ -107,7 +107,6 @@ namespace Bolt {
 		bool m_ShowLogInfo = true;
 		bool m_ShowLogWarn = true;
 		bool m_ShowLogError = true;
-		std::vector<char> m_LogTextBuffer;
 		std::vector<PreviewTextureEntry> m_PreviewTextureCache;
 		std::unordered_map<std::string, size_t> m_PreviewTextureLookup;
 		std::uint64_t m_PreviewTextureTick = 0;

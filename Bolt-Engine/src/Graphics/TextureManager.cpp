@@ -5,6 +5,32 @@
 
 namespace Bolt {
 	namespace {
+		struct TextureLookupKey {
+			std::string Path;
+			Filter SamplerFilter = Filter::Point;
+			Wrap WrapU = Wrap::Clamp;
+			Wrap WrapV = Wrap::Clamp;
+
+			bool operator==(const TextureLookupKey& other) const {
+				return Path == other.Path
+					&& SamplerFilter == other.SamplerFilter
+					&& WrapU == other.WrapU
+					&& WrapV == other.WrapV;
+			}
+		};
+
+		struct TextureLookupKeyHash {
+			size_t operator()(const TextureLookupKey& key) const {
+				size_t seed = std::hash<std::string>{}(key.Path);
+				seed ^= static_cast<size_t>(key.SamplerFilter) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+				seed ^= static_cast<size_t>(key.WrapU) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+				seed ^= static_cast<size_t>(key.WrapV) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+				return seed;
+			}
+		};
+
+		std::unordered_map<TextureLookupKey, TextureHandle, TextureLookupKeyHash> s_TextureLookup;
+
 		std::string NormalizeTexturePath(const std::filesystem::path& path) {
 			std::error_code ec;
 			std::filesystem::path normalized = std::filesystem::weakly_canonical(path, ec);
@@ -37,6 +63,10 @@ namespace Bolt {
 			}
 
 			return {};
+		}
+
+		TextureLookupKey MakeTextureLookupKey(const std::string& path, Filter filter, Wrap u, Wrap v) {
+			return TextureLookupKey{ path, filter, u, v };
 		}
 	}
 
@@ -74,6 +104,7 @@ namespace Bolt {
 		s_RootPath = texDir;
 
 		s_Textures.clear();
+		s_TextureLookup.clear();
 		while (!s_FreeIndices.empty()) {
 			s_FreeIndices.pop();
 		}
@@ -90,6 +121,7 @@ namespace Bolt {
 
 		UnloadAll(true);
 		s_Textures.clear();
+		s_TextureLookup.clear();
 		while (!s_FreeIndices.empty()) {
 			s_FreeIndices.pop();
 		}
@@ -156,6 +188,7 @@ namespace Bolt {
 			s_Textures.push_back(std::move(entry));
 		}
 
+		s_TextureLookup[MakeTextureLookupKey(fullpath, filter, u, v)] = TextureHandle(index, s_Textures[index].Generation);
 		return { index, s_Textures[index].Generation };
 	}
 
@@ -222,6 +255,7 @@ namespace Bolt {
 			return;
 		}
 
+		s_TextureLookup.erase(MakeTextureLookupKey(entry.Name, entry.SamplerFilter, entry.WrapU, entry.WrapV));
 		entry.Texture.Destroy();
 		entry.IsValid = false;
 		entry.Name.clear();
@@ -326,6 +360,8 @@ namespace Bolt {
 			entry.WrapV = Wrap::Clamp;
 
 			s_Textures.push_back(std::move(entry));
+			s_TextureLookup[MakeTextureLookupKey(s_Textures.back().Name, Filter::Point, Wrap::Clamp, Wrap::Clamp)] =
+				TextureHandle(static_cast<uint16_t>(s_Textures.size() - 1), s_Textures.back().Generation);
 		}
 	}
 
@@ -338,6 +374,11 @@ namespace Bolt {
 		size_t startOffset = defaultTextures ? 0 : s_DefaultTextures.size();
 		for (size_t i = startOffset; i < s_Textures.size(); i++) {
 			if (s_Textures[i].IsValid) {
+				s_TextureLookup.erase(MakeTextureLookupKey(
+					s_Textures[i].Name,
+					s_Textures[i].SamplerFilter,
+					s_Textures[i].WrapU,
+					s_Textures[i].WrapV));
 				s_Textures[i].Texture.Destroy();
 				s_Textures[i].IsValid = false;
 				s_Textures[i].Name.clear();
@@ -352,6 +393,7 @@ namespace Bolt {
 
 		if (defaultTextures) {
 			s_Textures.clear();
+			s_TextureLookup.clear();
 			while (!s_FreeIndices.empty()) {
 				s_FreeIndices.pop();
 			}
@@ -366,15 +408,14 @@ namespace Bolt {
 		const std::string normalizedPath = ResolveTexturePath(path, s_RootPath);
 		const std::string& lookupPath = normalizedPath.empty() ? path : normalizedPath;
 
-		for (size_t i = 0; i < s_Textures.size(); i++) {
-			const TextureEntry& entry = s_Textures[i];
-			if (entry.IsValid
-				&& entry.Name == lookupPath
-				&& entry.SamplerFilter == filter
-				&& entry.WrapU == u
-				&& entry.WrapV == v) {
-				return TextureHandle(static_cast<uint16_t>(i), entry.Generation);
+		auto it = s_TextureLookup.find(MakeTextureLookupKey(lookupPath, filter, u, v));
+		if (it != s_TextureLookup.end()) {
+			const TextureHandle handle = it->second;
+			if (IsValid(handle)) {
+				return handle;
 			}
+
+			s_TextureLookup.erase(it);
 		}
 
 		return { k_InvalidIndex, 0 };

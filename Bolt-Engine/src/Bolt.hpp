@@ -4,22 +4,7 @@
 // Explicit compatibility path: define BOLT_ALL_MODULES before including this header
 // to restore the legacy wide umbrella for full-module consumers.
 
-// Collections
-#include "Collections/Color.hpp"
-#include "Collections/Mat2.hpp"
-#include "Collections/Vec2.hpp"
-#include "Collections/Vec4.hpp"
-#include "Collections/Viewport.hpp"
-
-// Core
-#include "Core/ApplicationConfig.hpp"
-#include "Core/Assert.hpp"
-#include "Core/Base.hpp"
-#include "Core/Exceptions.hpp"
-#include "Core/Export.hpp"
-#include "Core/Log.hpp"
-#include "Core/Time.hpp"
-#include "Core/Version.hpp"
+#include "Bolt/Core.hpp"
 
 #if defined(BOLT_ALL_MODULES)
     // Components

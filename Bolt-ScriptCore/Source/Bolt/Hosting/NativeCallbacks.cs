@@ -130,7 +130,6 @@ namespace Bolt.Hosting
         // ── Scene Query ──────────────────────────────────────────────
         public delegate* unmanaged<byte*> Scene_GetActiveSceneName;
         public delegate* unmanaged<int> Scene_GetEntityCount;
-        public delegate* unmanaged<ulong, byte*> Scene_GetEntityNameByUUID;
         public delegate* unmanaged<byte*, int> Scene_LoadAdditive;
         public delegate* unmanaged<byte*, int> Scene_Load;
         public delegate* unmanaged<byte*, void> Scene_Unload;
@@ -138,6 +137,7 @@ namespace Bolt.Hosting
         public delegate* unmanaged<byte*, int> Scene_Reload;
         public delegate* unmanaged<int> Scene_GetLoadedCount;
         public delegate* unmanaged<int, byte*> Scene_GetLoadedSceneNameAt;
+        public delegate* unmanaged<ulong, byte*> Scene_GetEntityNameByUUID;
         public delegate* unmanaged<byte*, ulong*, int, int> Scene_QueryEntities;
         public delegate* unmanaged<byte*, byte*, byte*, int, ulong*, int, int> Scene_QueryEntitiesFiltered;
         public delegate* unmanaged<ulong, int> Asset_IsValid;

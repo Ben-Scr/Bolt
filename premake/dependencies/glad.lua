@@ -1,5 +1,5 @@
 project "Glad"
-    location (path.join(ROOT_DIR, "External/glad"))
+    location (path.join(ROOT_DIR, "premake/generated/Glad"))
     kind "StaticLib"
     language "C"
     cdialect "C17"
