@@ -31,6 +31,7 @@
 #include "Gui/EditorIcons.hpp"
 #include "Scripting/ScriptEngine.hpp"
 #include "Scripting/ScriptSystem.hpp"
+#include "Scripting/ScriptDiscovery.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <unordered_set>
@@ -52,6 +53,31 @@ namespace Bolt {
 					particleSystem.Play();
 				}
 			}
+		}
+
+		std::string BuildScriptMenuLabel(const EditorScriptDiscovery::ScriptEntry& scriptEntry)
+		{
+			return scriptEntry.ClassName + "  " + scriptEntry.Extension;
+		}
+
+		bool AttachScriptToEntity(Entity entity, Scene& scene, const EditorScriptDiscovery::ScriptEntry& scriptEntry)
+		{
+			if (scriptEntry.ClassName.empty() || scriptEntry.Type == ScriptType::Unknown) {
+				return false;
+			}
+
+			if (!entity.HasComponent<ScriptComponent>()) {
+				entity.AddComponent<ScriptComponent>();
+			}
+
+			auto& scriptComponent = entity.GetComponent<ScriptComponent>();
+			if (scriptComponent.HasScript(scriptEntry.ClassName, scriptEntry.Type)) {
+				return false;
+			}
+
+			scriptComponent.AddScript(scriptEntry.ClassName, scriptEntry.Type);
+			scene.MarkDirty();
+			return true;
 		}
 
 		bool IsLeftMouseDragPastClickThreshold()
@@ -302,8 +328,12 @@ namespace Bolt {
 		Application::SetPlaymodePaused(false);
 
 		ScriptSystem* scriptSys = scene.HasSystem<ScriptSystem>() ? scene.GetSystem<ScriptSystem>() : nullptr;
-		if (scriptSys && scriptSys->RequestRebuildAndReloadAll()) {
+		if (scriptSys && scriptSys->IsRebuilding()) {
 			m_PlayModeRecompilePending = true;
+			return;
+		}
+		if (scriptSys && !scriptSys->DidLastRebuildSucceed()) {
+			BT_ERROR_TAG("PlayMode", "Script compilation failed. Play Mode was not started.");
 			return;
 		}
 
@@ -1072,6 +1102,8 @@ namespace Bolt {
 			std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
 
 			bool hasFilter = !filter.empty();
+			std::vector<EditorScriptDiscovery::ScriptEntry> scriptEntries;
+			EditorScriptDiscovery::CollectProjectScriptEntries(scriptEntries);
 
 			if (hasFilter) {
 				// Flat filtered list when searching
@@ -1091,38 +1123,18 @@ namespace Bolt {
 				});
 
 				// Also search scripts by name
-				{
-					std::vector<std::pair<std::string, std::string>> scriptFiles; // className, path
-					BoltProject* project = ProjectManager::GetCurrentProject();
-					if (project) {
-						std::filesystem::path scriptsDir(project->ScriptsDirectory);
-						if (std::filesystem::exists(scriptsDir)) {
-							for (const auto& entry : std::filesystem::recursive_directory_iterator(scriptsDir)) {
-								if (!entry.is_regular_file()) continue;
-								std::string ext = entry.path().extension().string();
-								std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-								if (ext != ".cs") continue;
-								std::string className = entry.path().stem().string();
-								std::string lowerClassName = className;
-								std::transform(lowerClassName.begin(), lowerClassName.end(), lowerClassName.begin(), ::tolower);
-								if (lowerClassName.find(filter) != std::string::npos) {
-									scriptFiles.emplace_back(className, entry.path().string());
-								}
-							}
-						}
+				for (const auto& scriptEntry : scriptEntries) {
+					std::string lowerClassName = EditorScriptDiscovery::ToLowerCopy(scriptEntry.ClassName);
+					std::string lowerPath = EditorScriptDiscovery::ToLowerCopy(scriptEntry.Path.string());
+					if (lowerClassName.find(filter) == std::string::npos
+						&& lowerPath.find(filter) == std::string::npos) {
+						continue;
 					}
-					for (const auto& [className, path] : scriptFiles) {
-						std::string label = className + "  .cs";
-						if (ImGuiUtils::MenuItemEllipsis(label, path.c_str(), nullptr, false, true, 260.0f)) {
-							if (!entity.HasComponent<ScriptComponent>()) {
-								entity.AddComponent<ScriptComponent>();
-							}
-							auto& sc = entity.GetComponent<ScriptComponent>();
-							if (!sc.HasScript(className)) {
-								sc.AddScript(className);
-							}
-							scene.MarkDirty();
-						}
+
+					const std::string label = BuildScriptMenuLabel(scriptEntry);
+					const std::string path = scriptEntry.Path.string();
+					if (ImGuiUtils::MenuItemEllipsis(label, path.c_str(), nullptr, false, true, 260.0f)) {
+						AttachScriptToEntity(entity, scene, scriptEntry);
 					}
 				}
 			} else {
@@ -1169,40 +1181,17 @@ namespace Bolt {
 					}
 				}
 
-				// Scripts subcategory: individual .cs files as addable items
-				{
-					std::vector<std::pair<std::string, std::string>> scriptFiles; // className, path
-					BoltProject* project = ProjectManager::GetCurrentProject();
-					if (project) {
-						std::filesystem::path scriptsDir(project->ScriptsDirectory);
-						if (std::filesystem::exists(scriptsDir)) {
-							for (const auto& entry : std::filesystem::recursive_directory_iterator(scriptsDir)) {
-								if (!entry.is_regular_file()) continue;
-								std::string ext = entry.path().extension().string();
-								std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-								if (ext != ".cs") continue;
-								scriptFiles.emplace_back(entry.path().stem().string(), entry.path().string());
+				// Scripts subcategory: managed and native script types as addable items
+				if (!scriptEntries.empty()) {
+					if (ImGui::TreeNode("Scripts")) {
+						for (const auto& scriptEntry : scriptEntries) {
+							const std::string label = BuildScriptMenuLabel(scriptEntry);
+							const std::string path = scriptEntry.Path.string();
+							if (ImGuiUtils::MenuItemEllipsis(label, path.c_str(), nullptr, false, true, 260.0f)) {
+								AttachScriptToEntity(entity, scene, scriptEntry);
 							}
 						}
-					}
-					std::sort(scriptFiles.begin(), scriptFiles.end());
-
-					if (!scriptFiles.empty()) {
-						if (ImGui::TreeNode("Scripts")) {
-							for (const auto& [className, path] : scriptFiles) {
-								if (ImGuiUtils::MenuItemEllipsis(className, path.c_str(), nullptr, false, true, 260.0f)) {
-									if (!entity.HasComponent<ScriptComponent>()) {
-										entity.AddComponent<ScriptComponent>();
-									}
-									auto& sc = entity.GetComponent<ScriptComponent>();
-									if (!sc.HasScript(className)) {
-										sc.AddScript(className);
-									}
-									scene.MarkDirty();
-								}
-							}
-							ImGui::TreePop();
-						}
+						ImGui::TreePop();
 					}
 				}
 			}
@@ -1210,23 +1199,14 @@ namespace Bolt {
 			ImGui::EndPopup();
 		}
 
-		// Drag-drop target: accept .cs files dropped onto the Inspector panel
+		// Drag-drop target: accept script files dropped onto the Inspector panel
 		if (ImGui::BeginDragDropTarget()) {
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_BROWSER_ITEM")) {
 				std::string droppedPath(static_cast<const char*>(payload->Data));
-				std::string ext = std::filesystem::path(droppedPath).extension().string();
-				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-				if (ext == ".cs") {
-					std::string className = std::filesystem::path(droppedPath).stem().string();
-					if (!entity.HasComponent<ScriptComponent>()) {
-						entity.AddComponent<ScriptComponent>();
-					}
-					auto& sc = entity.GetComponent<ScriptComponent>();
-					if (!sc.HasScript(className)) {
-						sc.AddScript(className);
-					}
-					scene.MarkDirty();
+				std::vector<EditorScriptDiscovery::ScriptEntry> droppedScripts;
+				EditorScriptDiscovery::CollectScriptFile(std::filesystem::path(droppedPath), droppedScripts);
+				for (const auto& scriptEntry : droppedScripts) {
+					AttachScriptToEntity(entity, scene, scriptEntry);
 				}
 			}
 			ImGui::EndDragDropTarget();

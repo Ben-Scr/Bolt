@@ -85,6 +85,7 @@
     <Compile Include="Source\Bolt\Interop\NativeInterop.cs" />
     <Compile Include="Source\Bolt\Math\Color.cs" />
     <Compile Include="Source\Bolt\Math\Mathf.cs" />
+    <Compile Include="Source\Bolt\Math\Quaternion.cs" />
     <Compile Include="Source\Bolt\Math\Random.cs" />
     <Compile Include="Source\Bolt\Math\RandomHandler.cs" />
     <Compile Include="Source\Bolt\Math\RandomSecure.cs" />
@@ -102,6 +103,10 @@
     <Compile Include="Source\Bolt\Scene\Entity.cs" />
     <Compile Include="Source\Bolt\Scene\SceneManager.cs" />
     <Compile Include="Source\Bolt\Scene\SceneQuery.cs" />
+    <Compile Include="Source\Bolt\Serialization\Json.cs" />
+    <Compile Include="Source\Bolt\Serialization\JsonSecure.cs" />
+    <Compile Include="Source\Bolt\Utility\CameraUtility.cs" />
     <Compile Include="Source\Bolt\Utility\TextUtility.cs" />
+    <Compile Include="Source\Bolt\Utility\TransformUtility.cs" />
   </ItemGroup>
 </Project>

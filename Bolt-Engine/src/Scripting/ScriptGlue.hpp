@@ -30,6 +30,7 @@ namespace Bolt {
 		int    (*Input_GetKeyUp)(int keyCode);
 		int    (*Input_GetMouseButton)(int button);
 		int    (*Input_GetMouseButtonDown)(int button);
+		int    (*Input_GetMouseButtonUp)(int button);
 		void   (*Input_GetMousePosition)(float* outX, float* outY);
 		void   (*Input_GetAxis)(float* outX, float* outY);
 		void   (*Input_GetMouseDelta)(float* outX, float* outY);
@@ -128,6 +129,7 @@ namespace Bolt {
 		// ── Scene ────────────────────────────────────────────────────
 		const char* (*Scene_GetActiveSceneName)();
 		int         (*Scene_GetEntityCount)();
+		int         (*Scene_GetEntityCountByName)(const char* sceneName);
 		int         (*Scene_LoadAdditive)(const char* sceneName);
 		int         (*Scene_Load)(const char* sceneName);
 		void        (*Scene_Unload)(const char* sceneName);
@@ -138,6 +140,8 @@ namespace Bolt {
 		const char* (*Scene_GetEntityNameByUUID)(uint64_t uuid);
 		int         (*Scene_QueryEntities)(const char* componentNames, uint64_t* outEntityIDs, int maxOut);
 		int         (*Scene_QueryEntitiesFiltered)(const char* withComponents, const char* withoutComponents, const char* mustHaveComponents, int enableFilter, uint64_t* outEntityIDs, int maxOut);
+		int         (*Scene_QueryEntitiesInScene)(const char* sceneName, const char* componentNames, uint64_t* outEntityIDs, int maxOut);
+		int         (*Scene_QueryEntitiesFilteredInScene)(const char* sceneName, const char* withComponents, const char* withoutComponents, const char* mustHaveComponents, int enableFilter, uint64_t* outEntityIDs, int maxOut);
 		int         (*Asset_IsValid)(uint64_t assetId);
 		uint64_t    (*Asset_GetOrCreateUUIDFromPath)(const char* path);
 		const char* (*Asset_GetPath)(uint64_t assetId);
@@ -178,7 +182,13 @@ namespace Bolt {
 
 		// ── Physics2D ────────────────────────────────────────────────
 		int (*Physics2D_Raycast)(float originX, float originY, float dirX, float dirY, float distance,
-		                         uint64_t* hitEntityID, float* hitX, float* hitY, float* hitNormalX, float* hitNormalY);
+		                         uint64_t* hitEntityID, float* hitX, float* hitY, float* hitNormalX, float* hitNormalY, float* hitDistance);
+		int (*Physics2D_OverlapCircle)(float originX, float originY, float radius, int mode, uint64_t* entityID);
+		int (*Physics2D_OverlapBox)(float originX, float originY, float halfX, float halfY, float degrees, int mode, uint64_t* entityID);
+		int (*Physics2D_OverlapPolygon)(float originX, float originY, const float* points, int pointCount, int mode, uint64_t* entityID);
+		int (*Physics2D_OverlapCircleAll)(float originX, float originY, float radius, uint64_t* outEntityIDs, int maxOut);
+		int (*Physics2D_OverlapBoxAll)(float originX, float originY, float halfX, float halfY, float degrees, uint64_t* outEntityIDs, int maxOut);
+		int (*Physics2D_OverlapPolygonAll)(float originX, float originY, const float* points, int pointCount, uint64_t* outEntityIDs, int maxOut);
 	};
 
 	/// Layout must match C# ManagedCallbacksStruct exactly.
@@ -195,6 +205,19 @@ namespace Bolt {
 		const char* (*GetScriptFields)(int32_t handle);
 		void    (*SetScriptField)(int32_t handle, const char* fieldName, const char* value);
 		const char* (*GetClassFieldDefs)(const char* className);
+		void    (*RaiseApplicationStart)();
+		void    (*RaiseApplicationPaused)();
+		void    (*RaiseFocusChanged)(int focused);
+		void    (*RaiseKeyDown)(int key);
+		void    (*RaiseKeyUp)(int key);
+		void    (*RaiseMouseDown)(int button);
+		void    (*RaiseMouseUp)(int button);
+		void    (*RaiseMouseScroll)(float delta);
+		void    (*RaiseMouseMove)(float x, float y);
+		void    (*RaiseBeforeSceneLoaded)(const char* sceneName);
+		void    (*RaiseSceneLoaded)(const char* sceneName);
+		void    (*RaiseBeforeSceneUnloaded)(const char* sceneName);
+		void    (*RaiseSceneUnloaded)(const char* sceneName);
 	};
 
 } // namespace Bolt

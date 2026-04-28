@@ -140,6 +140,12 @@ namespace Bolt {
 		return CanReadScriptInput() ? (app->GetInput().GetMouseDown(static_cast<MouseButton>(button)) ? 1 : 0) : 0;
 	}
 
+	static int Bolt_Input_GetMouseButtonUp(int button)
+	{
+		auto* app = Application::GetInstance();
+		return CanReadScriptInput() ? (app->GetInput().GetMouseUp(static_cast<MouseButton>(button)) ? 1 : 0) : 0;
+	}
+
 	static void Bolt_Input_GetMousePosition(float* outX, float* outY)
 	{
 		auto* app = Application::GetInstance();
@@ -222,6 +228,7 @@ namespace Bolt {
 		b.Input_GetKeyUp = &Bolt_Input_GetKeyUp;
 		b.Input_GetMouseButton = &Bolt_Input_GetMouseButton;
 		b.Input_GetMouseButtonDown = &Bolt_Input_GetMouseButtonDown;
+		b.Input_GetMouseButtonUp = &Bolt_Input_GetMouseButtonUp;
 		b.Input_GetMousePosition = &Bolt_Input_GetMousePosition;
 		b.Input_GetAxis = &Bolt_Input_GetAxis;
 		b.Input_GetMouseDelta = &Bolt_Input_GetMouseDelta;

@@ -32,27 +32,27 @@ namespace Bolt
 
         public QueryBuilder<T1> Query<T1>()
             where T1 : Component, new()
-            => new QueryBuilder<T1>();
+            => new QueryBuilder<T1>(Name);
 
         public QueryBuilder<T1, T2> Query<T1, T2>()
             where T1 : Component, new()
             where T2 : Component, new()
-            => new QueryBuilder<T1, T2>();
+            => new QueryBuilder<T1, T2>(Name);
 
         public QueryBuilder<T1, T2, T3> Query<T1, T2, T3>()
             where T1 : Component, new()
             where T2 : Component, new()
             where T3 : Component, new()
-            => new QueryBuilder<T1, T2, T3>();
+            => new QueryBuilder<T1, T2, T3>(Name);
 
         public QueryBuilder<T1, T2, T3, T4> Query<T1, T2, T3, T4>()
             where T1 : Component, new()
             where T2 : Component, new()
             where T3 : Component, new()
             where T4 : Component, new()
-            => new QueryBuilder<T1, T2, T3, T4>();
+            => new QueryBuilder<T1, T2, T3, T4>(Name);
 
-        public int EntityCount => InternalCalls.Scene_GetEntityCount();
+        public int EntityCount => IsLoaded ? InternalCalls.Scene_GetEntityCount(Name) : 0;
 
         // ── Internal helpers (static) ──────────────────────────────
 
@@ -62,18 +62,24 @@ namespace Bolt
         internal static string GetNativeNameOrEmpty<T>() where T : Component, new()
             => Entity.GetNativeComponentName<T>() ?? "";
 
-        internal static ulong[] ExecuteQuery(string queryString)
+        internal static ulong[] ExecuteQuery(string sceneName, string queryString)
         {
-            return ExecuteQueryWithRetry(buffer => InternalCalls.Scene_QueryEntities(queryString, buffer));
+            if (string.IsNullOrEmpty(sceneName) || string.IsNullOrEmpty(queryString))
+                return Array.Empty<ulong>();
+
+            return ExecuteQueryWithRetry(buffer => InternalCalls.Scene_QueryEntities(sceneName, queryString, buffer));
         }
 
 
         internal static ulong[] ExecuteFilteredQuery(
-            string withComponents, string withoutComponents,
+            string sceneName, string withComponents, string withoutComponents,
             string mustHaveComponents, int enableFilter)
         {
+            if (string.IsNullOrEmpty(sceneName) || string.IsNullOrEmpty(withComponents))
+                return Array.Empty<ulong>();
+
             return ExecuteQueryWithRetry(buffer => InternalCalls.Scene_QueryEntitiesFiltered(
-                withComponents, withoutComponents, mustHaveComponents,
+                sceneName, withComponents, withoutComponents, mustHaveComponents,
                 enableFilter, buffer));
         }
 
@@ -154,14 +160,16 @@ namespace Bolt
 
     internal struct QueryFilter
     {
+        internal string SceneName;
         internal string WithNames;
         internal string WithoutNames;
         internal string MustHaveNames;
         internal int EnableFilter; // 0=all, 1=enabled, 2=disabled
         internal List<Func<Entity, bool>>? Conditions;
 
-        internal QueryFilter(string withNames)
+        internal QueryFilter(string sceneName, string withNames)
         {
+            SceneName = sceneName;
             WithNames = withNames;
             WithoutNames = "";
             MustHaveNames = "";
@@ -189,7 +197,7 @@ namespace Bolt
 
         internal ulong[] Execute()
         {
-            return Scene.ExecuteFilteredQuery(WithNames, WithoutNames, MustHaveNames, EnableFilter);
+            return Scene.ExecuteFilteredQuery(SceneName, WithNames, WithoutNames, MustHaveNames, EnableFilter);
         }
 
         internal bool PassesConditions(Entity entity)
@@ -210,9 +218,9 @@ namespace Bolt
     {
         private QueryFilter _filter;
 
-        internal QueryBuilder(bool _dummy = false)
+        internal QueryBuilder(string sceneName)
         {
-            _filter = new QueryFilter(Scene.GetNativeNameOrEmpty<T1>());
+            _filter = new QueryFilter(sceneName, Scene.GetNativeNameOrEmpty<T1>());
         }
 
         // ── Filters ────────────────────────────────────────────────
@@ -290,9 +298,9 @@ namespace Bolt
     {
         private QueryFilter _filter;
 
-        internal QueryBuilder(bool _dummy = false)
+        internal QueryBuilder(string sceneName)
         {
-            _filter = new QueryFilter(Scene.BuildQueryString(
+            _filter = new QueryFilter(sceneName, Scene.BuildQueryString(
                 Scene.GetNativeName<T1>(), Scene.GetNativeName<T2>()));
         }
 
@@ -369,9 +377,9 @@ namespace Bolt
     {
         private QueryFilter _filter;
 
-        internal QueryBuilder(bool _dummy = false)
+        internal QueryBuilder(string sceneName)
         {
-            _filter = new QueryFilter(Scene.BuildQueryString(
+            _filter = new QueryFilter(sceneName, Scene.BuildQueryString(
                 Scene.GetNativeName<T1>(), Scene.GetNativeName<T2>(), Scene.GetNativeName<T3>()));
         }
 
@@ -450,9 +458,9 @@ namespace Bolt
     {
         private QueryFilter _filter;
 
-        internal QueryBuilder(bool _dummy = false)
+        internal QueryBuilder(string sceneName)
         {
-            _filter = new QueryFilter(Scene.BuildQueryString(
+            _filter = new QueryFilter(sceneName, Scene.BuildQueryString(
                 Scene.GetNativeName<T1>(), Scene.GetNativeName<T2>(),
                 Scene.GetNativeName<T3>(), Scene.GetNativeName<T4>()));
         }

@@ -2,12 +2,6 @@ using System;
 
 namespace Bolt
 {
-    public enum MouseButton
-    {
-        Left = 0,
-        Right = 1,
-        Middle = 2
-    }
 
     /// <summary>
     /// Provides static access to keyboard and mouse input state.
@@ -15,16 +9,35 @@ namespace Bolt
     /// </summary>
     public static class Input
     {
-        public static Action<KeyCode>? OnKeyDown;
-        public static Action<KeyCode>? OnKeyUp;
+        public static event Action<KeyCode>? KeyDown;
+        public static event Action<KeyCode>? KeyUp;
 
-        public static Action<MouseButton>? OnMouseDown;
-        public static Action<MouseButton>? OnMouseUp;
-        public static Action<MouseButton>? OnMouseScroll;
-        public static Action<Vector2>? OnMouseMove;
+        public static event Action<MouseButton>? MouseDown;
+        public static event Action<MouseButton>? MouseUp;
+        public static event Action<float>? MouseScroll;
+        public static event Action<Vector2>? MouseMove;
 
-        public static int KeyCount => 0;
-        public static int MouseCount => 3;
+        public static int KeyCount => 349;
+        public static int MouseCount => 8;
+
+        /// <summary>
+        /// Returns the current mouse position in screen coordinates.
+        /// </summary>
+        public static Vector2 MousePosition
+        {
+            get
+            {
+                InternalCalls.Input_GetMousePosition(out float x, out float y);
+                return new Vector2(x, y);
+            }
+        }
+
+        internal static void RaiseKeyDown(KeyCode key) => KeyDown?.Invoke(key);
+        internal static void RaiseKeyUp(KeyCode key) => KeyUp?.Invoke(key);
+        internal static void RaiseMouseDown(MouseButton button) => MouseDown?.Invoke(button);
+        internal static void RaiseMouseUp(MouseButton button) => MouseUp?.Invoke(button);
+        internal static void RaiseMouseScroll(float delta) => MouseScroll?.Invoke(delta);
+        internal static void RaiseMouseMove(Vector2 position) => MouseMove?.Invoke(position);
 
         /// <summary>
         /// Returns a smoothed axis vector based on WASD/Arrow key input.
@@ -93,12 +106,8 @@ namespace Bolt
         public static bool GetMouseButtonDown(MouseButton button) => InternalCalls.Input_GetMouseButtonDown((int)button);
 
         /// <summary>
-        /// Returns the current mouse position in screen coordinates.
+        /// Returns true only on the frame the mouse button was released.
         /// </summary>
-        public static Vector2 GetMousePosition()
-        {
-            InternalCalls.Input_GetMousePosition(out float x, out float y);
-            return new Vector2(x, y);
-        }
+        public static bool GetMouseButtonUp(MouseButton button) => InternalCalls.Input_GetMouseButtonUp((int)button);
     }
 }

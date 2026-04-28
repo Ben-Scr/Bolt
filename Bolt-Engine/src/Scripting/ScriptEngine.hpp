@@ -43,6 +43,20 @@ namespace Bolt {
 		static void InvokeOnDestroy(uint32_t handle);
 		static bool ClassExists(const std::string& className);
 
+		static void RaiseApplicationStart();
+		static void RaiseApplicationPaused();
+		static void RaiseFocusChanged(bool focused);
+		static void RaiseKeyDown(int key);
+		static void RaiseKeyUp(int key);
+		static void RaiseMouseDown(int button);
+		static void RaiseMouseUp(int button);
+		static void RaiseMouseScroll(float delta);
+		static void RaiseMouseMove(float x, float y);
+		static void RaiseBeforeSceneLoaded(const std::string& sceneName);
+		static void RaiseSceneLoaded(const std::string& sceneName);
+		static void RaiseBeforeSceneUnloaded(const std::string& sceneName);
+		static void RaiseSceneUnloaded(const std::string& sceneName);
+
 		static const ManagedCallbacks& GetCallbacks() { return s_Callbacks; }
 
 	private:

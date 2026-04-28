@@ -12,6 +12,7 @@
 #include "SceneDefinition.hpp"
 #include "Scene/BuiltInComponentRegistration.hpp"
 #include "Scripting/ScriptSystem.hpp"
+#include "Scripting/ScriptEngine.hpp"
 #include "Systems/AudioUpdateSystem.hpp"
 #include "Systems/ParticleUpdateSystem.hpp"
 #include "Core/Application.hpp"
@@ -126,6 +127,7 @@ namespace Bolt {
 
 		{
 			ScenePreStartEvent e(name);
+			ScriptEngine::RaiseBeforeSceneLoaded(name);
 			Application* app = Application::GetInstance();
 			if (app) app->DispatchEvent(e);
 		}
@@ -172,6 +174,7 @@ namespace Bolt {
 
 		{
 			ScenePostStartEvent e(name);
+			ScriptEngine::RaiseSceneLoaded(name);
 			Application* app = Application::GetInstance();
 			if (app) app->DispatchEvent(e);
 		}
@@ -292,11 +295,27 @@ namespace Bolt {
 	}
 
 	void SceneManager::ReleaseScene(LoadedSceneList::iterator it) {
-		Scene& scene = *(*it);
+		if (it == m_LoadedScenes.end() || !(*it)) {
+			return;
+		}
+
+		std::shared_ptr<Scene> scenePointer = *it;
+		Scene& scene = *scenePointer;
 		const std::string sceneName = scene.GetName();
+
+		scene.m_IsLoaded = false;
+		if (m_ActiveScene == &scene) {
+			m_ActiveScene = nullptr;
+		}
+		if (ScriptEngine::GetScene() == &scene) {
+			ScriptEngine::SetScene(nullptr);
+		}
+		m_LoadedScenes.erase(it);
+		RefreshActiveScene();
 
 		try {
 			ScenePreStopEvent e(sceneName);
+			ScriptEngine::RaiseBeforeSceneUnloaded(sceneName);
 			Application* app = Application::GetInstance();
 			if (app) app->DispatchEvent(e);
 		}
@@ -320,7 +339,6 @@ namespace Bolt {
 				}
 			}
 		}
-		scene.m_IsLoaded = false;
 		try {
 			scene.DestroyScene();
 		}
@@ -339,15 +357,9 @@ namespace Bolt {
 		catch (...) {
 			BT_CORE_ERROR_TAG("SceneManager", "Scene entity cleanup failed for '{}'", sceneName);
 		}
-
-		if (m_ActiveScene == &scene) {
-			m_ActiveScene = nullptr;
-		}
-		m_LoadedScenes.erase(it);
-		RefreshActiveScene();
-
 		try {
 			ScenePostStopEvent e(sceneName);
+			ScriptEngine::RaiseSceneUnloaded(sceneName);
 			Application* app = Application::GetInstance();
 			if (app) app->DispatchEvent(e);
 		}
@@ -434,15 +446,18 @@ namespace Bolt {
 	}
 
 	void SceneManager::UpdateScenes() {
-		for (auto& scene : m_LoadedScenes) if (scene->IsLoaded()) scene->UpdateSystems();
+		LoadedSceneList scenes = m_LoadedScenes;
+		for (auto& scene : scenes) if (scene && scene->IsLoaded()) scene->UpdateSystems();
 	}
 
 	void SceneManager::OnGuiScenes() {
-		for (auto& scene : m_LoadedScenes) if (scene->IsLoaded()) scene->OnGuiSystems();
+		LoadedSceneList scenes = m_LoadedScenes;
+		for (auto& scene : scenes) if (scene && scene->IsLoaded()) scene->OnGuiSystems();
 	}
 
 	void SceneManager::FixedUpdateScenes() {
-		for (auto& scene : m_LoadedScenes) if (scene->IsLoaded()) scene->FixedUpdateSystems();
+		LoadedSceneList scenes = m_LoadedScenes;
+		for (auto& scene : scenes) if (scene && scene->IsLoaded()) scene->FixedUpdateSystems();
 	}
 
 	void SceneManager::InitializeStartupScenes() {

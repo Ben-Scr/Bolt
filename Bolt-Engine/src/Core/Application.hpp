@@ -175,6 +175,7 @@ namespace Bolt {
 		bool m_IsPlaying = true;
 		bool m_IsPlaymodePaused = false;
 		bool m_IsGameInputEnabled = true;
+		bool m_WasEnginePaused = false;
 		bool m_QuitRequested = false;
 		int m_QuitRequestFrame = -1;
 

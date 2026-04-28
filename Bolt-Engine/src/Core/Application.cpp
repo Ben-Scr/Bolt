@@ -14,6 +14,7 @@
 #include "Events/EventDispatcher.hpp"
 #include "Events/WindowEvents.hpp"
 #include "Physics/PhysicsSystem2D.hpp"
+#include "Scripting/ScriptEngine.hpp"
 #include <Utils/Timer.hpp>
 #include <Utils/StringHelper.hpp>
 
@@ -243,12 +244,20 @@ namespace Bolt {
 				}
 			}
 		}
+
+		ScriptEngine::RaiseApplicationStart();
 	}
 
 	void Application::BeginFrame() {
 		CoreInput();
 
-		if (!IsEnginePaused()) {
+		const bool enginePaused = IsEnginePaused();
+		if (enginePaused && !m_WasEnginePaused) {
+			ScriptEngine::RaiseApplicationPaused();
+		}
+		m_WasEnginePaused = enginePaused;
+
+		if (!enginePaused) {
 			bool gameplayActive = m_IsPlaying && !m_IsPlaymodePaused;
 
 			if (gameplayActive && m_Configuration.EnableAudio) 
@@ -504,6 +513,7 @@ namespace Bolt {
 		m_WindowHasFocus = true;
 		m_IsPlaymodePaused = false;
 		m_IsGameInputEnabled = true;
+		m_WasEnginePaused = false;
 		m_FixedUpdateAccumulator = 0.0;
 		m_PendingFileDrops.clear();
 	}

@@ -8,11 +8,42 @@ namespace Bolt
     /// </summary>
     public static class Application
     {
+        public static event Action<bool>? FocusChanged;
+        public static event Action? ApplicationPaused;
+        public static event Action? ApplicationStart;
+
+        internal static void RaiseFocusChanged(bool focused) => FocusChanged?.Invoke(focused);
+        internal static void RaiseApplicationPaused() => ApplicationPaused?.Invoke();
+        internal static void RaiseApplicationStart() => ApplicationStart?.Invoke();
+
         public static float TargetFrameRate
         {
             get => InternalCalls.Application_GetTargetFrameRate();
             set => InternalCalls.Application_SetTargetFrameRate(value);
         }
+
+        public static bool VsyncEnabled
+        {
+            get => throw new System.NotImplementedException();
+            set => throw new System.NotImplementedException();
+        }
+
+        /// <summary>
+        /// The path to the persistent data directory of the application.
+        /// Use this to store save files, settings, or any data that should
+        /// persist across sessions. The directory is guaranteed to be writable.
+        /// </summary>
+        public static string PersistentDataPath { get { throw new System.NotImplementedException(); } }
+
+        /// <summary>
+        /// The path to the directory where the application is installed.
+        /// </summary>
+        public static string DataPath { get { throw new System.NotImplementedException(); } }
+
+        /// <summary>
+        /// The temporary cache directory. Data here may be cleared by the OS.
+        /// </summary>
+        public static string TemporaryCachePath { get { throw new System.NotImplementedException(); } }
 
         public static int ScreenWidth => InternalCalls.Application_GetScreenWidth();
         public static int ScreenHeight => InternalCalls.Application_GetScreenHeight();

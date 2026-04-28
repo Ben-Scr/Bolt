@@ -217,4 +217,69 @@ namespace Bolt {
 		return s_Callbacks.ClassExists(className.c_str()) != 0;
 	}
 
+	void ScriptEngine::RaiseApplicationStart()
+	{
+		if (s_Initialized && s_Callbacks.RaiseApplicationStart) s_Callbacks.RaiseApplicationStart();
+	}
+
+	void ScriptEngine::RaiseApplicationPaused()
+	{
+		if (s_Initialized && s_Callbacks.RaiseApplicationPaused) s_Callbacks.RaiseApplicationPaused();
+	}
+
+	void ScriptEngine::RaiseFocusChanged(bool focused)
+	{
+		if (s_Initialized && s_Callbacks.RaiseFocusChanged) s_Callbacks.RaiseFocusChanged(focused ? 1 : 0);
+	}
+
+	void ScriptEngine::RaiseKeyDown(int key)
+	{
+		if (s_Initialized && s_Callbacks.RaiseKeyDown) s_Callbacks.RaiseKeyDown(key);
+	}
+
+	void ScriptEngine::RaiseKeyUp(int key)
+	{
+		if (s_Initialized && s_Callbacks.RaiseKeyUp) s_Callbacks.RaiseKeyUp(key);
+	}
+
+	void ScriptEngine::RaiseMouseDown(int button)
+	{
+		if (s_Initialized && s_Callbacks.RaiseMouseDown) s_Callbacks.RaiseMouseDown(button);
+	}
+
+	void ScriptEngine::RaiseMouseUp(int button)
+	{
+		if (s_Initialized && s_Callbacks.RaiseMouseUp) s_Callbacks.RaiseMouseUp(button);
+	}
+
+	void ScriptEngine::RaiseMouseScroll(float delta)
+	{
+		if (s_Initialized && s_Callbacks.RaiseMouseScroll) s_Callbacks.RaiseMouseScroll(delta);
+	}
+
+	void ScriptEngine::RaiseMouseMove(float x, float y)
+	{
+		if (s_Initialized && s_Callbacks.RaiseMouseMove) s_Callbacks.RaiseMouseMove(x, y);
+	}
+
+	void ScriptEngine::RaiseBeforeSceneLoaded(const std::string& sceneName)
+	{
+		if (s_Initialized && s_Callbacks.RaiseBeforeSceneLoaded) s_Callbacks.RaiseBeforeSceneLoaded(sceneName.c_str());
+	}
+
+	void ScriptEngine::RaiseSceneLoaded(const std::string& sceneName)
+	{
+		if (s_Initialized && s_Callbacks.RaiseSceneLoaded) s_Callbacks.RaiseSceneLoaded(sceneName.c_str());
+	}
+
+	void ScriptEngine::RaiseBeforeSceneUnloaded(const std::string& sceneName)
+	{
+		if (s_Initialized && s_Callbacks.RaiseBeforeSceneUnloaded) s_Callbacks.RaiseBeforeSceneUnloaded(sceneName.c_str());
+	}
+
+	void ScriptEngine::RaiseSceneUnloaded(const std::string& sceneName)
+	{
+		if (s_Initialized && s_Callbacks.RaiseSceneUnloaded) s_Callbacks.RaiseSceneUnloaded(sceneName.c_str());
+	}
+
 } // namespace Bolt

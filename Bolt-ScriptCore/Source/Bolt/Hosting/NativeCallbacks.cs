@@ -32,6 +32,7 @@ namespace Bolt.Hosting
         public delegate* unmanaged<int, int> Input_GetKeyUp;
         public delegate* unmanaged<int, int> Input_GetMouseButton;
         public delegate* unmanaged<int, int> Input_GetMouseButtonDown;
+        public delegate* unmanaged<int, int> Input_GetMouseButtonUp;
         public delegate* unmanaged<float*, float*, void> Input_GetMousePosition;
         public delegate* unmanaged<float*, float*, void> Input_GetAxis;
         public delegate* unmanaged<float*, float*, void> Input_GetMouseDelta;
@@ -130,6 +131,7 @@ namespace Bolt.Hosting
         // ── Scene Query ──────────────────────────────────────────────
         public delegate* unmanaged<byte*> Scene_GetActiveSceneName;
         public delegate* unmanaged<int> Scene_GetEntityCount;
+        public delegate* unmanaged<byte*, int> Scene_GetEntityCountByName;
         public delegate* unmanaged<byte*, int> Scene_LoadAdditive;
         public delegate* unmanaged<byte*, int> Scene_Load;
         public delegate* unmanaged<byte*, void> Scene_Unload;
@@ -140,6 +142,8 @@ namespace Bolt.Hosting
         public delegate* unmanaged<ulong, byte*> Scene_GetEntityNameByUUID;
         public delegate* unmanaged<byte*, ulong*, int, int> Scene_QueryEntities;
         public delegate* unmanaged<byte*, byte*, byte*, int, ulong*, int, int> Scene_QueryEntitiesFiltered;
+        public delegate* unmanaged<byte*, byte*, ulong*, int, int> Scene_QueryEntitiesInScene;
+        public delegate* unmanaged<byte*, byte*, byte*, byte*, int, ulong*, int, int> Scene_QueryEntitiesFilteredInScene;
         public delegate* unmanaged<ulong, int> Asset_IsValid;
         public delegate* unmanaged<byte*, ulong> Asset_GetOrCreateUUIDFromPath;
         public delegate* unmanaged<ulong, byte*> Asset_GetPath;
@@ -179,7 +183,13 @@ namespace Bolt.Hosting
         public delegate* unmanaged<float, void> Gizmo_SetLineWidth;
 
         // ── Physics2D ────────────────────────────────────────────────
-        public delegate* unmanaged<float, float, float, float, float, ulong*, float*, float*, float*, float*, int> Physics2D_Raycast;
+        public delegate* unmanaged<float, float, float, float, float, ulong*, float*, float*, float*, float*, float*, int> Physics2D_Raycast;
+        public delegate* unmanaged<float, float, float, int, ulong*, int> Physics2D_OverlapCircle;
+        public delegate* unmanaged<float, float, float, float, float, int, ulong*, int> Physics2D_OverlapBox;
+        public delegate* unmanaged<float, float, float*, int, int, ulong*, int> Physics2D_OverlapPolygon;
+        public delegate* unmanaged<float, float, float, ulong*, int, int> Physics2D_OverlapCircleAll;
+        public delegate* unmanaged<float, float, float, float, float, ulong*, int, int> Physics2D_OverlapBoxAll;
+        public delegate* unmanaged<float, float, float*, int, ulong*, int, int> Physics2D_OverlapPolygonAll;
     }
 
     internal static unsafe class NativeCallbacks

@@ -90,41 +90,6 @@ namespace Bolt {
 			}
 		}
 
-		// Convenience: position/rotation access via the bound scene, with API fallback.
-		void GetPosition(float& x, float& y) const {
-			if (HasComponent<Transform2DComponent>()) {
-				const auto& transform = GetComponent<Transform2DComponent>();
-				x = transform.Position.x;
-				y = transform.Position.y;
-				return;
-			}
-
-			if (g_EngineAPI) g_EngineAPI->GetPosition(m_EntityID, &x, &y);
-		}
-		void SetPosition(float x, float y) {
-			if (HasComponent<Transform2DComponent>()) {
-				GetComponent<Transform2DComponent>().Position = { x, y };
-				return;
-			}
-
-			if (g_EngineAPI) g_EngineAPI->SetPosition(m_EntityID, x, y);
-		}
-		float GetRotation() const {
-			if (HasComponent<Transform2DComponent>()) {
-				return GetComponent<Transform2DComponent>().Rotation;
-			}
-
-			return g_EngineAPI ? g_EngineAPI->GetRotation(m_EntityID) : 0.0f;
-		}
-		void SetRotation(float rot) {
-			if (HasComponent<Transform2DComponent>()) {
-				GetComponent<Transform2DComponent>().Rotation = rot;
-				return;
-			}
-
-			if (g_EngineAPI) g_EngineAPI->SetRotation(m_EntityID, rot);
-		}
-
 	private:
 		friend class NativeScriptHost;
 		uint32_t m_EntityID = 0;

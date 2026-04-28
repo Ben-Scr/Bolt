@@ -12,55 +12,88 @@
 #include <box2d/collision.h>
 
 namespace Bolt {
-	std::optional<EntityHandle> Physics2D::OverlapCircle(const Vec2& center, float radius, OverlapMode mode) {
-		auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
-		b2WorldId world = phys.m_WorldId;
+	namespace {
+		EntityHandle GetEntityHandleFromShape(b2ShapeId shapeId) {
+			b2BodyId bodyId = b2Shape_GetBody(shapeId);
+			void* userData = b2Body_GetUserData(bodyId);
+			return static_cast<EntityHandle>(reinterpret_cast<uintptr_t>(userData));
+		}
 
+		std::optional<EntityHandle> QueryProxy(const Vec2& center, const b2ShapeProxy& proxy, OverlapMode mode) {
+			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
+				return std::nullopt;
+			}
+
+			auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
+			b2WorldId world = phys.GetWorldID();
+			b2QueryFilter filter = b2DefaultQueryFilter();
+
+			struct QueryContext {
+				Vec2 center;
+				OverlapMode mode;
+				std::optional<EntityHandle> first;
+				std::optional<EntityHandle> nearest;
+				float bestDist2 = std::numeric_limits<float>::max();
+
+				static bool Report(b2ShapeId shapeId, void* ctx) {
+					auto* self = static_cast<QueryContext*>(ctx);
+					EntityHandle handle = GetEntityHandleFromShape(shapeId);
+
+					if (self->mode == OverlapMode::First) {
+						self->first = handle;
+						return false;
+					}
+
+					b2BodyId bodyId = b2Shape_GetBody(shapeId);
+					b2Transform xf = b2Body_GetTransform(bodyId);
+					float dx = xf.p.x - self->center.x;
+					float dy = xf.p.y - self->center.y;
+					float d2 = dx * dx + dy * dy;
+					if (d2 < self->bestDist2) {
+						self->bestDist2 = d2;
+						self->nearest = handle;
+					}
+					return true;
+				}
+			} context{ center, mode, std::nullopt, std::nullopt };
+
+			b2World_OverlapShape(world, &proxy, filter, QueryContext::Report, &context);
+			return mode == OverlapMode::First ? context.first : context.nearest;
+		}
+
+		std::vector<EntityHandle> QueryProxyAll(const b2ShapeProxy& proxy) {
+			std::vector<EntityHandle> results;
+			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
+				return results;
+			}
+
+			auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
+			b2WorldId world = phys.GetWorldID();
+			b2QueryFilter filter = b2DefaultQueryFilter();
+
+			struct QueryContext {
+				std::vector<EntityHandle>* out;
+				static bool Report(b2ShapeId shapeId, void* ctx) {
+					auto* self = static_cast<QueryContext*>(ctx);
+					self->out->push_back(GetEntityHandleFromShape(shapeId));
+					return true;
+				}
+			} context{ &results };
+
+			b2World_OverlapShape(world, &proxy, filter, QueryContext::Report, &context);
+			return results;
+		}
+	}
+
+	std::optional<EntityHandle> Physics2D::OverlapCircle(const Vec2& center, float radius, OverlapMode mode) {
 		b2ShapeProxy proxy{};
 		proxy.count = 1;
 		proxy.points[0] = { center.x, center.y };
 		proxy.radius = radius;
 
-		b2QueryFilter filter = b2DefaultQueryFilter();
-
-		struct Qb {
-			Vec2 ctr;
-			OverlapMode mode;
-			std::optional<entt::entity> first;
-			std::optional<entt::entity> nearest;
-			float  bestDist2 = std::numeric_limits<float>::max();
-
-			static bool Report(b2ShapeId sId, void* ctx) {
-				auto* self = static_cast<Qb*>(ctx);
-
-				b2BodyId bId = b2Shape_GetBody(sId);
-				void* ud = b2Body_GetUserData(bId);
-				entt::entity h = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(ud));
-
-				if (self->mode == OverlapMode::First) {
-					self->first = h;
-					return false;
-				}
-
-				b2Transform xf = b2Body_GetTransform(bId);
-				float dx = xf.p.x - self->ctr.x;
-				float dy = xf.p.y - self->ctr.y;
-				float d2 = dx * dx + dy * dy;
-				if (d2 < self->bestDist2) {
-					self->bestDist2 = d2;
-					self->nearest = h;
-				}
-				return true;
-			}
-		} qb{ center, mode, std::nullopt, std::nullopt };
-
-		b2World_OverlapShape(world, &proxy, filter, Qb::Report, &qb);
-
-		return (mode == OverlapMode::First ? qb.first : qb.nearest);
+		return QueryProxy(center, proxy, mode);
 	}
 	std::optional<EntityHandle> Physics2D::OverlapBox(const Vec2& center, const Vec2& halfExtents, float degrees, OverlapMode mode) {
-		auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
-		b2WorldId world = phys.m_WorldId;
 		float radians = Radians<float>(degrees);
 
 		Vec2 corners[4] = {
@@ -82,45 +115,27 @@ namespace Bolt {
 			proxy.points[i] = { w.x, w.y };
 		}
 
-		b2QueryFilter filter = b2DefaultQueryFilter();
+		return QueryProxy(center, proxy, mode);
+	}
+	std::optional<EntityHandle> Physics2D::OverlapPolygon(const Vec2& center, const std::vector<Vec2>& points, OverlapMode mode) {
+		if (points.size() < 3 || points.size() > B2_MAX_POLYGON_VERTICES) {
+			return std::nullopt;
+		}
 
-		struct Qb {
-			Vec2 ctr;
-			OverlapMode mode;
-			std::optional<entt::entity> first;
-			std::optional<entt::entity> nearest;
-			float               bestDist2 = std::numeric_limits<float>::max();
+		b2ShapeProxy proxy{};
+		proxy.count = static_cast<int>(points.size());
+		proxy.radius = 0.0f;
+		for (int i = 0; i < proxy.count; ++i) {
+			proxy.points[i] = { center.x + points[static_cast<size_t>(i)].x, center.y + points[static_cast<size_t>(i)].y };
+		}
 
-			static bool Report(b2ShapeId sId, void* ctx) {
-				auto* self = static_cast<Qb*>(ctx);
-
-
-				b2BodyId bId = b2Shape_GetBody(sId);
-				void* ud = b2Body_GetUserData(bId);
-				entt::entity h = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(ud));
-
-				if (self->mode == OverlapMode::First) {
-					self->first = h;
-					return false;
-				}
-
-				b2Transform xf = b2Body_GetTransform(bId);
-				float dx = xf.p.x - self->ctr.x;
-				float dy = xf.p.y - self->ctr.y;
-				float d2 = dx * dx + dy * dy;
-				if (d2 < self->bestDist2) {
-					self->bestDist2 = d2;
-					self->nearest = h;
-				}
-				return true;
-			}
-		} qb{ center, mode, std::nullopt, std::nullopt };
-
-		b2World_OverlapShape(world, &proxy, filter, Qb::Report, &qb);
-
-		return (mode == OverlapMode::First ? qb.first : qb.nearest);
+		return QueryProxy(center, proxy, mode);
 	}
 	std::optional<RaycastHit2D> Physics2D::Raycast(const Vec2& origin,const Vec2& direction, float maxDistance) {
+		if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled() || maxDistance <= 0.0f) {
+			return std::nullopt;
+		}
+
 		auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
 		b2WorldId world = phys.m_WorldId;
 
@@ -149,36 +164,14 @@ namespace Bolt {
 	}
 
 	std::vector<EntityHandle> Physics2D::OverlapCircleAll(const Vec2& center, float radius) {
-		auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
-		b2WorldId world = phys.m_WorldId;
-
 		b2ShapeProxy proxy{};
 		proxy.count = 1;
 		proxy.points[0] = { center.x, center.y };
 		proxy.radius = radius;
 
-		b2QueryFilter filter = b2DefaultQueryFilter();
-
-		std::vector<entt::entity> results;
-		struct Cb {
-			std::vector<entt::entity>* out;
-			static bool Report(b2ShapeId sId, void* ctx) {
-				auto* self = static_cast<Cb*>(ctx);
-				b2BodyId bId = b2Shape_GetBody(sId);
-				void* ud = b2Body_GetUserData(bId);
-				entt::entity h = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(ud));
-				self->out->push_back(h);
-				return true;
-			}
-		} cb{ &results };
-
-		b2World_OverlapShape(world, &proxy, filter, Cb::Report, &cb);
-
-		return results;
+		return QueryProxyAll(proxy);
 	}
-	std::vector<EntityHandle> Physics2D::overlapBoxAll(const Vec2& center, const Vec2& halfExtents, float degrees) {
-		auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
-		b2WorldId world = phys.m_WorldId;
+	std::vector<EntityHandle> Physics2D::OverlapBoxAll(const Vec2& center, const Vec2& halfExtents, float degrees) {
 		float radians = Radians<float>(degrees);
 
 		Vec2 corners[4] = {
@@ -200,23 +193,20 @@ namespace Bolt {
 			proxy.points[i] = { w.x, w.y };
 		}
 
-		b2QueryFilter filter = b2DefaultQueryFilter();
+		return QueryProxyAll(proxy);
+	}
+	std::vector<EntityHandle> Physics2D::OverlapPolygonAll(const Vec2& center, const std::vector<Vec2>& points) {
+		if (points.size() < 3 || points.size() > B2_MAX_POLYGON_VERTICES) {
+			return {};
+		}
 
-		std::vector<entt::entity> results;
-		struct Cb {
-			std::vector<entt::entity>* out;
-			static bool Report(b2ShapeId sId, void* ctx) {
-				auto* self = static_cast<Cb*>(ctx);
-				b2BodyId bId = b2Shape_GetBody(sId);
-				void* ud = b2Body_GetUserData(bId);
-				entt::entity h = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(ud));
-				self->out->push_back(h);
-				return true;
-			}
-		} cb{ &results };
+		b2ShapeProxy proxy{};
+		proxy.count = static_cast<int>(points.size());
+		proxy.radius = 0.0f;
+		for (int i = 0; i < proxy.count; ++i) {
+			proxy.points[i] = { center.x + points[static_cast<size_t>(i)].x, center.y + points[static_cast<size_t>(i)].y };
+		}
 
-		b2World_OverlapShape(world, &proxy, filter, Cb::Report, &cb);
-
-		return results;
+		return QueryProxyAll(proxy);
 	}
 }

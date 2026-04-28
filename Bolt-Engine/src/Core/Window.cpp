@@ -6,6 +6,7 @@
 #include "Events/WindowEvents.hpp"
 #include "Events/KeyEvents.hpp"
 #include "Events/MouseEvents.hpp"
+#include "Scripting/ScriptEngine.hpp"
 #include <Utils/StringHelper.hpp>
 
 #include <glad/glad.h>
@@ -70,12 +71,14 @@ namespace Bolt {
 		Application::SetWindowFocused(static_cast<bool>(focused));
 
 		if ((bool)focused) {
+			ScriptEngine::RaiseFocusChanged(true);
 			if (win && win->m_EventCallback) {
 				WindowFocusEvent e;
 				win->m_EventCallback(e);
 			}
 		}
 		else {
+			ScriptEngine::RaiseFocusChanged(false);
 			if (win && win->m_EventCallback) {
 				WindowLostFocusEvent e;
 				win->m_EventCallback(e);
@@ -190,6 +193,7 @@ namespace Bolt {
 		switch (action) {
 		case GLFW_PRESS:
 			app->m_Input.OnKeyDown(key);
+			ScriptEngine::RaiseKeyDown(key);
 			if (win && win->m_EventCallback) {
 				KeyPressedEvent e(key, false);
 				win->m_EventCallback(e);
@@ -197,6 +201,7 @@ namespace Bolt {
 			break;
 		case GLFW_RELEASE:
 			app->m_Input.OnKeyUp(key);
+			ScriptEngine::RaiseKeyUp(key);
 			if (win && win->m_EventCallback) {
 				KeyReleasedEvent e(key);
 				win->m_EventCallback(e);
@@ -224,6 +229,7 @@ namespace Bolt {
 		switch (action) {
 		case GLFW_PRESS:
 			app->m_Input.OnMouseDown(button);
+			ScriptEngine::RaiseMouseDown(button);
 			if (win && win->m_EventCallback) {
 				MouseButtonPressedEvent e(button);
 				win->m_EventCallback(e);
@@ -231,6 +237,7 @@ namespace Bolt {
 			break;
 		case GLFW_RELEASE:
 			app->m_Input.OnMouseUp(button);
+			ScriptEngine::RaiseMouseUp(button);
 			if (win && win->m_EventCallback) {
 				MouseButtonReleasedEvent e(button);
 				win->m_EventCallback(e);
@@ -245,6 +252,7 @@ namespace Bolt {
 		Application* app = Application::GetInstance();
 		if (!app) return;
 		app->m_Input.OnMouseMove(xPos, yPos);
+		ScriptEngine::RaiseMouseMove(static_cast<float>(xPos), static_cast<float>(yPos));
 
 		Window* win = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
 		if (win && win->m_EventCallback) {
@@ -257,6 +265,7 @@ namespace Bolt {
 		Application* app = Application::GetInstance();
 		if (!app) return;
 		app->m_Input.OnScroll(static_cast<float>(yoffset));
+		ScriptEngine::RaiseMouseScroll(static_cast<float>(yoffset));
 
 		Window* win = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
 		if (win && win->m_EventCallback) {

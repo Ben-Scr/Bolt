@@ -67,7 +67,8 @@ namespace Bolt {
 
 		template<typename TFunc>
 		void ForeachLoadedScene(TFunc&& func) {
-			for (const std::shared_ptr<Scene>& scenePointer : m_LoadedScenes) {
+			auto scenes = m_LoadedScenes;
+			for (const std::shared_ptr<Scene>& scenePointer : scenes) {
 				if (scenePointer) {
 					func(*scenePointer);
 				}
@@ -76,7 +77,8 @@ namespace Bolt {
 
 		template<typename TFunc>
 		void ForeachLoadedScene(TFunc&& func) const {
-			for (const std::shared_ptr<Scene>& scenePointer : m_LoadedScenes) {
+			auto scenes = m_LoadedScenes;
+			for (const std::shared_ptr<Scene>& scenePointer : scenes) {
 				if (scenePointer) {
 					func(*scenePointer);
 				}

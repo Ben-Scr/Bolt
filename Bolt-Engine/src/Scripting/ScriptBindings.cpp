@@ -109,11 +109,15 @@ namespace Bolt {
 	Scene* GetScene()
 	{
 		Scene* scene = ScriptEngine::GetScene();
-		if (!scene)
-		{
-			BT_CORE_ERROR_TAG("ScriptBindings", "No active scene set on ScriptEngine");
+		if (scene && scene->IsLoaded()) {
+			return scene;
 		}
-		return scene;
+
+		auto* app = Application::GetInstance();
+		if (app && app->GetSceneManager()) {
+			return app->GetSceneManager()->GetActiveScene();
+		}
+		return nullptr;
 	}
 
 	thread_local std::string s_StringReturnBuffer;
@@ -233,6 +237,13 @@ namespace Bolt {
 		return CountSceneEntities(*scene);
 	}
 
+	static int Bolt_Scene_GetEntityCountByName(const char* sceneName) {
+		if (!sceneName || sceneName[0] == '\0') return 0;
+		auto scene = SceneManager::Get().GetLoadedScene(sceneName).lock();
+		if (!scene || !scene->IsLoaded()) return 0;
+		return CountSceneEntities(*scene);
+	}
+
 	static const char* Bolt_Scene_GetEntityNameByUUID(uint64_t uuid) {
 		Scene* scene = GetScene();
 		if (!scene) { s_StringReturnBuffer.clear(); return s_StringReturnBuffer.c_str(); }
@@ -314,9 +325,18 @@ namespace Bolt {
 
 	// ── Scene Query ─────────────────────────────────────────────────────
 
-	static int Bolt_Scene_QueryEntities(const char* componentNames, uint64_t* outEntityIDs, int maxOut) {
-		Scene* scene = GetScene();
+	static Scene* ResolveLoadedSceneForQuery(const char* sceneName) {
+		if (!sceneName || sceneName[0] == '\0') {
+			return GetScene();
+		}
+
+		auto scene = SceneManager::Get().GetLoadedScene(sceneName).lock();
+		return scene && scene->IsLoaded() ? scene.get() : nullptr;
+	}
+
+	static int QueryEntitiesInScene(Scene* scene, const char* componentNames, uint64_t* outEntityIDs, int maxOut) {
 		if (!scene || !componentNames || !outEntityIDs || maxOut <= 0) return 0;
+		if (!scene->IsLoaded()) return 0;
 
 		// Parse pipe-delimited component names
 		std::vector<const ComponentInfo*> infos;
@@ -351,6 +371,14 @@ namespace Bolt {
 			}
 		}
 		return count;
+	}
+
+	static int Bolt_Scene_QueryEntities(const char* componentNames, uint64_t* outEntityIDs, int maxOut) {
+		return QueryEntitiesInScene(GetScene(), componentNames, outEntityIDs, maxOut);
+	}
+
+	static int Bolt_Scene_QueryEntitiesInScene(const char* sceneName, const char* componentNames, uint64_t* outEntityIDs, int maxOut) {
+		return QueryEntitiesInScene(ResolveLoadedSceneForQuery(sceneName), componentNames, outEntityIDs, maxOut);
 	}
 
 	static int Bolt_Asset_IsValid(uint64_t assetId)
@@ -430,15 +458,16 @@ namespace Bolt {
 		return true;
 	}
 
-	static int Bolt_Scene_QueryEntitiesFiltered(
+	static int QueryEntitiesFilteredInScene(
+		Scene* scene,
 		const char* withComponents,
 		const char* withoutComponents,
 		const char* mustHaveComponents,
 		int enableFilter,
 		uint64_t* outEntityIDs, int maxOut)
 	{
-		Scene* scene = GetScene();
 		if (!scene || !outEntityIDs || maxOut <= 0) return 0;
+		if (!scene->IsLoaded()) return 0;
 
 		std::vector<const ComponentInfo*> withInfos, withoutInfos, mustHaveInfos;
 		if (!ParseComponentNames(withComponents, withInfos)) return 0;
@@ -483,6 +512,27 @@ namespace Bolt {
 			count++;
 		}
 		return count;
+	}
+
+	static int Bolt_Scene_QueryEntitiesFiltered(
+		const char* withComponents,
+		const char* withoutComponents,
+		const char* mustHaveComponents,
+		int enableFilter,
+		uint64_t* outEntityIDs, int maxOut)
+	{
+		return QueryEntitiesFilteredInScene(GetScene(), withComponents, withoutComponents, mustHaveComponents, enableFilter, outEntityIDs, maxOut);
+	}
+
+	static int Bolt_Scene_QueryEntitiesFilteredInScene(
+		const char* sceneName,
+		const char* withComponents,
+		const char* withoutComponents,
+		const char* mustHaveComponents,
+		int enableFilter,
+		uint64_t* outEntityIDs, int maxOut)
+	{
+		return QueryEntitiesFilteredInScene(ResolveLoadedSceneForQuery(sceneName), withComponents, withoutComponents, mustHaveComponents, enableFilter, outEntityIDs, maxOut);
 	}
 
 	// ── NameComponent ───────────────────────────────────────────────────
@@ -886,9 +936,10 @@ namespace Bolt {
 
 	static int Bolt_Physics2D_Raycast(
 		float originX, float originY, float dirX, float dirY, float distance,
-		uint64_t* hitEntityID, float* hitX, float* hitY, float* hitNormalX, float* hitNormalY)
+		uint64_t* hitEntityID, float* hitX, float* hitY, float* hitNormalX, float* hitNormalY, float* hitDistance)
 	{
-		*hitEntityID = 0; *hitX = 0; *hitY = 0; *hitNormalX = 0; *hitNormalY = 0;
+		if (!hitEntityID || !hitX || !hitY || !hitNormalX || !hitNormalY || !hitDistance) return 0;
+		*hitEntityID = 0; *hitX = 0; *hitY = 0; *hitNormalX = 0; *hitNormalY = 0; *hitDistance = 0;
 
 		auto result = Physics2D::Raycast({ originX, originY }, { dirX, dirY }, distance);
 		if (result.has_value()) {
@@ -905,9 +956,114 @@ namespace Bolt {
 			}
 			*hitX = result->point.x; *hitY = result->point.y;
 			*hitNormalX = result->normal.x; *hitNormalY = result->normal.y;
+			*hitDistance = result->distance;
 			return 1;
 		}
 		return 0;
+	}
+
+	static uint64_t ToScriptEntityId(EntityHandle handle) {
+		if (handle == entt::null) return 0;
+
+		Scene* scene = GetScene();
+		if (scene && scene->IsValid(handle)) {
+			return GetEntityScriptId(*scene, handle);
+		}
+
+		uint64_t id = 0;
+		SceneManager::Get().ForeachLoadedScene([&](const Scene& loadedScene) {
+			if (id == 0 && loadedScene.IsValid(handle)) {
+				id = GetEntityScriptId(loadedScene, handle);
+			}
+		});
+		return id;
+	}
+
+	static OverlapMode ToOverlapMode(int mode) {
+		return mode == 1 ? OverlapMode::Nearest : OverlapMode::First;
+	}
+
+	static std::vector<Vec2> ReadPolygonPoints(const float* points, int pointCount) {
+		std::vector<Vec2> result;
+		constexpr int maxPolygonVertices = 8;
+		if (!points || pointCount < 3 || pointCount > maxPolygonVertices) {
+			return result;
+		}
+
+		result.reserve(static_cast<size_t>(pointCount));
+		for (int i = 0; i < pointCount; ++i) {
+			result.push_back({ points[i * 2], points[i * 2 + 1] });
+		}
+		return result;
+	}
+
+	static int WriteOverlapResult(std::optional<EntityHandle> result, uint64_t* entityID) {
+		if (!entityID) return 0;
+		*entityID = result.has_value() ? ToScriptEntityId(*result) : 0;
+		return *entityID != 0 ? 1 : 0;
+	}
+
+	static int WriteOverlapResults(const std::vector<EntityHandle>& handles, uint64_t* outEntityIDs, int maxOut) {
+		if (!outEntityIDs || maxOut <= 0) return 0;
+
+		int count = 0;
+		for (EntityHandle handle : handles) {
+			uint64_t id = ToScriptEntityId(handle);
+			if (id == 0) continue;
+
+			if (count < maxOut) {
+				outEntityIDs[count] = id;
+			}
+			++count;
+		}
+		return count;
+	}
+
+	static int Bolt_Physics2D_OverlapCircle(float originX, float originY, float radius, int mode, uint64_t* entityID) {
+		return WriteOverlapResult(
+			Physics2D::OverlapCircle({ originX, originY }, radius, ToOverlapMode(mode)),
+			entityID);
+	}
+
+	static int Bolt_Physics2D_OverlapBox(float originX, float originY, float halfX, float halfY, float degrees, int mode, uint64_t* entityID) {
+		return WriteOverlapResult(
+			Physics2D::OverlapBox({ originX, originY }, { halfX, halfY }, degrees, ToOverlapMode(mode)),
+			entityID);
+	}
+
+	static int Bolt_Physics2D_OverlapPolygon(float originX, float originY, const float* points, int pointCount, int mode, uint64_t* entityID) {
+		std::vector<Vec2> polygon = ReadPolygonPoints(points, pointCount);
+		if (polygon.empty()) {
+			if (entityID) *entityID = 0;
+			return 0;
+		}
+
+		return WriteOverlapResult(
+			Physics2D::OverlapPolygon({ originX, originY }, polygon, ToOverlapMode(mode)),
+			entityID);
+	}
+
+	static int Bolt_Physics2D_OverlapCircleAll(float originX, float originY, float radius, uint64_t* outEntityIDs, int maxOut) {
+		return WriteOverlapResults(
+			Physics2D::OverlapCircleAll({ originX, originY }, radius),
+			outEntityIDs, maxOut);
+	}
+
+	static int Bolt_Physics2D_OverlapBoxAll(float originX, float originY, float halfX, float halfY, float degrees, uint64_t* outEntityIDs, int maxOut) {
+		return WriteOverlapResults(
+			Physics2D::OverlapBoxAll({ originX, originY }, { halfX, halfY }, degrees),
+			outEntityIDs, maxOut);
+	}
+
+	static int Bolt_Physics2D_OverlapPolygonAll(float originX, float originY, const float* points, int pointCount, uint64_t* outEntityIDs, int maxOut) {
+		std::vector<Vec2> polygon = ReadPolygonPoints(points, pointCount);
+		if (polygon.empty()) {
+			return 0;
+		}
+
+		return WriteOverlapResults(
+			Physics2D::OverlapPolygonAll({ originX, originY }, polygon),
+			outEntityIDs, maxOut);
 	}
 
 	#undef GET_COMPONENT
@@ -997,6 +1153,7 @@ namespace Bolt {
 
 		b.Scene_GetActiveSceneName = &Bolt_Scene_GetActiveSceneName;
 		b.Scene_GetEntityCount = &Bolt_Scene_GetEntityCount;
+		b.Scene_GetEntityCountByName = &Bolt_Scene_GetEntityCountByName;
 		b.Scene_LoadAdditive = &Bolt_Scene_LoadAdditive;
 		b.Scene_Load = &Bolt_Scene_Load;
 		b.Scene_Unload = &Bolt_Scene_Unload;
@@ -1007,6 +1164,8 @@ namespace Bolt {
 		b.Scene_GetEntityNameByUUID = &Bolt_Scene_GetEntityNameByUUID;
 		b.Scene_QueryEntities = &Bolt_Scene_QueryEntities;
 		b.Scene_QueryEntitiesFiltered = &Bolt_Scene_QueryEntitiesFiltered;
+		b.Scene_QueryEntitiesInScene = &Bolt_Scene_QueryEntitiesInScene;
+		b.Scene_QueryEntitiesFilteredInScene = &Bolt_Scene_QueryEntitiesFilteredInScene;
 
 		b.Asset_IsValid = &Bolt_Asset_IsValid;
 		b.Asset_GetOrCreateUUIDFromPath = &Bolt_Asset_GetOrCreateUUIDFromPath;
@@ -1045,6 +1204,12 @@ namespace Bolt {
 		b.Gizmo_SetLineWidth = &Bolt_Gizmo_SetLineWidth;
 
 		b.Physics2D_Raycast = &Bolt_Physics2D_Raycast;
+		b.Physics2D_OverlapCircle = &Bolt_Physics2D_OverlapCircle;
+		b.Physics2D_OverlapBox = &Bolt_Physics2D_OverlapBox;
+		b.Physics2D_OverlapPolygon = &Bolt_Physics2D_OverlapPolygon;
+		b.Physics2D_OverlapCircleAll = &Bolt_Physics2D_OverlapCircleAll;
+		b.Physics2D_OverlapBoxAll = &Bolt_Physics2D_OverlapBoxAll;
+		b.Physics2D_OverlapPolygonAll = &Bolt_Physics2D_OverlapPolygonAll;
 	}
 
 } // namespace Bolt

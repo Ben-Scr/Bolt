@@ -43,6 +43,7 @@ namespace Bolt
         internal static bool Input_GetKeyUp(int keyCode) => NativeCallbacks.Bindings.Input_GetKeyUp(keyCode) != 0;
         internal static bool Input_GetMouseButton(int button) => NativeCallbacks.Bindings.Input_GetMouseButton(button) != 0;
         internal static bool Input_GetMouseButtonDown(int button) => NativeCallbacks.Bindings.Input_GetMouseButtonDown(button) != 0;
+        internal static bool Input_GetMouseButtonUp(int button) => NativeCallbacks.Bindings.Input_GetMouseButtonUp(button) != 0;
 
         internal static void Input_GetMousePosition(out float x, out float y)
         {
@@ -63,6 +64,15 @@ namespace Bolt
             return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
         }
         internal static int Scene_GetEntityCount() => NativeCallbacks.Bindings.Scene_GetEntityCount();
+
+        internal static int Scene_GetEntityCount(string sceneName)
+        {
+            int len = Encoding.UTF8.GetByteCount(sceneName);
+            Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
+            Encoding.UTF8.GetBytes(sceneName, buf);
+            buf[len] = 0;
+            fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_GetEntityCountByName(ptr);
+        }
 
         internal static string Scene_GetEntityNameByUUID(ulong uuid)
         {
@@ -320,6 +330,55 @@ namespace Bolt
             }
         }
 
+        internal static int Scene_QueryEntities(string sceneName, string componentNames, Span<ulong> outEntityIDs)
+        {
+            int sceneLen = Encoding.UTF8.GetByteCount(sceneName);
+            int namesLen = Encoding.UTF8.GetByteCount(componentNames);
+            Span<byte> sceneBuf = sceneLen <= 256 ? stackalloc byte[sceneLen + 1] : new byte[sceneLen + 1];
+            Span<byte> namesBuf = namesLen <= 512 ? stackalloc byte[namesLen + 1] : new byte[namesLen + 1];
+            Encoding.UTF8.GetBytes(sceneName, sceneBuf);
+            Encoding.UTF8.GetBytes(componentNames, namesBuf);
+            sceneBuf[sceneLen] = 0;
+            namesBuf[namesLen] = 0;
+            fixed (byte* scenePtr = sceneBuf)
+            fixed (byte* namesPtr = namesBuf)
+            fixed (ulong* idPtr = outEntityIDs)
+            {
+                return NativeCallbacks.Bindings.Scene_QueryEntitiesInScene(
+                    scenePtr, namesPtr, idPtr, outEntityIDs.Length);
+            }
+        }
+
+        internal static int Scene_QueryEntitiesFiltered(
+            string sceneName, string withComponents, string withoutComponents,
+            string mustHaveComponents, int enableFilter, Span<ulong> outEntityIDs)
+        {
+            static byte[] EncodeUtf8(string s)
+            {
+                if (string.IsNullOrEmpty(s)) return new byte[] { 0 };
+                int len = Encoding.UTF8.GetByteCount(s);
+                byte[] buf = new byte[len + 1];
+                Encoding.UTF8.GetBytes(s, buf);
+                buf[len] = 0;
+                return buf;
+            }
+
+            byte[] sceneBuf = EncodeUtf8(sceneName);
+            byte[] withBuf = EncodeUtf8(withComponents);
+            byte[] withoutBuf = EncodeUtf8(withoutComponents);
+            byte[] mustHaveBuf = EncodeUtf8(mustHaveComponents);
+
+            fixed (byte* scenePtr = sceneBuf)
+            fixed (byte* withPtr = withBuf)
+            fixed (byte* withoutPtr = withoutBuf)
+            fixed (byte* mustHavePtr = mustHaveBuf)
+            fixed (ulong* idPtr = outEntityIDs)
+            {
+                return NativeCallbacks.Bindings.Scene_QueryEntitiesFilteredInScene(
+                    scenePtr, withPtr, withoutPtr, mustHavePtr, enableFilter, idPtr, outEntityIDs.Length);
+            }
+        }
+
         // ── ParticleSystem2D ────────────────────────────────────────
 
         internal static bool Asset_IsValid(ulong assetId) => assetId != 0 && NativeCallbacks.Bindings.Asset_IsValid(assetId) != 0;
@@ -386,12 +445,64 @@ namespace Bolt
         // ── Physics2D ───────────────────────────────────────────────────
 
         internal static bool Physics2D_Raycast(float originX, float originY, float dirX, float dirY, float distance,
-            out ulong hitEntityID, out float hitX, out float hitY, out float hitNormalX, out float hitNormalY)
+            out ulong hitEntityID, out float hitX, out float hitY, out float hitNormalX, out float hitNormalY, out float hitDistance)
         {
-            ulong eid; float hx, hy, hnx, hny;
-            int result = NativeCallbacks.Bindings.Physics2D_Raycast(originX, originY, dirX, dirY, distance, &eid, &hx, &hy, &hnx, &hny);
-            hitEntityID = eid; hitX = hx; hitY = hy; hitNormalX = hnx; hitNormalY = hny;
+            ulong eid; float hx, hy, hnx, hny, hd;
+            int result = NativeCallbacks.Bindings.Physics2D_Raycast(originX, originY, dirX, dirY, distance, &eid, &hx, &hy, &hnx, &hny, &hd);
+            hitEntityID = eid; hitX = hx; hitY = hy; hitNormalX = hnx; hitNormalY = hny; hitDistance = hd;
             return result != 0;
+        }
+
+        internal static bool Physics2D_OverlapCircle(float originX, float originY, float radius, int mode, out ulong entityID)
+        {
+            ulong id;
+            int result = NativeCallbacks.Bindings.Physics2D_OverlapCircle(originX, originY, radius, mode, &id);
+            entityID = id;
+            return result != 0 && id != 0;
+        }
+
+        internal static bool Physics2D_OverlapBox(float originX, float originY, float halfX, float halfY, float degrees, int mode, out ulong entityID)
+        {
+            ulong id;
+            int result = NativeCallbacks.Bindings.Physics2D_OverlapBox(originX, originY, halfX, halfY, degrees, mode, &id);
+            entityID = id;
+            return result != 0 && id != 0;
+        }
+
+        internal static bool Physics2D_OverlapPolygon(float originX, float originY, float[] points, int mode, out ulong entityID)
+        {
+            ulong id;
+            fixed (float* pointsPtr = points)
+            {
+                int result = NativeCallbacks.Bindings.Physics2D_OverlapPolygon(originX, originY, pointsPtr, points.Length / 2, mode, &id);
+                entityID = id;
+                return result != 0 && id != 0;
+            }
+        }
+
+        internal static int Physics2D_OverlapCircleAll(float originX, float originY, float radius, Span<ulong> outEntityIDs)
+        {
+            fixed (ulong* idPtr = outEntityIDs)
+            {
+                return NativeCallbacks.Bindings.Physics2D_OverlapCircleAll(originX, originY, radius, idPtr, outEntityIDs.Length);
+            }
+        }
+
+        internal static int Physics2D_OverlapBoxAll(float originX, float originY, float halfX, float halfY, float degrees, Span<ulong> outEntityIDs)
+        {
+            fixed (ulong* idPtr = outEntityIDs)
+            {
+                return NativeCallbacks.Bindings.Physics2D_OverlapBoxAll(originX, originY, halfX, halfY, degrees, idPtr, outEntityIDs.Length);
+            }
+        }
+
+        internal static int Physics2D_OverlapPolygonAll(float originX, float originY, float[] points, Span<ulong> outEntityIDs)
+        {
+            fixed (float* pointsPtr = points)
+            fixed (ulong* idPtr = outEntityIDs)
+            {
+                return NativeCallbacks.Bindings.Physics2D_OverlapPolygonAll(originX, originY, pointsPtr, points.Length / 2, idPtr, outEntityIDs.Length);
+            }
         }
     }
 }

@@ -48,6 +48,10 @@ namespace Bolt {
 			auto& callbacks = ScriptEngine::GetCallbacks();
 
 			for (const ScriptInstance& instance : scriptComponent.Scripts) {
+				if (instance.GetType() == ScriptType::Native) {
+					continue;
+				}
+
 				const char* rawJson = nullptr;
 				const bool hasLiveInstance = instance.HasManagedInstance();
 
@@ -388,7 +392,10 @@ namespace Bolt {
 				if (!scriptComponent.Scripts.empty()) {
 					Value scriptsValue = Value::MakeArray();
 					for (const ScriptInstance& instance : scriptComponent.Scripts) {
-						scriptsValue.Append(Value(instance.GetClassName()));
+						Value scriptValue = Value::MakeObject();
+						scriptValue.AddMember("className", Value(instance.GetClassName()));
+						scriptValue.AddMember("type", Value(ScriptTypeToString(instance.GetType())));
+						scriptsValue.Append(std::move(scriptValue));
 					}
 					entityValue.AddMember("Scripts", std::move(scriptsValue));
 

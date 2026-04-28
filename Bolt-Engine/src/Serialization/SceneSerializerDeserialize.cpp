@@ -48,6 +48,10 @@ namespace Bolt {
 			auto& callbacks = ScriptEngine::GetCallbacks();
 
 			for (const ScriptInstance& instance : scriptComponent.Scripts) {
+				if (instance.GetType() == ScriptType::Native) {
+					continue;
+				}
+
 				const char* rawJson = nullptr;
 				const bool hasLiveInstance = instance.HasManagedInstance();
 
@@ -388,7 +392,10 @@ namespace Bolt {
 				if (!scriptComponent.Scripts.empty()) {
 					Value scriptsValue = Value::MakeArray();
 					for (const ScriptInstance& instance : scriptComponent.Scripts) {
-						scriptsValue.Append(Value(instance.GetClassName()));
+						Value scriptValue = Value::MakeObject();
+						scriptValue.AddMember("className", Value(instance.GetClassName()));
+						scriptValue.AddMember("type", Value(ScriptTypeToString(instance.GetType())));
+						scriptsValue.Append(std::move(scriptValue));
 					}
 					entityValue.AddMember("Scripts", std::move(scriptsValue));
 
@@ -725,11 +732,27 @@ namespace Bolt {
 
 		if (const Value* scriptsValue = GetArrayMember(entityValue, "Scripts")) {
 			auto& scriptComponent = scene.AddComponent<ScriptComponent>(entity);
-			for (const Value& scriptNameValue : scriptsValue->GetArray()) {
-				if (!scriptNameValue.IsString()) {
+			for (const Value& scriptValue : scriptsValue->GetArray()) {
+				if (scriptValue.IsString()) {
+					scriptComponent.AddScript(scriptValue.AsStringOr(), ScriptType::Unknown);
 					continue;
 				}
-				scriptComponent.AddScript(scriptNameValue.AsStringOr());
+
+				if (!scriptValue.IsObject()) {
+					continue;
+				}
+
+				std::string className = GetStringMember(scriptValue, "className");
+				if (className.empty()) {
+					className = GetStringMember(scriptValue, "class");
+				}
+				if (className.empty()) {
+					continue;
+				}
+
+				scriptComponent.AddScript(
+					className,
+					ScriptTypeFromString(GetStringMember(scriptValue, "type")));
 			}
 
 			if (const Value* fieldsByClass = GetObjectMember(entityValue, "ScriptFields")) {

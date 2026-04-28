@@ -7,6 +7,35 @@ namespace Bolt
 
     public static class SceneManager
     {
+        public static event Action<Scene>? SceneLoaded;
+        public static event Action<Scene>? BeforeSceneLoaded;
+        public static event Action<Scene>? BeforeSceneUnloaded;
+        public static event Action<Scene>? SceneUnloaded;
+
+        internal static void RaiseBeforeSceneLoaded(string name)
+        {
+            if (!string.IsNullOrEmpty(name))
+                BeforeSceneLoaded?.Invoke(new Scene { Name = name });
+        }
+
+        internal static void RaiseSceneLoaded(string name)
+        {
+            if (!string.IsNullOrEmpty(name))
+                SceneLoaded?.Invoke(new Scene { Name = name });
+        }
+
+        internal static void RaiseBeforeSceneUnloaded(string name)
+        {
+            if (!string.IsNullOrEmpty(name))
+                BeforeSceneUnloaded?.Invoke(new Scene { Name = name });
+        }
+
+        internal static void RaiseSceneUnloaded(string name)
+        {
+            if (!string.IsNullOrEmpty(name))
+                SceneUnloaded?.Invoke(new Scene { Name = name });
+        }
+
         /// <summary>
         /// Returns the currently active scene.
         /// </summary>
@@ -79,6 +108,15 @@ namespace Bolt
                     return new Scene { Name = loadedName };
             }
             return null;
+        }
+
+        public static bool IsSceneLoaded(string name)
+        {
+            throw new NotImplementedException();
+        }
+        public static bool DoesSceneExist(string name)
+        {
+            throw new NotImplementedException();
         }
 
         /// <summary>

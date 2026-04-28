@@ -2,6 +2,7 @@
 #include "Assets/AssetRegistry.hpp"
 #include "Scripting/ScriptComponentInspector.hpp"
 #include "Scripting/ScriptComponent.hpp"
+#include "Scripting/ScriptDiscovery.hpp"
 #include "Gui/ImGuiUtils.hpp"
 #include "Scripting/ScriptEngine.hpp"
 #include "Scripting/ScriptSystem.hpp"
@@ -37,6 +38,8 @@ namespace Bolt {
 			std::string type;
 			std::string value;
 			std::string tooltip;
+			std::string headerContent;
+			int headerSize = 0;
 			bool readOnly = false;
 			bool hasClamp = false;
 			float clampMin = 0.0f;
@@ -95,11 +98,30 @@ namespace Bolt {
 				if (const Json::Value* clampMinValue = item.FindMember("clampMin")) field.clampMin = static_cast<float>(clampMinValue->AsDoubleOr(0.0));
 				if (const Json::Value* clampMaxValue = item.FindMember("clampMax")) field.clampMax = static_cast<float>(clampMaxValue->AsDoubleOr(0.0));
 				if (const Json::Value* tooltipValue = item.FindMember("tooltip")) field.tooltip = tooltipValue->AsStringOr();
+				if (const Json::Value* headerContentValue = item.FindMember("headerContent")) field.headerContent = headerContentValue->AsStringOr();
+				if (const Json::Value* headerSizeValue = item.FindMember("headerSize")) field.headerSize = static_cast<int>(headerSizeValue->AsDoubleOr(0.0));
 
 				if (field.displayName.empty()) field.displayName = field.name;
 				fields.push_back(std::move(field));
 			}
 			return fields;
+		}
+
+		static void RenderFieldHeader(const EditorFieldInfo& field) {
+			if (field.headerContent.empty()) {
+				return;
+			}
+
+			ImGui::Spacing();
+			const float baseFontSize = std::max(ImGui::GetFontSize(), 1.0f);
+			const float requestedSize = field.headerSize > 0
+				? baseFontSize + static_cast<float>(field.headerSize)
+				: baseFontSize;
+			ImGui::PushFont(nullptr, std::max(1.0f, requestedSize));
+			ImGui::TextUnformatted(field.headerContent.c_str());
+			ImGui::PopFont();
+			ImGui::Separator();
+			ImGui::Spacing();
 		}
 
 		static std::string ToLowerCopy(std::string value) {
@@ -867,6 +889,7 @@ namespace Bolt {
 				std::string oldValue = field.value;
 				const std::string fieldKey = MakeFieldKey(scriptIndex, instance.GetClassName(), field.name);
 
+				RenderFieldHeader(field);
 				RenderEditorField(fieldKey, hasLiveInstance ? static_cast<int32_t>(instance.GetGCHandle()) : 0, field);
 
 				if (field.value != oldValue) {
@@ -888,66 +911,19 @@ namespace Bolt {
 	} // namespace
 
 	namespace {
-		struct ScriptPickerEntry {
-			std::string ClassName;
-			std::string RelativePath;
-			std::string Extension;
-		};
+		using ScriptPickerEntry = EditorScriptDiscovery::ScriptEntry;
 
 		static bool s_ScriptPickerOpen = false;
 		static char s_ScriptPickerSearch[128] = {};
 		static std::vector<ScriptPickerEntry> s_ScriptPickerEntries;
 		static EntityHandle s_ScriptPickerTargetEntity = entt::null;
 
-		static bool IsScriptExtension(const std::string& ext) {
-			return ext == ".cs" || ext == ".cpp";
-		}
-
-		static bool IsNativeScriptBootstrapFile(const std::filesystem::path& path) {
-			return path.filename().string() == "NativeScriptExports.cpp";
-		}
-
-		static void CollectScriptFiles(const std::filesystem::path& dir,
-			std::vector<ScriptPickerEntry>& entries) {
-			if (!std::filesystem::exists(dir)) return;
-			for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
-				if (!entry.is_regular_file()) continue;
-				std::string ext = entry.path().extension().string();
-				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-				if (!IsScriptExtension(ext)) continue;
-				if (ext == ".cpp" && IsNativeScriptBootstrapFile(entry.path())) continue;
-
-				ScriptPickerEntry e;
-				e.ClassName = entry.path().stem().string();
-				e.RelativePath = entry.path().string();
-				e.Extension = ext;
-				entries.push_back(std::move(e));
-			}
-			std::sort(entries.begin(), entries.end(),
-				[](const ScriptPickerEntry& a, const ScriptPickerEntry& b) {
-					if (a.ClassName == b.ClassName) {
-						return a.RelativePath < b.RelativePath;
-					}
-					return a.ClassName < b.ClassName;
-				});
-		}
-
 		static void OpenScriptPicker(EntityHandle entity) {
 			s_ScriptPickerOpen = true;
 			s_ScriptPickerSearch[0] = '\0';
 			s_ScriptPickerTargetEntity = entity;
 			s_ScriptPickerEntries.clear();
-
-			BoltProject* project = ProjectManager::GetCurrentProject();
-			if (project) {
-				CollectScriptFiles(std::filesystem::path(project->ScriptsDirectory), s_ScriptPickerEntries);
-				CollectScriptFiles(std::filesystem::path(project->NativeSourceDir), s_ScriptPickerEntries);
-			}
-			else {
-				std::string base = Path::ExecutableDir();
-				CollectScriptFiles(std::filesystem::path(base) / ".." / ".." / ".." / "Bolt-Sandbox" / "Source", s_ScriptPickerEntries);
-				CollectScriptFiles(std::filesystem::path(base) / ".." / ".." / ".." / "Bolt-NativeScripts" / "Source", s_ScriptPickerEntries);
-			}
+			EditorScriptDiscovery::CollectProjectScriptEntries(s_ScriptPickerEntries);
 		}
 
 		static void RenderScriptPicker() {
@@ -976,7 +952,7 @@ namespace Bolt {
 			for (const auto& entry : s_ScriptPickerEntries) {
 				if (!filter.empty()) {
 					std::string lowerName = ToLowerCopy(entry.ClassName);
-					std::string lowerPath = ToLowerCopy(entry.RelativePath);
+					std::string lowerPath = ToLowerCopy(entry.Path.string());
 					if (lowerName.find(filter) == std::string::npos && lowerPath.find(filter) == std::string::npos) continue;
 				}
 
@@ -985,22 +961,24 @@ namespace Bolt {
 					entry.ClassName + "  " + entry.Extension,
 					ImGui::GetContentRegionAvail().x,
 					&truncated);
-				std::string label = displayLabel + "##" + entry.RelativePath;
+				std::string label = displayLabel + "##" + entry.Path.string();
 				if (ImGui::Selectable(label.c_str(), false)) {
 					Scene* scene = ScriptEngine::GetScene();
 					if (!scene) scene = SceneManager::Get().GetActiveScene();
 					if (scene && scene->IsValid(s_ScriptPickerTargetEntity)
 						&& scene->HasComponent<ScriptComponent>(s_ScriptPickerTargetEntity)) {
 						auto& sc = scene->GetComponent<ScriptComponent>(s_ScriptPickerTargetEntity);
-						if (!sc.HasScript(entry.ClassName)) {
-							sc.AddScript(entry.ClassName);
+						if (!sc.HasScript(entry.ClassName, entry.Type)) {
+							sc.AddScript(entry.ClassName, entry.Type);
+							scene->MarkDirty();
 						}
 					}
 					s_ScriptPickerOpen = false;
 				}
 
-				if (ImGui::IsItemHovered() && (truncated || !entry.RelativePath.empty())) {
-					ImGui::SetTooltip("%s", entry.RelativePath.c_str());
+				if (ImGui::IsItemHovered() && (truncated || !entry.Path.empty())) {
+					const std::string path = entry.Path.string();
+					ImGui::SetTooltip("%s", path.c_str());
 				}
 			}
 
@@ -1018,6 +996,9 @@ namespace Bolt {
 		for (size_t i = 0; i < scriptComp.Scripts.size(); i++) {
 			auto& instance = scriptComp.Scripts[i];
 			std::string label = instance.GetClassName().empty() ? "Script" : instance.GetClassName();
+			if (instance.GetType() == ScriptType::Native) {
+				label += " (Native)";
+			}
 
 			ImGui::PushID(static_cast<int>(i));
 
@@ -1040,7 +1021,7 @@ namespace Bolt {
 				ImGui::Button((label + "##ScriptClass").c_str());
 				ImGui::EndDisabled();
 
-				if (ScriptEngine::IsInitialized()) {
+				if (instance.GetType() != ScriptType::Native && ScriptEngine::IsInitialized()) {
 					RenderScriptFieldsForInstance(scriptComp, instance, i);
 				}
 

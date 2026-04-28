@@ -140,6 +140,137 @@ namespace Bolt.Hosting
             s_CoreAssembly = assembly;
         }
 
+        private static List<ScriptInstanceData> SnapshotInstances()
+        {
+            return new List<ScriptInstanceData>(s_Instances.Values);
+        }
+
+        private static void DispatchToScripts(Action<BoltScript> invoke, string eventName)
+        {
+            foreach (var data in SnapshotInstances())
+            {
+                try { invoke(data.Instance); }
+                catch (Exception ex) { Console.Error.WriteLine($"Exception in {eventName}: {ex}"); }
+            }
+        }
+
+        internal static void DispatchLogMessage(string message)
+        {
+            DispatchToScripts(script => script.OnLogMessage(message), nameof(BoltScript.OnLogMessage));
+        }
+
+        private static Scene SceneFromName(string name) => new Scene { Name = name };
+
+        private static unsafe string PtrToString(byte* value)
+        {
+            return Marshal.PtrToStringUTF8((IntPtr)value) ?? "";
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseApplicationStart()
+        {
+            Application.RaiseApplicationStart();
+            DispatchToScripts(script => script.OnApplicationStart(), nameof(BoltScript.OnApplicationStart));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseApplicationPaused()
+        {
+            Application.RaiseApplicationPaused();
+            DispatchToScripts(script => script.OnApplicationPaused(), nameof(BoltScript.OnApplicationPaused));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseFocusChanged(int focused)
+        {
+            bool isFocused = focused != 0;
+            Application.RaiseFocusChanged(isFocused);
+            DispatchToScripts(script => script.OnFocusChanged(isFocused), nameof(BoltScript.OnFocusChanged));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseKeyDown(int key)
+        {
+            KeyCode keyCode = (KeyCode)key;
+            Input.RaiseKeyDown(keyCode);
+            DispatchToScripts(script => script.OnKeyDown(keyCode), nameof(BoltScript.OnKeyDown));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseKeyUp(int key)
+        {
+            KeyCode keyCode = (KeyCode)key;
+            Input.RaiseKeyUp(keyCode);
+            DispatchToScripts(script => script.OnKeyUp(keyCode), nameof(BoltScript.OnKeyUp));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseMouseDown(int button)
+        {
+            MouseButton mouseButton = (MouseButton)button;
+            Input.RaiseMouseDown(mouseButton);
+            DispatchToScripts(script => script.OnMouseDown(mouseButton), nameof(BoltScript.OnMouseDown));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseMouseUp(int button)
+        {
+            MouseButton mouseButton = (MouseButton)button;
+            Input.RaiseMouseUp(mouseButton);
+            DispatchToScripts(script => script.OnMouseUp(mouseButton), nameof(BoltScript.OnMouseUp));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseMouseScroll(float delta)
+        {
+            Input.RaiseMouseScroll(delta);
+            DispatchToScripts(script => script.OnMouseScroll(delta), nameof(BoltScript.OnMouseScroll));
+        }
+
+        [UnmanagedCallersOnly]
+        public static void RaiseMouseMove(float x, float y)
+        {
+            Vector2 position = new(x, y);
+            Input.RaiseMouseMove(position);
+            DispatchToScripts(script => script.OnMouseMove(position), nameof(BoltScript.OnMouseMove));
+        }
+
+        [UnmanagedCallersOnly]
+        public static unsafe void RaiseBeforeSceneLoaded(byte* sceneNamePtr)
+        {
+            string name = PtrToString(sceneNamePtr);
+            SceneManager.RaiseBeforeSceneLoaded(name);
+            Scene scene = SceneFromName(name);
+            DispatchToScripts(script => script.OnBeforeSceneLoaded(scene), nameof(BoltScript.OnBeforeSceneLoaded));
+        }
+
+        [UnmanagedCallersOnly]
+        public static unsafe void RaiseSceneLoaded(byte* sceneNamePtr)
+        {
+            string name = PtrToString(sceneNamePtr);
+            SceneManager.RaiseSceneLoaded(name);
+            Scene scene = SceneFromName(name);
+            DispatchToScripts(script => script.OnSceneLoaded(scene), nameof(BoltScript.OnSceneLoaded));
+        }
+
+        [UnmanagedCallersOnly]
+        public static unsafe void RaiseBeforeSceneUnloaded(byte* sceneNamePtr)
+        {
+            string name = PtrToString(sceneNamePtr);
+            SceneManager.RaiseBeforeSceneUnloaded(name);
+            Scene scene = SceneFromName(name);
+            DispatchToScripts(script => script.OnBeforeSceneUnloaded(scene), nameof(BoltScript.OnBeforeSceneUnloaded));
+        }
+
+        [UnmanagedCallersOnly]
+        public static unsafe void RaiseSceneUnloaded(byte* sceneNamePtr)
+        {
+            string name = PtrToString(sceneNamePtr);
+            SceneManager.RaiseSceneUnloaded(name);
+            Scene scene = SceneFromName(name);
+            DispatchToScripts(script => script.OnSceneUnloaded(scene), nameof(BoltScript.OnSceneUnloaded));
+        }
+
         private static void UnloadCurrentUserAssemblyContext()
         {
             if (s_UserLoadContext == null)
@@ -327,6 +458,15 @@ namespace Bolt.Hosting
                     if (tooltipAttr != null)
                         tooltip = tooltipAttr.Text;
 
+                    string headerContent = "";
+                    int headerSize = 0;
+                    var headerAttr = field.GetCustomAttribute<HeaderAttribute>();
+                    if (headerAttr != null)
+                    {
+                        headerContent = headerAttr.Content;
+                        headerSize = headerAttr.Size;
+                    }
+
                     if (!first) sb.Append(',');
                     first = false;
 
@@ -339,7 +479,9 @@ namespace Bolt.Hosting
                       .Append(",\"clampMin\":").Append(clampMin.ToString(System.Globalization.CultureInfo.InvariantCulture))
                       .Append(",\"clampMax\":").Append(clampMax.ToString(System.Globalization.CultureInfo.InvariantCulture))
                       .Append(",\"tooltip\":\"").Append(EscapeJson(tooltip))
-                      .Append("\"}");
+                      .Append("\",\"headerContent\":\"").Append(EscapeJson(headerContent))
+                      .Append("\",\"headerSize\":").Append(headerSize.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                      .Append("}");
                 }
 
                 sb.Append(']');
@@ -645,7 +787,10 @@ namespace Bolt.Hosting
                     return null;
                 }
             }
-            catch { }
+            catch (Exception ex) when (ex is FormatException || ex is OverflowException || ex is ArgumentException)
+            {
+                Log.Warn($"Failed to parse script field value '{s}' as {t.Name}: {ex.Message}");
+            }
             return null;
         }
 
@@ -745,6 +890,15 @@ namespace Bolt.Hosting
                     if (tooltipAttr != null)
                         tooltip = tooltipAttr.Text;
 
+                    string headerContent = "";
+                    int headerSize = 0;
+                    var headerAttr = field.GetCustomAttribute<HeaderAttribute>();
+                    if (headerAttr != null)
+                    {
+                        headerContent = headerAttr.Content;
+                        headerSize = headerAttr.Size;
+                    }
+
                     if (!first) sb.Append(',');
                     first = false;
 
@@ -757,7 +911,9 @@ namespace Bolt.Hosting
                       .Append(",\"clampMin\":").Append(clampMin.ToString(System.Globalization.CultureInfo.InvariantCulture))
                       .Append(",\"clampMax\":").Append(clampMax.ToString(System.Globalization.CultureInfo.InvariantCulture))
                       .Append(",\"tooltip\":\"").Append(EscapeJson(tooltip))
-                      .Append("\"}");
+                      .Append("\",\"headerContent\":\"").Append(EscapeJson(headerContent))
+                      .Append("\",\"headerSize\":").Append(headerSize.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                      .Append("}");
                 }
 
                 sb.Append(']');

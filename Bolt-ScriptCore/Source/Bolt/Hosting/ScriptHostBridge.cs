@@ -20,6 +20,19 @@ namespace Bolt.Hosting
         public delegate* unmanaged<int, byte*> GetScriptFields;
         public delegate* unmanaged<int, byte*, byte*, void> SetScriptField;
         public delegate* unmanaged<byte*, byte*> GetClassFieldDefs;
+        public delegate* unmanaged<void> RaiseApplicationStart;
+        public delegate* unmanaged<void> RaiseApplicationPaused;
+        public delegate* unmanaged<int, void> RaiseFocusChanged;
+        public delegate* unmanaged<int, void> RaiseKeyDown;
+        public delegate* unmanaged<int, void> RaiseKeyUp;
+        public delegate* unmanaged<int, void> RaiseMouseDown;
+        public delegate* unmanaged<int, void> RaiseMouseUp;
+        public delegate* unmanaged<float, void> RaiseMouseScroll;
+        public delegate* unmanaged<float, float, void> RaiseMouseMove;
+        public delegate* unmanaged<byte*, void> RaiseBeforeSceneLoaded;
+        public delegate* unmanaged<byte*, void> RaiseSceneLoaded;
+        public delegate* unmanaged<byte*, void> RaiseBeforeSceneUnloaded;
+        public delegate* unmanaged<byte*, void> RaiseSceneUnloaded;
     }
 
     /// <summary>
@@ -48,6 +61,19 @@ namespace Bolt.Hosting
                 managedCallbacks->GetScriptFields = &ScriptInstanceManager.GetScriptFields;
                 managedCallbacks->SetScriptField = &ScriptInstanceManager.SetScriptField;
                 managedCallbacks->GetClassFieldDefs = &ScriptInstanceManager.GetClassFieldDefs;
+                managedCallbacks->RaiseApplicationStart = &ScriptInstanceManager.RaiseApplicationStart;
+                managedCallbacks->RaiseApplicationPaused = &ScriptInstanceManager.RaiseApplicationPaused;
+                managedCallbacks->RaiseFocusChanged = &ScriptInstanceManager.RaiseFocusChanged;
+                managedCallbacks->RaiseKeyDown = &ScriptInstanceManager.RaiseKeyDown;
+                managedCallbacks->RaiseKeyUp = &ScriptInstanceManager.RaiseKeyUp;
+                managedCallbacks->RaiseMouseDown = &ScriptInstanceManager.RaiseMouseDown;
+                managedCallbacks->RaiseMouseUp = &ScriptInstanceManager.RaiseMouseUp;
+                managedCallbacks->RaiseMouseScroll = &ScriptInstanceManager.RaiseMouseScroll;
+                managedCallbacks->RaiseMouseMove = &ScriptInstanceManager.RaiseMouseMove;
+                managedCallbacks->RaiseBeforeSceneLoaded = &ScriptInstanceManager.RaiseBeforeSceneLoaded;
+                managedCallbacks->RaiseSceneLoaded = &ScriptInstanceManager.RaiseSceneLoaded;
+                managedCallbacks->RaiseBeforeSceneUnloaded = &ScriptInstanceManager.RaiseBeforeSceneUnloaded;
+                managedCallbacks->RaiseSceneUnloaded = &ScriptInstanceManager.RaiseSceneUnloaded;
 
                 ScriptInstanceManager.SetCoreAssembly(typeof(ScriptHostBridge).Assembly);
                 return 0;

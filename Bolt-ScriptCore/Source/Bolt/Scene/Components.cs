@@ -48,6 +48,37 @@ namespace Bolt
             }
             set => InternalCalls.Transform2D_SetScale(RequireComponent<Transform2DComponent>(), value.X, value.Y);
         }
+
+        public Vector2 Up
+        {
+            get
+            {
+                throw new System.NotImplementedException();
+            }
+        }
+
+        public Vector2 Down
+        {
+            get
+            {
+                throw new System.NotImplementedException();
+            }
+        }
+
+        public Vector2 Left
+        {
+            get
+            {
+                throw new System.NotImplementedException();
+            }
+        }
+        public Vector2 Right
+        {
+            get
+            {
+                throw new System.NotImplementedException();
+            }
+        }
     }
 
     // ── SpriteRendererComponent ─────────────────────────────────────────
@@ -104,6 +135,13 @@ namespace Bolt
             set => InternalCalls.Camera2D_SetZoom(RequireComponent<Camera2DComponent>(), value);
         }
 
+        public static Camera2DComponent Main {
+            get
+            {
+                throw new System.NotImplementedException();
+            }
+        }
+
         public Vector4 ClearColor
         {
             get
@@ -120,6 +158,11 @@ namespace Bolt
             ulong entityId = RequireComponent<Camera2DComponent>();
             InternalCalls.Camera2D_ScreenToWorld(entityId, screenPos.X, screenPos.Y, out float wx, out float wy);
             return new Vector2(wx, wy);
+        }
+
+        public Vector2 WorldToScreen(Vector2 worldPos)
+        {
+            return Vector2.Zero;
         }
 
         public float ViewportWidth => InternalCalls.Camera2D_GetViewportWidth(RequireComponent<Camera2DComponent>());

@@ -94,6 +94,14 @@ namespace Bolt {
 			return std::string(first, last);
 		}
 
+		std::string ToLowerCopy(std::string value)
+		{
+			std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+				return static_cast<char>(std::tolower(ch));
+			});
+			return value;
+		}
+
 #if defined(BT_PLATFORM_WINDOWS)
 		std::optional<std::filesystem::path> NormalizeExecutablePath(std::filesystem::path candidate, const char* executableName)
 		{
@@ -372,6 +380,140 @@ namespace Bolt {
 			return targets;
 		}
 
+		bool ShouldIgnoreBuildInputDirectory(const std::filesystem::path& directoryPath)
+		{
+			const std::string name = ToLowerCopy(directoryPath.filename().string());
+			return name == ".git"
+				|| name == ".vs"
+				|| name == ".idea"
+				|| name == "bin"
+				|| name == "bin-int"
+				|| name == "obj"
+				|| name == "build"
+				|| name == "out";
+		}
+
+		bool MatchesBuildInputPattern(const std::filesystem::path& filePath, const std::vector<std::string>& patterns)
+		{
+			if (patterns.empty()) {
+				return true;
+			}
+
+			const std::string fileName = ToLowerCopy(filePath.filename().string());
+			const std::string extension = ToLowerCopy(filePath.extension().string());
+
+			for (const std::string& pattern : patterns) {
+				const std::string normalized = ToLowerCopy(pattern);
+				if (normalized.empty()) {
+					continue;
+				}
+
+				if (normalized.front() == '.') {
+					if (extension == normalized) {
+						return true;
+					}
+				}
+				else if (fileName == normalized) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		void UpdateLatestBuildInputTime(
+			const std::filesystem::path& filePath,
+			std::filesystem::file_time_type& latestWriteTime,
+			bool& foundInput)
+		{
+			std::error_code ec;
+			const std::filesystem::file_time_type writeTime = std::filesystem::last_write_time(filePath, ec);
+			if (ec) {
+				return;
+			}
+
+			if (!foundInput || writeTime > latestWriteTime) {
+				latestWriteTime = writeTime;
+				foundInput = true;
+			}
+		}
+
+		bool TryGetLatestBuildInputTime(
+			const std::vector<std::string>& targets,
+			const std::vector<std::string>& patterns,
+			std::filesystem::file_time_type& latestWriteTime)
+		{
+			bool foundInput = false;
+
+			for (const std::string& targetString : targets) {
+				if (targetString.empty()) {
+					continue;
+				}
+
+				const std::filesystem::path target(targetString);
+				std::error_code ec;
+				if (std::filesystem::is_directory(target, ec) && !ec) {
+					for (std::filesystem::recursive_directory_iterator it(target, std::filesystem::directory_options::skip_permission_denied, ec), end;
+						 it != end;
+						 it.increment(ec)) {
+						if (ec) {
+							ec.clear();
+							continue;
+						}
+
+						if (it->is_directory(ec)) {
+							if (!ec && ShouldIgnoreBuildInputDirectory(it->path())) {
+								it.disable_recursion_pending();
+							}
+							ec.clear();
+							continue;
+						}
+
+						if (!it->is_regular_file(ec) || ec || !MatchesBuildInputPattern(it->path(), patterns)) {
+							ec.clear();
+							continue;
+						}
+
+						UpdateLatestBuildInputTime(it->path(), latestWriteTime, foundInput);
+					}
+
+					continue;
+				}
+
+				ec.clear();
+				if (!std::filesystem::is_regular_file(target, ec) || ec || !MatchesBuildInputPattern(target, patterns)) {
+					continue;
+				}
+
+				UpdateLatestBuildInputTime(target, latestWriteTime, foundInput);
+			}
+
+			return foundInput;
+		}
+
+		bool BuildArtifactIsStale(
+			const std::vector<std::string>& inputTargets,
+			const std::vector<std::string>& inputPatterns,
+			const std::filesystem::path& artifactPath)
+		{
+			std::filesystem::file_time_type latestInputWriteTime{};
+			if (!TryGetLatestBuildInputTime(inputTargets, inputPatterns, latestInputWriteTime)) {
+				return false;
+			}
+
+			std::error_code ec;
+			if (artifactPath.empty() || !std::filesystem::exists(artifactPath, ec) || ec) {
+				return true;
+			}
+
+			const std::filesystem::file_time_type artifactWriteTime = std::filesystem::last_write_time(artifactPath, ec);
+			if (ec) {
+				return true;
+			}
+
+			return latestInputWriteTime > artifactWriteTime;
+		}
+
 		template <typename TFunc>
 		void ForEachLoadedScene(TFunc&& func)
 		{
@@ -385,8 +527,14 @@ namespace Bolt {
 
 		void RemovePendingFieldValuesForClass(ScriptComponent& scriptComp, const std::string& className)
 		{
-			if (className.empty() || scriptComp.HasScript(className)) {
+			if (className.empty()) {
 				return;
+			}
+
+			for (const ScriptInstance& instance : scriptComp.Scripts) {
+				if (instance.GetClassName() == className && instance.GetType() != ScriptType::Native) {
+					return;
+				}
 			}
 
 			const std::string prefix = className + ".";
@@ -400,13 +548,28 @@ namespace Bolt {
 			}
 		}
 
+		struct ScriptSceneScope {
+			explicit ScriptSceneScope(Scene& scene)
+				: Previous(ScriptEngine::GetScene())
+			{
+				ScriptEngine::SetScene(&scene);
+			}
+
+			~ScriptSceneScope()
+			{
+				ScriptEngine::SetScene(Previous);
+			}
+
+			Scene* Previous = nullptr;
+		};
+
 		void TeardownManagedScriptInstance(Scene& scene, ScriptInstance& instance)
 		{
 			if (!instance.HasManagedInstance() || !ScriptEngine::IsInitialized()) {
 				return;
 			}
 
-			ScriptEngine::SetScene(&scene);
+			ScriptSceneScope sceneScope(scene);
 			ScriptEngine::InvokeOnDestroy(instance.GetGCHandle());
 			ScriptEngine::DestroyScriptInstance(instance.GetGCHandle());
 			instance.Unbind();
@@ -418,7 +581,7 @@ namespace Bolt {
 				return;
 			}
 
-			ScriptEngine::SetScene(&scene);
+			ScriptSceneScope sceneScope(scene);
 			if (nativeHost.IsLoaded()) {
 				nativeHost.DestroyInstance(instance.GetNativePtr());
 			}
@@ -586,14 +749,16 @@ namespace Bolt {
 			if (project)
 			{
 				auto userDll = std::filesystem::path(project->GetUserAssemblyOutputPath());
+				m_UserAssemblyPath = userDll.string();
 				if (std::filesystem::exists(userDll))
-					m_UserAssemblyPath = userDll.string();
+					m_UserAssemblyPath = std::filesystem::canonical(userDll).string();
 			}
 			else
 			{
 				auto sandboxPath = exeDir / ".." / "Bolt-Sandbox" / "Bolt-Sandbox.dll";
+				m_UserAssemblyPath = sandboxPath.string();
 				if (std::filesystem::exists(sandboxPath))
-					m_UserAssemblyPath = sandboxPath.string();
+					m_UserAssemblyPath = std::filesystem::canonical(sandboxPath).string();
 			}
 		}
 
@@ -607,11 +772,17 @@ namespace Bolt {
 			auto csproj = std::filesystem::path(project->CsprojPath);
 			if (std::filesystem::exists(csproj))
 			{
+				std::vector<std::string> managedWatchTargets =
+					BuildManagedWatchTargets(scriptsDir, csproj, std::filesystem::path(project->SlnPath));
 				m_SandboxProjectPath = std::filesystem::canonical(csproj).string();
 				m_ScriptWatcher.Watch(
-					BuildManagedWatchTargets(scriptsDir, csproj, std::filesystem::path(project->SlnPath)),
+					managedWatchTargets,
 					GetManagedWatchPatterns(),
 					[this]() { RebuildAndReloadScripts(); });
+
+				if (BuildArtifactIsStale(managedWatchTargets, GetManagedWatchPatterns(), std::filesystem::path(m_UserAssemblyPath))) {
+					RebuildAndReloadScripts();
+				}
 			}
 		}
 		else
@@ -621,11 +792,17 @@ namespace Bolt {
 			auto sandboxCsproj = sandboxProjectDir / "Bolt-Sandbox.csproj";
 			if (std::filesystem::exists(sandboxCsproj))
 			{
+				std::vector<std::string> managedWatchTargets =
+					BuildManagedWatchTargets(sandboxSourceDir, sandboxCsproj);
 				m_SandboxProjectPath = std::filesystem::canonical(sandboxCsproj).string();
 				m_ScriptWatcher.Watch(
-					BuildManagedWatchTargets(sandboxSourceDir, sandboxCsproj),
+					managedWatchTargets,
 					GetManagedWatchPatterns(),
 					[this]() { RebuildAndReloadScripts(); });
+
+				if (BuildArtifactIsStale(managedWatchTargets, GetManagedWatchPatterns(), std::filesystem::path(m_UserAssemblyPath))) {
+					RebuildAndReloadScripts();
+				}
 			}
 		}
 
@@ -648,10 +825,16 @@ namespace Bolt {
 			}
 			if (!m_NativeProjectDirectory.empty())
 			{
+				std::vector<std::string> nativeWatchTargets =
+					BuildNativeWatchTargets(std::filesystem::path(m_NativeProjectDirectory), std::filesystem::path(m_NativeSourceDirectory));
 				m_NativeWatcher.Watch(
-					BuildNativeWatchTargets(std::filesystem::path(m_NativeProjectDirectory), std::filesystem::path(m_NativeSourceDirectory)),
+					nativeWatchTargets,
 					GetNativeWatchPatterns(),
 					[this]() { RebuildAndReloadNativeScripts(); });
+
+				if (hasNativeScriptSources && BuildArtifactIsStale(nativeWatchTargets, GetNativeWatchPatterns(), std::filesystem::path(m_NativeDLLPath))) {
+					RebuildAndReloadNativeScripts();
+				}
 			}
 		}
 		else
@@ -671,10 +854,16 @@ namespace Bolt {
 			}
 			if (!m_NativeProjectDirectory.empty())
 			{
+				std::vector<std::string> nativeWatchTargets =
+					BuildNativeWatchTargets(std::filesystem::path(m_NativeProjectDirectory), std::filesystem::path(m_NativeSourceDirectory));
 				m_NativeWatcher.Watch(
-					BuildNativeWatchTargets(std::filesystem::path(m_NativeProjectDirectory), std::filesystem::path(m_NativeSourceDirectory)),
+					nativeWatchTargets,
 					GetNativeWatchPatterns(),
 					[this]() { RebuildAndReloadNativeScripts(); });
+
+				if (hasNativeScriptSources && BuildArtifactIsStale(nativeWatchTargets, GetNativeWatchPatterns(), std::filesystem::path(m_NativeDLLPath))) {
+					RebuildAndReloadNativeScripts();
+				}
 			}
 		}
 
@@ -827,7 +1016,7 @@ namespace Bolt {
 			return;
 		}
 
-		ScriptEngine::SetScene(&scene);
+		ScriptSceneScope sceneScope(scene);
 
 		auto view = scene.GetRegistry().view<ScriptComponent>();
 		for (auto [entity, scriptComp] : view.each())
@@ -841,7 +1030,7 @@ namespace Bolt {
 
 	void ScriptSystem::TeardownNativeScripts(Scene& scene)
 	{
-		ScriptEngine::SetScene(&scene);
+		ScriptSceneScope sceneScope(scene);
 
 		auto view = scene.GetRegistry().view<ScriptComponent>();
 		for (auto [entity, scriptComp] : view.each())
@@ -927,7 +1116,12 @@ namespace Bolt {
 			if (result.Succeeded())
 			{
 				ForEachLoadedScene([this](Scene& loadedScene) { TeardownManagedScripts(loadedScene); });
-				ScriptEngine::ReloadAssemblies();
+				if (!m_UserAssemblyPath.empty() && std::filesystem::exists(m_UserAssemblyPath)) {
+					ScriptEngine::LoadUserAssembly(m_UserAssemblyPath);
+				}
+				else {
+					ScriptEngine::ReloadAssemblies();
+				}
 				BT_INFO_TAG("ScriptSystem", "C# scripts rebuilt and reloaded");
 			}
 			else
@@ -1026,7 +1220,7 @@ namespace Bolt {
 	void ScriptSystem::Update(Scene& scene)
 	{
 		m_LastScene = &scene;
-		ScriptEngine::SetScene(&scene);
+		ScriptSceneScope sceneScope(scene);
 		const bool managedRuntimeReady = ScriptEngine::IsInitialized();
 
 		float dt = Application::GetInstance() ? Application::GetInstance()->GetTime().GetDeltaTime() : 0.0f;
@@ -1044,8 +1238,12 @@ namespace Bolt {
 
 				if (!instance.HasAnyInstance())
 				{
+					const ScriptType scriptType = instance.GetType();
+					const bool canUseManaged = scriptType == ScriptType::Managed || scriptType == ScriptType::Unknown;
+					const bool canUseNative = scriptType == ScriptType::Native || scriptType == ScriptType::Unknown;
+
 					// Try C# (managed) first
-					if (managedRuntimeReady && ScriptEngine::ClassExists(instance.GetClassName()))
+					if (canUseManaged && managedRuntimeReady && ScriptEngine::ClassExists(instance.GetClassName()))
 					{
 						uint32_t handle = ScriptEngine::CreateScriptInstance(
 							instance.GetClassName(), entity);
@@ -1053,7 +1251,10 @@ namespace Bolt {
 							instance.SetGCHandle(handle);
 					}
 					// Then try native C++
-					else if (!IsTaskRunning(m_NativeRebuildTask) && m_NativeHost.IsLoaded())
+					if (!instance.HasAnyInstance()
+						&& canUseNative
+						&& !IsTaskRunning(m_NativeRebuildTask)
+						&& m_NativeHost.IsLoaded())
 					{
 						NativeScript* native = m_NativeHost.CreateInstance(
 							instance.GetClassName(), entity, &scene);

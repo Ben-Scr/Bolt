@@ -15,13 +15,24 @@ namespace Bolt {
 
 		ScriptComponent() = default;
 
-		void AddScript(const std::string& className) {
-			Scripts.emplace_back(className);
+		void AddScript(const std::string& className, ScriptType type = ScriptType::Managed) {
+			if (className.empty() || HasScript(className, type)) {
+				return;
+			}
+
+			Scripts.emplace_back(className, type);
 		}
 
 		bool HasScript(const std::string& className) const {
 			for (const auto& s : Scripts) {
 				if (s.GetClassName() == className) return true;
+			}
+			return false;
+		}
+
+		bool HasScript(const std::string& className, ScriptType type) const {
+			for (const auto& s : Scripts) {
+				if (s.GetClassName() == className && s.GetType() == type) return true;
 			}
 			return false;
 		}
