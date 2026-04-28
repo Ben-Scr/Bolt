@@ -1,6 +1,6 @@
 #pragma once
 
-#define BT_VERSION "2026.1.1"
+#define BT_VERSION "2026.1.0"
 
 //
 // Build Configuration
