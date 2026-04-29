@@ -52,6 +52,10 @@ namespace Bolt {
 				}
 
 				if (m_Handle != 0) {
+					if (!m_EnableInvoked) {
+						ScriptEngine::InvokeGameSystemEnable(m_Handle);
+						m_EnableInvoked = true;
+					}
 					ScriptEngine::InvokeGameSystemStart(m_Handle);
 				}
 			}
@@ -63,12 +67,32 @@ namespace Bolt {
 				}
 			}
 
+			void OnEnable(Scene&) override
+			{
+				if (m_Handle != 0 && !m_EnableInvoked) {
+					ScriptEngine::InvokeGameSystemEnable(m_Handle);
+					m_EnableInvoked = true;
+				}
+			}
+
+			void OnDisable(Scene&) override
+			{
+				if (m_Handle != 0 && m_EnableInvoked) {
+					ScriptEngine::InvokeGameSystemDisable(m_Handle);
+					m_EnableInvoked = false;
+				}
+			}
+
 			void OnDestroy(Scene&) override
 			{
 				if (m_Handle == 0) {
 					return;
 				}
 
+				if (m_EnableInvoked) {
+					ScriptEngine::InvokeGameSystemDisable(m_Handle);
+					m_EnableInvoked = false;
+				}
 				ScriptEngine::InvokeGameSystemDestroy(m_Handle);
 				ScriptEngine::DestroyGameSystemInstance(m_Handle);
 				m_Handle = 0;
@@ -77,6 +101,7 @@ namespace Bolt {
 		private:
 			std::string m_ClassName;
 			uint32_t m_Handle = 0;
+			bool m_EnableInvoked = false;
 		};
 
 		bool IsManagedGameSystem(const std::unique_ptr<ISystem>& system)
@@ -385,6 +410,25 @@ namespace Bolt {
 			}
 		}
 		m_GameSystemClassNames.clear();
+	}
+
+	bool Scene::SetGameSystemEnabled(const std::string& className, bool enabled)
+	{
+		if (className.empty()) {
+			return false;
+		}
+
+		for (auto& system : m_Systems) {
+			auto* managedSystem = dynamic_cast<ManagedGameSystem*>(system.get());
+			if (!managedSystem || managedSystem->GetClassName() != className) {
+				continue;
+			}
+
+			managedSystem->SetEnabled(enabled, *this);
+			return true;
+		}
+
+		return false;
 	}
 
 	Camera2DComponent* Scene::GetMainCamera() {

@@ -123,6 +123,44 @@ internal static unsafe class InternalCalls
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_Reload(ptr) != 0;
     }
 
+    internal static void Scene_SetGlobalSystemEnabled(string className, bool enabled)
+    {
+        int len = Encoding.UTF8.GetByteCount(className);
+        Span<byte> buf = len <= 512 ? stackalloc byte[len + 1] : new byte[len + 1];
+        Encoding.UTF8.GetBytes(className, buf);
+        buf[len] = 0;
+        fixed (byte* ptr = buf) NativeCallbacks.Bindings.Scene_SetGlobalSystemEnabled(ptr, enabled ? 1 : 0);
+    }
+
+    internal static bool Scene_SetGameSystemEnabled(string sceneName, string className, bool enabled)
+    {
+        static byte[] EncodeUtf8(string value)
+        {
+            int len = Encoding.UTF8.GetByteCount(value);
+            byte[] buffer = new byte[len + 1];
+            Encoding.UTF8.GetBytes(value, buffer);
+            buffer[len] = 0;
+            return buffer;
+        }
+
+        byte[] sceneBuffer = EncodeUtf8(sceneName);
+        byte[] classBuffer = EncodeUtf8(className);
+        fixed (byte* scenePtr = sceneBuffer)
+        fixed (byte* classPtr = classBuffer)
+        {
+            return NativeCallbacks.Bindings.Scene_SetGameSystemEnabled(scenePtr, classPtr, enabled ? 1 : 0) != 0;
+        }
+    }
+
+    internal static bool Scene_DoesSceneExist(string sceneName)
+    {
+        int len = Encoding.UTF8.GetByteCount(sceneName);
+        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
+        Encoding.UTF8.GetBytes(sceneName, buf);
+        buf[len] = 0;
+        fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_DoesSceneExist(ptr) != 0;
+    }
+
     internal static int Scene_GetLoadedCount() => NativeCallbacks.Bindings.Scene_GetLoadedCount();
 
     internal static string Scene_GetLoadedSceneNameAt(int index)
@@ -203,6 +241,11 @@ internal static unsafe class InternalCalls
             return Marshal.PtrToStringUTF8((IntPtr)result) ?? "{}";
         }
     }
+
+    internal static bool Entity_GetIsStatic(ulong entityID) => NativeCallbacks.Bindings.Entity_GetIsStatic(entityID) != 0;
+    internal static void Entity_SetIsStatic(ulong entityID, bool isStatic) => NativeCallbacks.Bindings.Entity_SetIsStatic(entityID, isStatic ? 1 : 0);
+    internal static bool Entity_GetIsEnabled(ulong entityID) => NativeCallbacks.Bindings.Entity_GetIsEnabled(entityID) != 0;
+    internal static void Entity_SetIsEnabled(ulong entityID, bool isEnabled) => NativeCallbacks.Bindings.Entity_SetIsEnabled(entityID, isEnabled ? 1 : 0);
 
     internal static ulong Entity_Create(string name)
     {
@@ -544,6 +587,22 @@ internal static unsafe class InternalCalls
         fixed (ulong* idPtr = outEntityIDs)
         {
             return NativeCallbacks.Bindings.Physics2D_OverlapPolygonAll(originX, originY, pointsPtr, points.Length / 2, idPtr, outEntityIDs.Length);
+        }
+    }
+
+    internal static bool Physics2D_ContainsPoint(float originX, float originY, int mode, out ulong entityID)
+    {
+        ulong id;
+        int result = NativeCallbacks.Bindings.Physics2D_ContainsPoint(originX, originY, mode, &id);
+        entityID = id;
+        return result != 0 && id != 0;
+    }
+
+    internal static int Physics2D_ContainsPointAll(float originX, float originY, Span<ulong> outEntityIDs)
+    {
+        fixed (ulong* idPtr = outEntityIDs)
+        {
+            return NativeCallbacks.Bindings.Physics2D_ContainsPointAll(originX, originY, idPtr, outEntityIDs.Length);
         }
     }
 }

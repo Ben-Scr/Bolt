@@ -205,6 +205,60 @@ namespace Bolt {
 		return s_StringReturnBuffer.c_str();
 	}
 
+	static int Bolt_Entity_GetIsStatic(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+		return scene->HasComponent<StaticTag>(handle) ? 1 : 0;
+	}
+
+	static void Bolt_Entity_SetIsStatic(uint64_t entityID, int isStatic)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return;
+
+		const bool shouldBeStatic = isStatic != 0;
+		const bool currentlyStatic = scene->HasComponent<StaticTag>(handle);
+		if (shouldBeStatic == currentlyStatic) return;
+
+		if (shouldBeStatic) {
+			scene->AddComponent<StaticTag>(handle);
+		}
+		else {
+			scene->RemoveComponent<StaticTag>(handle);
+		}
+		scene->MarkDirty();
+	}
+
+	static int Bolt_Entity_GetIsEnabled(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+		return scene->HasComponent<DisabledTag>(handle) ? 0 : 1;
+	}
+
+	static void Bolt_Entity_SetIsEnabled(uint64_t entityID, int isEnabled)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return;
+
+		const bool shouldBeEnabled = isEnabled != 0;
+		const bool currentlyEnabled = !scene->HasComponent<DisabledTag>(handle);
+		if (shouldBeEnabled == currentlyEnabled) return;
+
+		if (shouldBeEnabled) {
+			scene->RemoveComponent<DisabledTag>(handle);
+		}
+		else {
+			scene->AddComponent<DisabledTag>(handle);
+		}
+		scene->MarkDirty();
+	}
+
 	struct QueryComponentRequirement {
 		const ComponentInfo* Native = nullptr;
 		std::string ManagedClassName;
@@ -446,6 +500,21 @@ namespace Bolt {
 	static int Bolt_Scene_Reload(const char* sceneName) {
 		auto result = SceneManager::Get().ReloadScene(sceneName);
 		return result.lock() ? 1 : 0;
+	}
+
+	static int Bolt_Scene_SetGameSystemEnabled(const char* sceneName, const char* className, int enabled) {
+		if (!sceneName || !className || sceneName[0] == '\0' || className[0] == '\0') return 0;
+		auto scene = SceneManager::Get().GetLoadedScene(sceneName).lock();
+		return scene && scene->SetGameSystemEnabled(className, enabled != 0) ? 1 : 0;
+	}
+
+	static void Bolt_Scene_SetGlobalSystemEnabled(const char* className, int enabled) {
+		ScriptEngine::SetGlobalSystemEnabled(className ? className : "", enabled != 0);
+	}
+
+	static int Bolt_Scene_DoesSceneExist(const char* sceneName) {
+		if (!sceneName || sceneName[0] == '\0') return 0;
+		return SceneManager::Get().HasSceneDefinition(sceneName) ? 1 : 0;
 	}
 
 	static int Bolt_Scene_GetLoadedCount() {
@@ -727,7 +796,7 @@ namespace Bolt {
 	static void Bolt_Transform2D_SetPosition(uint64_t entityID, float x, float y)
 	{
 		GET_COMPONENT(Transform2DComponent, entityID, );
-		comp.Position = { x, y };
+		comp.SetPosition({ x, y });
 	}
 
 	static float Bolt_Transform2D_GetRotation(uint64_t entityID)
@@ -739,7 +808,7 @@ namespace Bolt {
 	static void Bolt_Transform2D_SetRotation(uint64_t entityID, float rotation)
 	{
 		GET_COMPONENT(Transform2DComponent, entityID, );
-		comp.Rotation = rotation;
+		comp.SetRotation(rotation);
 	}
 
 	static void Bolt_Transform2D_GetScale(uint64_t entityID, float* outX, float* outY)
@@ -751,7 +820,7 @@ namespace Bolt {
 	static void Bolt_Transform2D_SetScale(uint64_t entityID, float x, float y)
 	{
 		GET_COMPONENT(Transform2DComponent, entityID, );
-		comp.Scale = { x, y };
+		comp.SetScale({ x, y });
 	}
 
 	// ── SpriteRenderer ──────────────────────────────────────────────────
@@ -1224,6 +1293,18 @@ namespace Bolt {
 			outEntityIDs, maxOut);
 	}
 
+	static int Bolt_Physics2D_ContainsPoint(float originX, float originY, int mode, uint64_t* entityID) {
+		return WriteOverlapResult(
+			Physics2D::ContainsPoint({ originX, originY }, ToOverlapMode(mode)),
+			entityID);
+	}
+
+	static int Bolt_Physics2D_ContainsPointAll(float originX, float originY, uint64_t* outEntityIDs, int maxOut) {
+		return WriteOverlapResults(
+			Physics2D::ContainsPointAll({ originX, originY }),
+			outEntityIDs, maxOut);
+	}
+
 	#undef GET_COMPONENT
 
 	// ── Registration ────────────────────────────────────────────────────
@@ -1242,6 +1323,10 @@ namespace Bolt {
 		b.Entity_AddComponent = &Bolt_Entity_AddComponent;
 		b.Entity_RemoveComponent = &Bolt_Entity_RemoveComponent;
 		b.Entity_GetManagedComponentFields = &Bolt_Entity_GetManagedComponentFields;
+		b.Entity_GetIsStatic = &Bolt_Entity_GetIsStatic;
+		b.Entity_SetIsStatic = &Bolt_Entity_SetIsStatic;
+		b.Entity_GetIsEnabled = &Bolt_Entity_GetIsEnabled;
+		b.Entity_SetIsEnabled = &Bolt_Entity_SetIsEnabled;
 
 		b.NameComponent_GetName = &Bolt_NameComponent_GetName;
 		b.NameComponent_SetName = &Bolt_NameComponent_SetName;
@@ -1323,6 +1408,9 @@ namespace Bolt {
 		b.Scene_Unload = &Bolt_Scene_Unload;
 		b.Scene_SetActive = &Bolt_Scene_SetActive;
 		b.Scene_Reload = &Bolt_Scene_Reload;
+		b.Scene_SetGameSystemEnabled = &Bolt_Scene_SetGameSystemEnabled;
+		b.Scene_SetGlobalSystemEnabled = &Bolt_Scene_SetGlobalSystemEnabled;
+		b.Scene_DoesSceneExist = &Bolt_Scene_DoesSceneExist;
 		b.Scene_GetLoadedCount = &Bolt_Scene_GetLoadedCount;
 		b.Scene_GetLoadedSceneNameAt = &Bolt_Scene_GetLoadedSceneNameAt;
 		b.Scene_GetEntityNameByUUID = &Bolt_Scene_GetEntityNameByUUID;
@@ -1376,6 +1464,8 @@ namespace Bolt {
 		b.Physics2D_OverlapCircleAll = &Bolt_Physics2D_OverlapCircleAll;
 		b.Physics2D_OverlapBoxAll = &Bolt_Physics2D_OverlapBoxAll;
 		b.Physics2D_OverlapPolygonAll = &Bolt_Physics2D_OverlapPolygonAll;
+		b.Physics2D_ContainsPoint = &Bolt_Physics2D_ContainsPoint;
+		b.Physics2D_ContainsPointAll = &Bolt_Physics2D_ContainsPointAll;
 	}
 
 } // namespace Bolt

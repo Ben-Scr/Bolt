@@ -24,6 +24,7 @@ namespace Bolt {
 		static void RemoveAllScripts(Entity entity);
 		static void SetScriptsEnabled(Entity entity, bool enabled);
 		static void DispatchCollisionEnter2D(Scene& scene, const Collision2D& collision);
+		static void DispatchCollisionStay2D(Scene& scene, const Collision2D& collision);
 		static void DispatchCollisionExit2D(Scene& scene, const Collision2D& collision);
 
 		void SetCoreAssemblyPath(const std::string& path) { m_CoreAssemblyPath = path; }

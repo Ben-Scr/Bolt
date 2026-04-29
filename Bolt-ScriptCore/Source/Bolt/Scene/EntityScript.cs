@@ -33,6 +33,19 @@ public abstract class EntityScript
     public virtual void OnApplicationPaused() { }
     public virtual void OnApplicationQuit() { }
     public virtual void OnFocusChanged(bool focused) { }
+    public virtual void OnLogMessage(string message) { }
+
+    public virtual void OnKeyDown(KeyCode key) { }
+    public virtual void OnKeyUp(KeyCode key) { }
+    public virtual void OnMouseDown(MouseButton button) { }
+    public virtual void OnMouseUp(MouseButton button) { }
+    public virtual void OnMouseScroll(float delta) { }
+    public virtual void OnMouseMove(Vector2 position) { }
+
+    public virtual void OnBeforeSceneLoaded(Scene scene) { }
+    public virtual void OnSceneLoaded(Scene scene) { }
+    public virtual void OnBeforeSceneUnloaded(Scene scene) { }
+    public virtual void OnSceneUnloaded(Scene scene) { }
 
     public virtual void OnEnable()  { }
     public virtual void OnDisable() { }

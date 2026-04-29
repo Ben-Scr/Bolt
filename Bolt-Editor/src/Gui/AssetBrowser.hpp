@@ -28,10 +28,7 @@ namespace Bolt {
 		/// Returns the currently selected asset path (empty if none).
 		const std::string& GetSelectedPath() const { return m_SelectedPath; }
 		void ClearSelection() {
-			m_SelectedPath.clear();
-			m_PressedPath.clear();
-			m_SelectionActivated = false;
-			CancelRename();
+			ClearAssetSelection();
 		}
 		bool TakeSelectionActivated() {
 			const bool activated = m_SelectionActivated;
@@ -49,11 +46,24 @@ namespace Bolt {
 		void RenderAssetTile(const DirectoryEntry& entry, int index);
 
 		void RenderGridContextMenu();
-		void RenderItemContextMenu(const DirectoryEntry& entry);
+		void RenderItemContextMenu(const DirectoryEntry& entry, int index);
 
 		void HandleDragSource(const DirectoryEntry& entry);
 		void HandleDropTarget(const DirectoryEntry& entry);
 		void OpenAssetExternal(const DirectoryEntry& entry);
+		void OpenAssetPath(const std::string& path);
+		void RevealAssetInExplorer(const std::string& path);
+
+		void ClearAssetSelection();
+		bool IsPathSelected(const std::string& path) const;
+		std::vector<std::string> GetSelectedPaths() const;
+		void SetSingleSelection(const std::string& path, int index);
+		void ToggleSelection(const std::string& path, int index);
+		void SelectRange(int index);
+		void HandleAssetShortcuts();
+		void CopySelectedAssets(bool cut);
+		void PasteAssets();
+		void DuplicateSelectedAssets();
 
 		void DeleteEntry(const std::string& path);
 		void RenameEntry(const std::string& path, const std::string& newName);
@@ -75,7 +85,10 @@ namespace Bolt {
 		std::string m_RootDirectory;
 		std::string m_CurrentDirectory;
 		std::vector<DirectoryEntry> m_Entries;
+		std::vector<std::string> m_VisibleEntryPaths;
 		std::string m_SelectedPath;
+		std::vector<std::string> m_SelectedPaths;
+		int m_LastSelectionIndex = -1;
 		std::string m_PressedPath;
 		bool m_SelectionActivated = false;
 		bool m_NeedsRefresh = true;
@@ -90,6 +103,8 @@ namespace Bolt {
 
 		bool m_ItemRightClicked = false;
 		std::string m_PendingSceneLoad;
+		std::vector<std::string> m_AssetClipboardPaths;
+		bool m_AssetClipboardCut = false;
 
 		// Deferred script creation - boilerplate/project script is written after rename is committed.
 		enum class PendingScriptType { None, CSharp, Native, CSharpComponent, CSharpGameSystem, CSharpGlobalSystem, NativeComponent };

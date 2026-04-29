@@ -1,4 +1,5 @@
 using System;
+using static Bolt.Physics.Physics2DShared;
 
 namespace Bolt.Physics;
 
@@ -15,21 +16,6 @@ public struct RaycastHit2D
 public static class Physics2D
 {
     public static int MaxPolygonVertices = 8;
-
-    private static Entity? ToEntity(ulong entityID)
-    {
-        return entityID == 0 ? null : new Entity(entityID);
-    }
-
-    private static bool IsValidDistance(float maxDistance)
-    {
-        return maxDistance > 0.0f && !float.IsNaN(maxDistance);
-    }
-
-    private static bool IsValidDirection(Vector2 direction)
-    {
-        return direction.LengthSquared() > Mathf.Epsilon * Mathf.Epsilon;
-    }
 
     public static RaycastHit2D Raycast(Vector2 origin, Vector2 direction, float maxDistance = Mathf.Infinity)
     {
@@ -117,7 +103,7 @@ public static class Physics2D
 
     public static Entity? OverlapPolygon(Vector2 origin, params float[] points)
     {
-        if (!IsValidPolygon(points))
+        if (!IsValidPolygon(points, MaxPolygonVertices))
             return null;
 
         return InternalCalls.Physics2D_OverlapPolygon(origin.X, origin.Y, points, 0, out ulong entityID)
@@ -132,80 +118,35 @@ public static class Physics2D
 
     public static Entity[] OverlapPolygonAll(Vector2 origin, params float[] points)
     {
-        if (!IsValidPolygon(points))
+        if (!IsValidPolygon(points, MaxPolygonVertices))
             return Array.Empty<Entity>();
 
         return ToEntities(buffer => InternalCalls.Physics2D_OverlapPolygonAll(origin.X, origin.Y, points, buffer));
     }
 
-    public static Entity? OverlapPoint(Vector2 origin)
+    public static Entity? ContainsPoint(Vector2 origin)
     {
-        throw new System.NotImplementedException();
-    }
-    public static Entity[] OverlapPointAll(Vector2 origin)
-    {
-        throw new System.NotImplementedException();
-    }
-    public static bool OverlapPointCheck(Vector2 origin)
-    {
-        throw new System.NotImplementedException();
+        return InternalCalls.Physics2D_ContainsPoint(origin.X, origin.Y, 0, out ulong entityID)
+            ? ToEntity(entityID)
+            : null;
     }
 
-
-    private delegate int OverlapQuery(Span<ulong> buffer);
-
-    private static Entity[] ToEntities(OverlapQuery query)
+    public static Entity[] ContainsPointAll(Vector2 origin)
     {
-        ulong[] ids = ExecuteOverlapQuery(query);
-        if (ids.Length == 0)
-            return Array.Empty<Entity>();
-
-        Entity[] entities = new Entity[ids.Length];
-        for (int i = 0; i < ids.Length; i++)
-            entities[i] = new Entity(ids[i]);
-        return entities;
+        return ToEntities(buffer => InternalCalls.Physics2D_ContainsPointAll(origin.X, origin.Y, buffer));
     }
 
-    private static ulong[] ExecuteOverlapQuery(OverlapQuery query)
+    public static bool ContainsPointCheck(Vector2 origin)
     {
-        int capacity = Math.Max(16, InternalCalls.Scene_GetEntityCount());
-        ulong[] buffer = new ulong[capacity];
-
-        while (true)
-        {
-            int count = query(buffer);
-            if (count <= 0)
-                return Array.Empty<ulong>();
-
-            if (count <= buffer.Length)
-            {
-                if (count == buffer.Length)
-                    return buffer;
-
-                ulong[] result = new ulong[count];
-                Array.Copy(buffer, result, count);
-                return result;
-            }
-
-            buffer = new ulong[count];
-        }
+        return ContainsPoint(origin) != null;
     }
 
-    private static bool IsValidPolygon(float[] points)
-    {
-        if (points == null || points.Length < 6 || points.Length % 2 != 0)
-            return false;
+    [Obsolete("Use ContainsPoint.")]
+    public static Entity? OverlapPoint(Vector2 origin) => ContainsPoint(origin);
 
-        int vertexCount = points.Length / 2;
-        if (vertexCount > MaxPolygonVertices)
-            return false;
+    [Obsolete("Use ContainsPointAll.")]
+    public static Entity[] OverlapPointAll(Vector2 origin) => ContainsPointAll(origin);
 
-        for (int i = 0; i < points.Length; i++)
-        {
-            if (float.IsNaN(points[i]) || float.IsInfinity(points[i]))
-                return false;
-        }
-
-        return true;
-    }
+    [Obsolete("Use ContainsPointCheck.")]
+    public static bool OverlapPointCheck(Vector2 origin) => ContainsPointCheck(origin);
 }

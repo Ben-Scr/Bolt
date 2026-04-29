@@ -31,6 +31,13 @@ namespace Bolt {
         static Transform2DComponent FromPosition(const Vec2& pos);
         static Transform2DComponent FromScale(const Vec2& scale);
 
+        bool IsDirty() const { return m_Dirty; }
+        void MarkDirty() { m_Dirty = true; }
+        void ClearDirty() { m_Dirty = false; }
+        void SetPosition(const Vec2& position) { Position = position; MarkDirty(); }
+        void SetRotation(float rotation) { Rotation = rotation; MarkDirty(); }
+        void SetScale(const Vec2& scale) { Scale = scale; MarkDirty(); }
+
         float GetRotationDegrees() const;
         glm::mat3 GetModelMatrix() const;
         Vec2 GetForwardDirection() const;
@@ -68,12 +75,14 @@ namespace Bolt {
             Position += other.Position;
             Rotation += other.Rotation;
             Scale += other.Scale;
+            MarkDirty();
             return *this;
         }
         Transform2DComponent& operator-=(const Transform2DComponent& other) {
             Position -= other.Position;
             Rotation -= other.Rotation;
             Scale -= other.Scale;
+            MarkDirty();
             return *this;
         }
 
@@ -85,8 +94,11 @@ namespace Bolt {
             Position *= scalar;
             Rotation *= scalar;
             Scale *= scalar;
+            MarkDirty();
             return *this;
         }
+    private:
+        bool m_Dirty = true;
 	};
 
     static inline float LookAt2D(const Transform2DComponent& from, const Vec2& to) {

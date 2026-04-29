@@ -87,7 +87,7 @@ namespace Bolt {
 
 		bool ok = s_Host.LoadAssemblyAndGetFunction(
 			asmPath,
-			L"Bolt.Hosting.ScriptHostBridge, Bolt-ScriptCore",
+			L"Bolt.Interop.ScriptHostBridge, Bolt-ScriptCore",
 			L"Initialize",
 			UNMANAGEDCALLERSONLY_METHOD,
 			reinterpret_cast<void**>(&initFn));
@@ -232,16 +232,22 @@ namespace Bolt {
 		s_Callbacks.InvokeOnDisable(static_cast<int32_t>(handle));
 	}
 
-	void ScriptEngine::InvokeCollisionEnter2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID)
+	void ScriptEngine::InvokeCollisionEnter2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY)
 	{
 		if (handle == 0 || !s_Callbacks.InvokeCollisionEnter2D) return;
-		s_Callbacks.InvokeCollisionEnter2D(static_cast<int32_t>(handle), selfEntityID, otherEntityID, entityAID, entityBID);
+		s_Callbacks.InvokeCollisionEnter2D(static_cast<int32_t>(handle), selfEntityID, otherEntityID, entityAID, entityBID, contactPointX, contactPointY);
 	}
 
-	void ScriptEngine::InvokeCollisionExit2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID)
+	void ScriptEngine::InvokeCollisionStay2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeCollisionStay2D) return;
+		s_Callbacks.InvokeCollisionStay2D(static_cast<int32_t>(handle), selfEntityID, otherEntityID, entityAID, entityBID, contactPointX, contactPointY);
+	}
+
+	void ScriptEngine::InvokeCollisionExit2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY)
 	{
 		if (handle == 0 || !s_Callbacks.InvokeCollisionExit2D) return;
-		s_Callbacks.InvokeCollisionExit2D(static_cast<int32_t>(handle), selfEntityID, otherEntityID, entityAID, entityBID);
+		s_Callbacks.InvokeCollisionExit2D(static_cast<int32_t>(handle), selfEntityID, otherEntityID, entityAID, entityBID, contactPointX, contactPointY);
 	}
 
 	bool ScriptEngine::ClassExists(const std::string& className)
@@ -258,6 +264,11 @@ namespace Bolt {
 	void ScriptEngine::RaiseApplicationPaused()
 	{
 		if (s_Initialized && s_Callbacks.RaiseApplicationPaused) s_Callbacks.RaiseApplicationPaused();
+	}
+
+	void ScriptEngine::RaiseApplicationQuit()
+	{
+		if (s_Initialized && s_Callbacks.RaiseApplicationQuit) s_Callbacks.RaiseApplicationQuit();
 	}
 
 	void ScriptEngine::RaiseFocusChanged(bool focused)
@@ -339,6 +350,18 @@ namespace Bolt {
 		s_Callbacks.InvokeGameSystemUpdate(static_cast<int32_t>(handle));
 	}
 
+	void ScriptEngine::InvokeGameSystemEnable(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeGameSystemEnable) return;
+		s_Callbacks.InvokeGameSystemEnable(static_cast<int32_t>(handle));
+	}
+
+	void ScriptEngine::InvokeGameSystemDisable(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeGameSystemDisable) return;
+		s_Callbacks.InvokeGameSystemDisable(static_cast<int32_t>(handle));
+	}
+
 	void ScriptEngine::InvokeGameSystemDestroy(uint32_t handle)
 	{
 		if (handle == 0 || !s_Callbacks.InvokeGameSystemDestroy) return;
@@ -378,7 +401,10 @@ namespace Bolt {
 				continue;
 			}
 
-			s_GlobalSystems.push_back({ className, handle });
+			s_GlobalSystems.push_back({ className, handle, true });
+			if (s_Callbacks.InvokeGlobalSystemEnable) {
+				s_Callbacks.InvokeGlobalSystemEnable(static_cast<int32_t>(handle));
+			}
 			if (s_Callbacks.InvokeGlobalSystemInitialize) {
 				s_Callbacks.InvokeGlobalSystemInitialize(static_cast<int32_t>(handle));
 			}
@@ -390,7 +416,7 @@ namespace Bolt {
 		if (!s_Initialized || !s_Callbacks.InvokeGlobalSystemUpdate) return;
 		for (const auto& instance : s_GlobalSystems)
 		{
-			if (instance.Handle != 0) {
+			if (instance.Handle != 0 && instance.Enabled) {
 				s_Callbacks.InvokeGlobalSystemUpdate(static_cast<int32_t>(instance.Handle));
 			}
 		}
@@ -402,11 +428,35 @@ namespace Bolt {
 			for (auto& instance : s_GlobalSystems)
 			{
 				if (instance.Handle != 0) {
+					if (s_Callbacks.InvokeGlobalSystemDisable) {
+						s_Callbacks.InvokeGlobalSystemDisable(static_cast<int32_t>(instance.Handle));
+					}
 					s_Callbacks.DestroyGlobalSystemInstance(static_cast<int32_t>(instance.Handle));
 				}
 			}
 		}
 		s_GlobalSystems.clear();
+	}
+
+	void ScriptEngine::SetGlobalSystemEnabled(const std::string& className, bool enabled)
+	{
+		if (!s_Initialized) return;
+
+		auto it = std::find_if(s_GlobalSystems.begin(), s_GlobalSystems.end(),
+			[&className](const GlobalSystemInstance& instance) { return instance.ClassName == className; });
+		if (it == s_GlobalSystems.end() || it->Handle == 0) return;
+		if (it->Enabled == enabled) return;
+
+		it->Enabled = enabled;
+
+		if (enabled) {
+			if (s_Callbacks.InvokeGlobalSystemEnable) {
+				s_Callbacks.InvokeGlobalSystemEnable(static_cast<int32_t>(it->Handle));
+			}
+		}
+		else if (s_Callbacks.InvokeGlobalSystemDisable) {
+			s_Callbacks.InvokeGlobalSystemDisable(static_cast<int32_t>(it->Handle));
+		}
 	}
 
 	bool ScriptEngine::GlobalSystemClassExists(const std::string& className)

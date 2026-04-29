@@ -492,6 +492,7 @@ namespace Bolt {
 
 		if (invokeOnQuit) {
 			try {
+				ScriptEngine::RaiseApplicationQuit();
 				OnQuit();
 			}
 			catch (const std::exception& e) {

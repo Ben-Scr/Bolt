@@ -64,10 +64,6 @@
   <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Dist|x64' ">
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Remove="Source\Bolt\Editor\**" />
-    <None Remove="Source\Bolt\Editor\**" />
-  </ItemGroup>
-  <ItemGroup>
     <Compile Include="Source\Bolt\Attributes\ClampValueAttribute.cs" />
     <Compile Include="Source\Bolt\Attributes\HeaderAttribute.cs" />
     <Compile Include="Source\Bolt\Attributes\HideFromEditorAttribute.cs" />
@@ -87,19 +83,19 @@
     <Compile Include="Source\Bolt\Cryptography\AesHelper.cs" />
     <Compile Include="Source\Bolt\Cryptography\AesKey.cs" />
     <Compile Include="Source\Bolt\Cryptography\Encryptor.cs" />
+    <Compile Include="Source\Bolt\Cryptography\RandomSecure.cs" />
     <Compile Include="Source\Bolt\Graphics\Gizmo.cs" />
     <Compile Include="Source\Bolt\Graphics\Renderer2D.cs" />
     <Compile Include="Source\Bolt\Graphics\Texture.cs" />
     <Compile Include="Source\Bolt\Interop\NativeCallbacks.cs" />
+    <Compile Include="Source\Bolt\Interop\NativeInterop.cs" />
     <Compile Include="Source\Bolt\Interop\ScriptHostBridge.cs" />
     <Compile Include="Source\Bolt\Interop\ScriptInstanceManager.cs" />
-    <Compile Include="Source\Bolt\Interop\NativeInterop.cs" />
     <Compile Include="Source\Bolt\Math\Color.cs" />
     <Compile Include="Source\Bolt\Math\Mathf.cs" />
     <Compile Include="Source\Bolt\Math\Quaternion.cs" />
     <Compile Include="Source\Bolt\Math\Random.cs" />
     <Compile Include="Source\Bolt\Math\RandomHandler.cs" />
-    <Compile Include="Source\Bolt\Cryptography\RandomSecure.cs" />
     <Compile Include="Source\Bolt\Math\Vector2.cs" />
     <Compile Include="Source\Bolt\Math\Vector2Int.cs" />
     <Compile Include="Source\Bolt\Math\Vector3.cs" />
@@ -109,11 +105,12 @@
     <Compile Include="Source\Bolt\Physics\Collision2D.cs" />
     <Compile Include="Source\Bolt\Physics\FastPhysics2D.cs" />
     <Compile Include="Source\Bolt\Physics\Physics2D.cs" />
+    <Compile Include="Source\Bolt\Physics\Physics2DShared.cs" />
     <Compile Include="Source\Bolt\Scene\AssetRef.cs" />
-    <Compile Include="Source\Bolt\Scene\EntityScript.cs" />
     <Compile Include="Source\Bolt\Scene\Component.cs" />
     <Compile Include="Source\Bolt\Scene\Components.cs" />
     <Compile Include="Source\Bolt\Scene\Entity.cs" />
+    <Compile Include="Source\Bolt\Scene\EntityScript.cs" />
     <Compile Include="Source\Bolt\Scene\GameSystem.cs" />
     <Compile Include="Source\Bolt\Scene\GlobalSystem.cs" />
     <Compile Include="Source\Bolt\Scene\SceneManager.cs" />

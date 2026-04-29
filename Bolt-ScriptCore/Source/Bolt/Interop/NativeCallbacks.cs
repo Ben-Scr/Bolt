@@ -52,6 +52,10 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<ulong, byte*, int> Entity_AddComponent;
     public delegate* unmanaged<ulong, byte*, int> Entity_RemoveComponent;
     public delegate* unmanaged<ulong, byte*, byte*> Entity_GetManagedComponentFields;
+    public delegate* unmanaged<ulong, int> Entity_GetIsStatic;
+    public delegate* unmanaged<ulong, int, void> Entity_SetIsStatic;
+    public delegate* unmanaged<ulong, int> Entity_GetIsEnabled;
+    public delegate* unmanaged<ulong, int, void> Entity_SetIsEnabled;
 
     // ── NameComponent ────────────────────────────────────────────
     public delegate* unmanaged<ulong, byte*> NameComponent_GetName;
@@ -142,6 +146,9 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<byte*, void> Scene_Unload;
     public delegate* unmanaged<byte*, int> Scene_SetActive;
     public delegate* unmanaged<byte*, int> Scene_Reload;
+    public delegate* unmanaged<byte*, byte*, int, int> Scene_SetGameSystemEnabled;
+    public delegate* unmanaged<byte*, int, void> Scene_SetGlobalSystemEnabled;
+    public delegate* unmanaged<byte*, int> Scene_DoesSceneExist;
     public delegate* unmanaged<int> Scene_GetLoadedCount;
     public delegate* unmanaged<int, byte*> Scene_GetLoadedSceneNameAt;
     public delegate* unmanaged<ulong, byte*> Scene_GetEntityNameByUUID;
@@ -197,6 +204,8 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<float, float, float, ulong*, int, int> Physics2D_OverlapCircleAll;
     public delegate* unmanaged<float, float, float, float, float, ulong*, int, int> Physics2D_OverlapBoxAll;
     public delegate* unmanaged<float, float, float*, int, ulong*, int, int> Physics2D_OverlapPolygonAll;
+    public delegate* unmanaged<float, float, int, ulong*, int> Physics2D_ContainsPoint;
+    public delegate* unmanaged<float, float, ulong*, int, int> Physics2D_ContainsPointAll;
 }
 
 internal static unsafe class NativeCallbacks

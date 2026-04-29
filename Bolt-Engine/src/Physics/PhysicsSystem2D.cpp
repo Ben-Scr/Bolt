@@ -28,6 +28,22 @@ namespace Bolt {
 	void PhysicsSystem2D::FixedUpdate(float dt) {
 		if (!s_IsEnabled) return;
 
+		SceneManager::Get().ForeachLoadedScene([](Scene& scene) {
+			for (auto [ent, rb, tf] : scene.GetRegistry().view<Rigidbody2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
+				if (tf.IsDirty() && rb.IsValid()) {
+					rb.SetTransform(tf);
+					tf.ClearDirty();
+				}
+			}
+
+			for (auto [ent, body, tf] : scene.GetRegistry().view<FastBody2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
+				if (tf.IsDirty() && body.m_Body) {
+					body.SetPosition(tf.Position);
+					tf.ClearDirty();
+				}
+			}
+		});
+
 		// Box2D simulation
 		s_MainWorld->Step(dt);
 		s_MainWorld->GetDispatcher().Process(
@@ -45,6 +61,13 @@ namespace Bolt {
 						ScriptSystem::DispatchCollisionExit2D(scene, collision);
 					}
 				});
+			},
+			[](const Collision2D& collision) {
+				SceneManager::Get().ForeachLoadedScene([&](Scene& scene) {
+					if (scene.IsValid(collision.entityA) && scene.IsValid(collision.entityB)) {
+						ScriptSystem::DispatchCollisionStay2D(scene, collision);
+					}
+				});
 			});
 
 		// Box2D transform sync
@@ -52,6 +75,7 @@ namespace Bolt {
 			for (auto [ent, rb, tf] : scene.GetRegistry().view<Rigidbody2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
 				tf.Position = rb.GetPosition();
 				tf.Rotation = rb.GetRotation();
+				tf.ClearDirty();
 			}
 		});
 
@@ -64,6 +88,7 @@ namespace Bolt {
 				if (body.m_Body) {
 					auto pos = body.m_Body->GetPosition();
 					tf.Position = { pos.x, pos.y };
+					tf.ClearDirty();
 				}
 			}
 		});

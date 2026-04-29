@@ -111,11 +111,23 @@ public static class SceneManager
 
     public static bool IsSceneLoaded(string name)
     {
-        throw new NotImplementedException();
+        return !string.IsNullOrWhiteSpace(name) && GetLoadedSceneByName(name) != null;
     }
+
     public static bool DoesSceneExist(string name)
     {
-        throw new NotImplementedException();
+        return !string.IsNullOrWhiteSpace(name) && InternalCalls.Scene_DoesSceneExist(name);
+    }
+
+    public static void EnableGlobalSystem<T>() where T : GlobalSystem
+        => SetGlobalSystemEnabled<T>(true);
+
+    public static void DisableGlobalSystem<T>() where T : GlobalSystem
+        => SetGlobalSystemEnabled<T>(false);
+
+    private static void SetGlobalSystemEnabled<T>(bool enabled) where T : GlobalSystem
+    {
+        InternalCalls.Scene_SetGlobalSystemEnabled(typeof(T).Name, enabled);
     }
 
     /// <summary>

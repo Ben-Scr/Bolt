@@ -198,6 +198,7 @@ namespace Bolt {
 		bool RemoveGameSystem(size_t index);
 		bool MoveGameSystem(size_t fromIndex, size_t toIndex);
 		void ClearGameSystems();
+		bool SetGameSystemEnabled(const std::string& className, bool enabled);
 
 		void SetEntityMetaData(
 			EntityHandle entity,

@@ -17,6 +17,7 @@ public static class Application
     internal static void RaiseFocusChanged(bool focused) => FocusChanged?.Invoke(focused);
     internal static void RaiseApplicationPaused() => ApplicationPaused?.Invoke();
     internal static void RaiseApplicationStart() => ApplicationStart?.Invoke();
+    internal static void RaiseApplicationQuit() => ApplicationQuit?.Invoke();
 
     public static float TargetFrameRate
     {

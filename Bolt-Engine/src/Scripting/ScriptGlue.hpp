@@ -51,6 +51,10 @@ namespace Bolt {
 		int      (*Entity_AddComponent)(uint64_t entityID, const char* componentName);
 		int      (*Entity_RemoveComponent)(uint64_t entityID, const char* componentName);
 		const char* (*Entity_GetManagedComponentFields)(uint64_t entityID, const char* componentName);
+		int      (*Entity_GetIsStatic)(uint64_t entityID);
+		void     (*Entity_SetIsStatic)(uint64_t entityID, int isStatic);
+		int      (*Entity_GetIsEnabled)(uint64_t entityID);
+		void     (*Entity_SetIsEnabled)(uint64_t entityID, int isEnabled);
 
 		// ── NameComponent ────────────────────────────────────────────
 		const char* (*NameComponent_GetName)(uint64_t entityID);
@@ -141,6 +145,9 @@ namespace Bolt {
 		void        (*Scene_Unload)(const char* sceneName);
 		int         (*Scene_SetActive)(const char* sceneName);
 		int         (*Scene_Reload)(const char* sceneName);
+		int         (*Scene_SetGameSystemEnabled)(const char* sceneName, const char* className, int enabled);
+		void        (*Scene_SetGlobalSystemEnabled)(const char* className, int enabled);
+		int         (*Scene_DoesSceneExist)(const char* sceneName);
 		int         (*Scene_GetLoadedCount)();
 		const char* (*Scene_GetLoadedSceneNameAt)(int index);
 		const char* (*Scene_GetEntityNameByUUID)(uint64_t uuid);
@@ -197,6 +204,8 @@ namespace Bolt {
 		int (*Physics2D_OverlapCircleAll)(float originX, float originY, float radius, uint64_t* outEntityIDs, int maxOut);
 		int (*Physics2D_OverlapBoxAll)(float originX, float originY, float halfX, float halfY, float degrees, uint64_t* outEntityIDs, int maxOut);
 		int (*Physics2D_OverlapPolygonAll)(float originX, float originY, const float* points, int pointCount, uint64_t* outEntityIDs, int maxOut);
+		int (*Physics2D_ContainsPoint)(float originX, float originY, int mode, uint64_t* entityID);
+		int (*Physics2D_ContainsPointAll)(float originX, float originY, uint64_t* outEntityIDs, int maxOut);
 	};
 
 	/// Layout must match C# ManagedCallbacksStruct exactly.
@@ -209,8 +218,9 @@ namespace Bolt {
 		void    (*InvokeOnDestroy)(int32_t handle);
 		void    (*InvokeOnEnable)(int32_t handle);
 		void    (*InvokeOnDisable)(int32_t handle);
-		void    (*InvokeCollisionEnter2D)(int32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
-		void    (*InvokeCollisionExit2D)(int32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
+		void    (*InvokeCollisionEnter2D)(int32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY);
+		void    (*InvokeCollisionStay2D)(int32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY);
+		void    (*InvokeCollisionExit2D)(int32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY);
 		int     (*ClassExists)(const char* className);
 		int     (*LoadUserAssembly)(const char* path);
 		void    (*UnloadUserAssembly)();
@@ -219,6 +229,7 @@ namespace Bolt {
 		const char* (*GetClassFieldDefs)(const char* className);
 		void    (*RaiseApplicationStart)();
 		void    (*RaiseApplicationPaused)();
+		void    (*RaiseApplicationQuit)();
 		void    (*RaiseFocusChanged)(int focused);
 		void    (*RaiseKeyDown)(int key);
 		void    (*RaiseKeyUp)(int key);
@@ -234,12 +245,16 @@ namespace Bolt {
 		void    (*DestroyGameSystemInstance)(int32_t handle);
 		void    (*InvokeGameSystemStart)(int32_t handle);
 		void    (*InvokeGameSystemUpdate)(int32_t handle);
+		void    (*InvokeGameSystemEnable)(int32_t handle);
+		void    (*InvokeGameSystemDisable)(int32_t handle);
 		void    (*InvokeGameSystemDestroy)(int32_t handle);
 		int     (*GameSystemClassExists)(const char* className);
 		int32_t (*CreateGlobalSystemInstance)(const char* className);
 		void    (*DestroyGlobalSystemInstance)(int32_t handle);
 		void    (*InvokeGlobalSystemInitialize)(int32_t handle);
 		void    (*InvokeGlobalSystemUpdate)(int32_t handle);
+		void    (*InvokeGlobalSystemEnable)(int32_t handle);
+		void    (*InvokeGlobalSystemDisable)(int32_t handle);
 		int     (*GlobalSystemClassExists)(const char* className);
 	};
 

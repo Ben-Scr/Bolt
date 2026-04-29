@@ -44,12 +44,14 @@ namespace Bolt {
 		static void InvokeOnDestroy(uint32_t handle);
 		static void InvokeOnEnable(uint32_t handle);
 		static void InvokeOnDisable(uint32_t handle);
-		static void InvokeCollisionEnter2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
-		static void InvokeCollisionExit2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
+		static void InvokeCollisionEnter2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY);
+		static void InvokeCollisionStay2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY);
+		static void InvokeCollisionExit2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID, float contactPointX, float contactPointY);
 		static bool ClassExists(const std::string& className);
 
 		static void RaiseApplicationStart();
 		static void RaiseApplicationPaused();
+		static void RaiseApplicationQuit();
 		static void RaiseFocusChanged(bool focused);
 		static void RaiseKeyDown(int key);
 		static void RaiseKeyUp(int key);
@@ -66,12 +68,15 @@ namespace Bolt {
 		static void DestroyGameSystemInstance(uint32_t handle);
 		static void InvokeGameSystemStart(uint32_t handle);
 		static void InvokeGameSystemUpdate(uint32_t handle);
+		static void InvokeGameSystemEnable(uint32_t handle);
+		static void InvokeGameSystemDisable(uint32_t handle);
 		static void InvokeGameSystemDestroy(uint32_t handle);
 		static bool GameSystemClassExists(const std::string& className);
 
 		static void InitializeGlobalSystems(const std::vector<std::string>& classNames);
 		static void UpdateGlobalSystems();
 		static void ShutdownGlobalSystems();
+		static void SetGlobalSystemEnabled(const std::string& className, bool enabled);
 		static bool GlobalSystemClassExists(const std::string& className);
 
 		static const ManagedCallbacks& GetCallbacks() { return s_Callbacks; }
@@ -79,6 +84,7 @@ namespace Bolt {
 		struct GlobalSystemInstance {
 			std::string ClassName;
 			uint32_t Handle = 0;
+			bool Enabled = true;
 		};
 
 	private:

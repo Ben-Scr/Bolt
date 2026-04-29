@@ -426,12 +426,22 @@ namespace Bolt {
 		if (project) {
 			if (!m_BuildSceneListInitialized) {
 				m_BuildSceneList.clear();
-				auto scenesDir = std::filesystem::path(project->ScenesDirectory);
-				if (std::filesystem::exists(scenesDir)) {
-					for (const auto& entry : std::filesystem::directory_iterator(scenesDir)) {
-						if (!entry.is_regular_file()) continue;
-						if (entry.path().extension() == ".scene") {
-							m_BuildSceneList.push_back(entry.path().stem().string());
+				auto assetsDir = std::filesystem::path(project->AssetsDirectory);
+				std::error_code ec;
+				if (std::filesystem::exists(assetsDir, ec) && !ec) {
+					for (std::filesystem::recursive_directory_iterator it(
+							 assetsDir,
+							 std::filesystem::directory_options::skip_permission_denied,
+							 ec),
+						 end;
+						 it != end;
+						 it.increment(ec)) {
+						if (ec) {
+							ec.clear();
+							continue;
+						}
+						if (it->is_regular_file(ec) && !ec && it->path().extension() == ".scene") {
+							m_BuildSceneList.push_back(it->path().stem().string());
 						}
 					}
 				}
@@ -450,7 +460,7 @@ namespace Bolt {
 			if (ImGui::CollapsingHeader("Scene List", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::Indent(8);
 				if (m_BuildSceneList.empty()) {
-					ImGui::TextDisabled("No scenes found in Assets/Scenes/");
+					ImGui::TextDisabled("No scenes found in Assets/");
 				}
 				else {
 					for (int i = 0; i < static_cast<int>(m_BuildSceneList.size()); i++) {

@@ -497,6 +497,7 @@ namespace Bolt {
 		}
 
 		m_SelectedEntity = entt::null;
+		m_IsSceneNodeSelected = false;
 		m_RenamingEntity = entt::null;
 		m_EntityOrder.clear();
 		m_PlayModeRecompilePending = false;
@@ -530,8 +531,18 @@ namespace Bolt {
 		}
 	}
 
+	void ImGuiEditorLayer::SelectSceneNode() {
+		m_SelectedEntity = entt::null;
+		m_PressedEntity = entt::null;
+		m_RenamingEntity = entt::null;
+		m_EntityRenameFrameCounter = 0;
+		m_IsSceneNodeSelected = true;
+		m_AssetBrowser.ClearSelection();
+	}
+
 	void ImGuiEditorLayer::SelectEntity(EntityHandle entity) {
 		m_SelectedEntity = entity;
+		m_IsSceneNodeSelected = false;
 		if (entity != entt::null) {
 			m_AssetBrowser.ClearSelection();
 		}
@@ -542,6 +553,7 @@ namespace Bolt {
 		m_PressedEntity = entt::null;
 		m_RenamingEntity = entt::null;
 		m_EntityRenameFrameCounter = 0;
+		m_IsSceneNodeSelected = false;
 	}
 
 	void ImGuiEditorLayer::FocusSelectedEntity(Scene& scene) {
@@ -737,6 +749,9 @@ namespace Bolt {
 			bool sceneOpen = ImGui::TreeNodeEx(sceneLabel.c_str(), sceneFlags);
 			if (sceneLabelTruncated && ImGui::IsItemHovered()) {
 				ImGui::SetTooltip("%s", fullSceneLabel.c_str());
+			}
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+				SelectSceneNode();
 			}
 
 			// Right-click context menu on scene tree node
@@ -1059,11 +1074,12 @@ namespace Bolt {
 
 		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
 			m_SelectedEntity = entt::null;
-			RenderSceneSystemsInspector(scene);
-			ImGui::Spacing();
-			ImGui::Separator();
-			ImGui::Spacing();
-			RenderAssetInspector();
+			if (m_IsSceneNodeSelected) {
+				RenderSceneSystemsInspector(scene);
+			}
+			else {
+				RenderAssetInspector();
+			}
 			m_IsInspectorPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 			ImGui::End();
 			m_InspectorItemWasActive = false;

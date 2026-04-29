@@ -551,7 +551,30 @@ endforeach()
 	}
 
 	std::string BoltProject::GetSceneFilePath(const std::string& sceneName) const {
-		return Path::Combine(ScenesDirectory, sceneName + ".scene");
+		const std::filesystem::path assetsRoot(AssetsDirectory);
+		const std::string sceneFileName = sceneName + ".scene";
+		std::error_code ec;
+		if (std::filesystem::exists(assetsRoot, ec) && !ec) {
+			for (std::filesystem::recursive_directory_iterator it(
+					 assetsRoot,
+					 std::filesystem::directory_options::skip_permission_denied,
+					 ec),
+				 end;
+				 it != end;
+				 it.increment(ec)) {
+				if (ec) {
+					ec.clear();
+					continue;
+				}
+
+				if (it->is_regular_file(ec) && !ec && it->path().filename().string() == sceneFileName) {
+					auto path = it->path();
+					return path.make_preferred().string();
+				}
+			}
+		}
+
+		return Path::Combine(ScenesDirectory, sceneFileName);
 	}
 
 	void BoltProject::EnsureNativeScriptBootstrapFiles() const {

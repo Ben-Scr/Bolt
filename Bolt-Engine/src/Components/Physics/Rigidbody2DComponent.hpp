@@ -4,7 +4,7 @@
 
 namespace Bolt {
 	class Scene;
-	struct Transform2DComponent;
+	class Transform2DComponent;
 	enum class BodyType;
 }
 

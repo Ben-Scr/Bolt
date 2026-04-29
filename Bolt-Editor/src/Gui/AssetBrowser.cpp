@@ -13,6 +13,8 @@
 #include <imgui.h>
 #include <algorithm>
 #include "Gui/EditorIcons.hpp"
+#include <cctype>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 
@@ -31,6 +33,105 @@ namespace Bolt {
 			const ImVec2 delta(io.MousePos.x - io.MouseClickedPos[ImGuiMouseButton_Left].x,
 				io.MousePos.y - io.MouseClickedPos[ImGuiMouseButton_Left].y);
 			return (delta.x * delta.x + delta.y * delta.y) > (io.MouseDragThreshold * io.MouseDragThreshold);
+		}
+
+		std::string GetDuplicateBaseName(const std::string& stem)
+		{
+			if (stem.size() < 4 || stem.back() != ')') {
+				return stem;
+			}
+
+			const std::size_t open = stem.rfind(" (");
+			if (open == std::string::npos || open + 2 >= stem.size() - 1) {
+				return stem;
+			}
+
+			for (std::size_t i = open + 2; i < stem.size() - 1; ++i) {
+				if (!std::isdigit(static_cast<unsigned char>(stem[i]))) {
+					return stem;
+				}
+			}
+
+			return stem.substr(0, open);
+		}
+
+		std::filesystem::path MakeUniqueAssetPath(
+			const std::filesystem::path& source,
+			const std::filesystem::path& destinationDirectory,
+			bool preserveOriginalNameWhenFree)
+		{
+			std::error_code ec;
+			std::filesystem::path candidate = destinationDirectory / source.filename();
+			if (preserveOriginalNameWhenFree && !std::filesystem::exists(candidate, ec)) {
+				return candidate;
+			}
+
+			const std::string stem = GetDuplicateBaseName(source.stem().string());
+			const std::string extension = source.extension().string();
+			for (int counter = 1; counter < 10000; ++counter) {
+				candidate = destinationDirectory / (stem + " (" + std::to_string(counter) + ")" + extension);
+				ec.clear();
+				if (!std::filesystem::exists(candidate, ec)) {
+					return candidate;
+				}
+			}
+
+			return destinationDirectory / (stem + " (" + std::to_string(std::time(nullptr)) + ")" + extension);
+		}
+
+		bool CopyEntryTo(const std::filesystem::path& source, const std::filesystem::path& destination)
+		{
+			std::error_code ec;
+			if (!std::filesystem::exists(source, ec) || ec) {
+				return false;
+			}
+
+			if (destination.has_parent_path()) {
+				std::filesystem::create_directories(destination.parent_path(), ec);
+				if (ec) {
+					return false;
+				}
+			}
+
+			if (std::filesystem::is_directory(source, ec) && !ec) {
+				std::filesystem::copy(source, destination, std::filesystem::copy_options::recursive, ec);
+				return !ec;
+			}
+
+			ec.clear();
+			std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, ec);
+			return !ec;
+		}
+
+		bool MoveEntryTo(const std::filesystem::path& source, const std::filesystem::path& destination)
+		{
+			std::error_code ec;
+			if (!std::filesystem::exists(source, ec) || ec) {
+				return false;
+			}
+
+			if (destination.has_parent_path()) {
+				std::filesystem::create_directories(destination.parent_path(), ec);
+				if (ec) {
+					return false;
+				}
+			}
+
+			std::filesystem::rename(source, destination, ec);
+			if (!ec) {
+				if (std::filesystem::is_regular_file(destination, ec)) {
+					AssetRegistry::MoveCompanionMetadata(source.string(), destination.string());
+				}
+				return true;
+			}
+
+			ec.clear();
+			if (!CopyEntryTo(source, destination)) {
+				return false;
+			}
+
+			Directory::Delete(source.string());
+			return true;
 		}
 	}
 
@@ -63,8 +164,7 @@ namespace Bolt {
 
 	void AssetBrowser::NavigateTo(const std::string& directory) {
 		m_CurrentDirectory = directory;
-		m_SelectedPath.clear();
-		m_PressedPath.clear();
+		ClearAssetSelection();
 		CancelRename();
 		m_NeedsRefresh = true;
 	}
@@ -85,6 +185,182 @@ namespace Bolt {
 		AssetRegistry::Sync();
 		m_Entries = Directory::GetEntries(m_CurrentDirectory);
 		m_NeedsRefresh = false;
+	}
+
+	void AssetBrowser::ClearAssetSelection() {
+		m_SelectedPath.clear();
+		m_SelectedPaths.clear();
+		m_LastSelectionIndex = -1;
+		m_PressedPath.clear();
+		m_SelectionActivated = false;
+		CancelRename();
+	}
+
+	bool AssetBrowser::IsPathSelected(const std::string& path) const {
+		if (m_SelectedPaths.empty()) {
+			return m_SelectedPath == path;
+		}
+		return std::find(m_SelectedPaths.begin(), m_SelectedPaths.end(), path) != m_SelectedPaths.end();
+	}
+
+	std::vector<std::string> AssetBrowser::GetSelectedPaths() const {
+		if (!m_SelectedPaths.empty()) {
+			return m_SelectedPaths;
+		}
+
+		if (!m_SelectedPath.empty()) {
+			return { m_SelectedPath };
+		}
+
+		return {};
+	}
+
+	void AssetBrowser::SetSingleSelection(const std::string& path, int index) {
+		m_SelectedPath = path;
+		m_SelectedPaths = { path };
+		m_LastSelectionIndex = index;
+	}
+
+	void AssetBrowser::ToggleSelection(const std::string& path, int index) {
+		auto it = std::find(m_SelectedPaths.begin(), m_SelectedPaths.end(), path);
+		if (it != m_SelectedPaths.end()) {
+			m_SelectedPaths.erase(it);
+			if (m_SelectedPath == path) {
+				m_SelectedPath = m_SelectedPaths.empty() ? std::string() : m_SelectedPaths.back();
+			}
+		}
+		else {
+			m_SelectedPaths.push_back(path);
+			m_SelectedPath = path;
+		}
+
+		m_LastSelectionIndex = index;
+	}
+
+	void AssetBrowser::SelectRange(int index) {
+		if (m_VisibleEntryPaths.empty()) {
+			return;
+		}
+
+		if (m_LastSelectionIndex < 0 || m_LastSelectionIndex >= static_cast<int>(m_VisibleEntryPaths.size())) {
+			SetSingleSelection(m_VisibleEntryPaths[static_cast<std::size_t>(index)], index);
+			return;
+		}
+
+		const int first = std::min(m_LastSelectionIndex, index);
+		const int last = std::max(m_LastSelectionIndex, index);
+		m_SelectedPaths.clear();
+		for (int i = first; i <= last; ++i) {
+			m_SelectedPaths.push_back(m_VisibleEntryPaths[static_cast<std::size_t>(i)]);
+		}
+		m_SelectedPath = m_VisibleEntryPaths[static_cast<std::size_t>(index)];
+	}
+
+	void AssetBrowser::HandleAssetShortcuts() {
+		if (m_IsRenaming || ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive()) {
+			return;
+		}
+
+		const ImGuiIO& io = ImGui::GetIO();
+		if (!io.KeyCtrl) {
+			return;
+		}
+
+		if (ImGui::IsKeyPressed(ImGuiKey_X)) {
+			CopySelectedAssets(true);
+		}
+		else if (ImGui::IsKeyPressed(ImGuiKey_C)) {
+			CopySelectedAssets(false);
+		}
+		else if (ImGui::IsKeyPressed(ImGuiKey_V)) {
+			PasteAssets();
+		}
+		else if (ImGui::IsKeyPressed(ImGuiKey_D)) {
+			DuplicateSelectedAssets();
+		}
+	}
+
+	void AssetBrowser::CopySelectedAssets(bool cut) {
+		m_AssetClipboardPaths = GetSelectedPaths();
+		m_AssetClipboardCut = cut && !m_AssetClipboardPaths.empty();
+	}
+
+	void AssetBrowser::PasteAssets() {
+		if (m_AssetClipboardPaths.empty()) {
+			return;
+		}
+
+		std::vector<std::string> pastedPaths;
+		const std::filesystem::path targetDirectory(m_CurrentDirectory);
+
+		for (const std::string& sourcePathString : m_AssetClipboardPaths) {
+			const std::filesystem::path sourcePath(sourcePathString);
+			std::error_code ec;
+			if (!std::filesystem::exists(sourcePath, ec) || ec) {
+				continue;
+			}
+
+			const bool sameDirectory = std::filesystem::equivalent(sourcePath.parent_path(), targetDirectory, ec) && !ec;
+			const std::filesystem::path targetPath = MakeUniqueAssetPath(sourcePath, targetDirectory, !sameDirectory);
+
+			bool succeeded = false;
+			if (m_AssetClipboardCut) {
+				if (sameDirectory) {
+					continue;
+				}
+				succeeded = MoveEntryTo(sourcePath, targetPath);
+			}
+			else {
+				succeeded = CopyEntryTo(sourcePath, targetPath);
+			}
+
+			if (succeeded) {
+				pastedPaths.push_back(targetPath.string());
+				m_Thumbnails.Invalidate(sourcePath.string());
+				m_Thumbnails.Invalidate(targetPath.string());
+			}
+		}
+
+		if (m_AssetClipboardCut) {
+			m_AssetClipboardPaths.clear();
+			m_AssetClipboardCut = false;
+		}
+
+		if (!pastedPaths.empty()) {
+			m_SelectedPaths = pastedPaths;
+			m_SelectedPath = pastedPaths.back();
+			m_LastSelectionIndex = -1;
+			m_NeedsRefresh = true;
+		}
+	}
+
+	void AssetBrowser::DuplicateSelectedAssets() {
+		const std::vector<std::string> selectedPaths = GetSelectedPaths();
+		if (selectedPaths.empty()) {
+			return;
+		}
+
+		std::vector<std::string> duplicatedPaths;
+		for (const std::string& sourcePathString : selectedPaths) {
+			const std::filesystem::path sourcePath(sourcePathString);
+			std::error_code ec;
+			if (!std::filesystem::exists(sourcePath, ec) || ec) {
+				continue;
+			}
+
+			const std::filesystem::path targetPath = MakeUniqueAssetPath(sourcePath, sourcePath.parent_path(), false);
+			if (CopyEntryTo(sourcePath, targetPath)) {
+				duplicatedPaths.push_back(targetPath.string());
+				m_Thumbnails.Invalidate(targetPath.string());
+			}
+		}
+
+		if (!duplicatedPaths.empty()) {
+			m_SelectedPaths = duplicatedPaths;
+			m_SelectedPath = duplicatedPaths.back();
+			m_LastSelectionIndex = -1;
+			m_NeedsRefresh = true;
+		}
 	}
 
 	void AssetBrowser::Render() {
@@ -130,6 +406,9 @@ namespace Bolt {
 			&& !ImGui::GetIO().WantTextInput
 			&& !ImGui::IsAnyItemActive()) {
 			BeginRenameSelected();
+		}
+		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+			HandleAssetShortcuts();
 		}
 		RenderGrid();
 
@@ -215,9 +494,7 @@ namespace Bolt {
 			&& ImGui::IsMouseReleased(ImGuiMouseButton_Left)
 			&& !IsLeftMouseDragPastClickThreshold()
 			&& !ImGui::IsAnyItemHovered()) {
-			m_SelectedPath.clear();
-			m_PressedPath.clear();
-			CancelRename();
+			ClearAssetSelection();
 		}
 
 		std::vector<DirectoryEntry> visibleEntries = m_Entries;
@@ -229,6 +506,12 @@ namespace Bolt {
 			pendingEntry.Name = std::filesystem::path(m_RenamePath).filename().string();
 			pendingEntry.IsDirectory = false;
 			visibleEntries.push_back(std::move(pendingEntry));
+		}
+
+		m_VisibleEntryPaths.clear();
+		m_VisibleEntryPaths.reserve(visibleEntries.size());
+		for (const DirectoryEntry& entry : visibleEntries) {
+			m_VisibleEntryPaths.push_back(entry.Path);
 		}
 
 		for (int i = 0; i < static_cast<int>(visibleEntries.size()); i++) {
@@ -271,7 +554,7 @@ namespace Bolt {
 	void AssetBrowser::RenderAssetTile(const DirectoryEntry& entry, int index) {
 		ImGui::PushID(index);
 
-		const bool isSelected = (m_SelectedPath == entry.Path);
+		const bool isSelected = IsPathSelected(entry.Path);
 
 		ImGui::BeginGroup();
 
@@ -291,7 +574,6 @@ namespace Bolt {
 		}
 
 		if (thumbnail != 0) {
-			Texture2D* tex = nullptr;
 			auto it = m_Thumbnails.GetCacheEntry(entry.Path);
 			float texW = m_TileSize, texH = m_TileSize;
 			if (it) {
@@ -410,7 +692,16 @@ namespace Bolt {
 
 		if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
 			if (ImGui::IsItemHovered() && m_PressedPath == entry.Path && !IsLeftMouseDragPastClickThreshold()) {
-				m_SelectedPath = entry.Path;
+				const ImGuiIO& io = ImGui::GetIO();
+				if (io.KeyShift) {
+					SelectRange(index);
+				}
+				else if (io.KeyCtrl) {
+					ToggleSelection(entry.Path, index);
+				}
+				else {
+					SetSingleSelection(entry.Path, index);
+				}
 				m_SelectionActivated = true;
 				if (!IsRenamingEntry(entry.Path)) {
 					CancelRename();
@@ -429,7 +720,7 @@ namespace Bolt {
 			}
 		}
 
-		RenderItemContextMenu(entry);
+		RenderItemContextMenu(entry, index);
 
 		HandleDragSource(entry);
 		if (entry.IsDirectory) {
@@ -442,6 +733,38 @@ namespace Bolt {
 		ImGui::Dummy(ImVec2(m_TilePadding, 0));
 	}
 
+	void AssetBrowser::OpenAssetPath(const std::string& path) {
+		std::error_code ec;
+		if (!std::filesystem::exists(path, ec) || ec) {
+			return;
+		}
+
+		if (std::filesystem::is_directory(path, ec) && !ec) {
+			NavigateTo(path);
+			return;
+		}
+
+		DirectoryEntry entry;
+		entry.Path = path;
+		entry.Name = std::filesystem::path(path).filename().string();
+		entry.IsDirectory = false;
+		OpenAssetExternal(entry);
+	}
+
+	void AssetBrowser::RevealAssetInExplorer(const std::string& path) {
+#ifdef BT_PLATFORM_WINDOWS
+		std::string args = "/select,\"" + path + "\"";
+		ShellExecuteA(nullptr, "open", "explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+#else
+		std::filesystem::path target(path);
+		DirectoryEntry entry;
+		entry.Path = target.has_parent_path() ? target.parent_path().string() : path;
+		entry.Name = std::filesystem::path(entry.Path).filename().string();
+		entry.IsDirectory = true;
+		OpenAssetExternal(entry);
+#endif
+	}
+
 
 	void AssetBrowser::RenderGridContextMenu() {
 		if (!m_ItemRightClicked &&
@@ -452,6 +775,13 @@ namespace Bolt {
 		}
 
 		if (ImGui::BeginPopup("##AssetGridCtx")) {
+			if (!m_AssetClipboardPaths.empty()) {
+				if (ImGui::MenuItem("Paste Asset", "Ctrl+V")) {
+					PasteAssets();
+				}
+				ImGui::Separator();
+			}
+
 			if (ImGui::BeginMenu("Create")) {
 				if (ImGui::MenuItem("EntityScript (C#)")) {
 					CreateScript(m_CurrentDirectory);
@@ -472,6 +802,12 @@ namespace Bolt {
 				if (ImGui::MenuItem("Scene")) {
 					CreateScene(m_CurrentDirectory);
 				}
+				if (ImGui::MenuItem("Entity")) {
+					if (Scene* scene = SceneManager::Get().GetActiveScene()) {
+						scene->CreateEntity("Entity");
+						scene->MarkDirty();
+					}
+				}
 				if (ImGui::MenuItem("Folder")) {
 					CreateFolder(m_CurrentDirectory);
 				}
@@ -482,22 +818,46 @@ namespace Bolt {
 		}
 	}
 
-	void AssetBrowser::RenderItemContextMenu(const DirectoryEntry& entry) {
+	void AssetBrowser::RenderItemContextMenu(const DirectoryEntry& entry, int index) {
 		if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
 			ImGui::OpenPopup("##ItemCtx");
 			m_ItemRightClicked = true;
+			if (!IsPathSelected(entry.Path)) {
+				SetSingleSelection(entry.Path, index);
+			}
 		}
 
 		if (ImGui::BeginPopup("##ItemCtx")) {
-			m_SelectedPath = entry.Path;
+			if (!IsPathSelected(entry.Path)) {
+				SetSingleSelection(entry.Path, index);
+			}
 
-			if (ImGui::MenuItem("Delete")) {
-				DeleteEntry(entry.Path);
+			if (ImGui::MenuItem("Copy Asset", "Ctrl+C")) {
+				CopySelectedAssets(false);
+			}
+			if (ImGui::MenuItem("Open Asset")) {
+				OpenAssetPath(entry.Path);
 				ImGui::EndPopup();
 				return;
 			}
-			if (ImGui::MenuItem("Rename")) {
+			if (ImGui::MenuItem("Open in Explorer")) {
+				RevealAssetInExplorer(entry.Path);
+			}
+			ImGui::Separator();
+
+			if (ImGui::MenuItem("Delete")) {
+				const std::vector<std::string> paths = GetSelectedPaths();
+				for (const std::string& path : paths) {
+					DeleteEntry(path);
+				}
+				ImGui::EndPopup();
+				return;
+			}
+			if (ImGui::MenuItem("Rename", nullptr, false, GetSelectedPaths().size() == 1)) {
 				BeginRename(entry.Path, entry.Name);
+			}
+			if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
+				DuplicateSelectedAssets();
 			}
 			if (ImGui::MenuItem("Copy Path")) {
 				CopyPathToClipboard(entry.Path);
@@ -527,6 +887,9 @@ namespace Bolt {
 						if (m_SelectedPath == sourcePath) {
 							m_SelectedPath.clear();
 						}
+						m_SelectedPaths.erase(
+							std::remove(m_SelectedPaths.begin(), m_SelectedPaths.end(), sourcePath),
+							m_SelectedPaths.end());
 						if (m_PressedPath == sourcePath) {
 							m_PressedPath.clear();
 						}

@@ -80,6 +80,7 @@ namespace Bolt {
 		void CompletePlayModeEntry(Scene& scene);
 		void PollPendingPlayModeRequest(Scene& scene);
 		void RestoreEditorSceneAfterPlaymode();
+		void SelectSceneNode();
 		void SelectEntity(EntityHandle entity);
 		void ClearEntitySelection();
 		void DrainPendingLogEntries();
@@ -102,6 +103,7 @@ namespace Bolt {
 
 		EntityHandle m_SelectedEntity = entt::null;
 		EntityHandle m_PressedEntity = entt::null;
+		bool m_IsSceneNodeSelected = false;
 		EventId m_LogSubscriptionId{};
 		std::vector<LogEntry> m_LogEntries;
 		std::shared_ptr<LogDispatchState> m_LogDispatchState;

@@ -52,6 +52,25 @@ public class Entity : IEquatable<Entity>
     public bool IsSceneEntity => !IsPrefabAsset && Origin == EntityOrigin.Scene;
     public bool IsPrefabInstance => IsPrefabAsset || (!IsPrefabAsset && Origin == EntityOrigin.Prefab);
     public bool IsRuntime => !IsPrefabAsset && Origin == EntityOrigin.Runtime;
+    public bool IsStatic
+    {
+        get => !IsPrefabAsset && InternalCalls.Entity_GetIsStatic(ID);
+        set
+        {
+            if (!IsPrefabAsset)
+                InternalCalls.Entity_SetIsStatic(ID, value);
+        }
+    }
+
+    public bool IsEnabled
+    {
+        get => !IsPrefabAsset && InternalCalls.Entity_GetIsEnabled(ID);
+        set
+        {
+            if (!IsPrefabAsset)
+                InternalCalls.Entity_SetIsEnabled(ID, value);
+        }
+    }
 
     public Transform2DComponent Transform
     {

@@ -1160,7 +1160,13 @@ namespace Bolt {
 	}
 
 	namespace {
-		void DispatchCollision2D(Scene& scene, const Collision2D& collision, bool isEnter)
+		enum class CollisionDispatchPhase {
+			Enter,
+			Stay,
+			Exit
+		};
+
+		void DispatchCollision2D(Scene& scene, const Collision2D& collision, CollisionDispatchPhase phase)
 		{
 			if (!ScriptEngine::IsInitialized()) {
 				return;
@@ -1184,11 +1190,16 @@ namespace Bolt {
 						continue;
 					}
 
-					if (isEnter) {
-						ScriptEngine::InvokeCollisionEnter2D(instance.GetGCHandle(), selfID, otherID, entityAID, entityBID);
-					}
-					else {
-						ScriptEngine::InvokeCollisionExit2D(instance.GetGCHandle(), selfID, otherID, entityAID, entityBID);
+					switch (phase) {
+					case CollisionDispatchPhase::Enter:
+						ScriptEngine::InvokeCollisionEnter2D(instance.GetGCHandle(), selfID, otherID, entityAID, entityBID, collision.contactPoint.x, collision.contactPoint.y);
+						break;
+					case CollisionDispatchPhase::Stay:
+						ScriptEngine::InvokeCollisionStay2D(instance.GetGCHandle(), selfID, otherID, entityAID, entityBID, collision.contactPoint.x, collision.contactPoint.y);
+						break;
+					case CollisionDispatchPhase::Exit:
+						ScriptEngine::InvokeCollisionExit2D(instance.GetGCHandle(), selfID, otherID, entityAID, entityBID, collision.contactPoint.x, collision.contactPoint.y);
+						break;
 					}
 				}
 			};
@@ -1202,12 +1213,17 @@ namespace Bolt {
 
 	void ScriptSystem::DispatchCollisionEnter2D(Scene& scene, const Collision2D& collision)
 	{
-		DispatchCollision2D(scene, collision, true);
+		DispatchCollision2D(scene, collision, CollisionDispatchPhase::Enter);
+	}
+
+	void ScriptSystem::DispatchCollisionStay2D(Scene& scene, const Collision2D& collision)
+	{
+		DispatchCollision2D(scene, collision, CollisionDispatchPhase::Stay);
 	}
 
 	void ScriptSystem::DispatchCollisionExit2D(Scene& scene, const Collision2D& collision)
 	{
-		DispatchCollision2D(scene, collision, false);
+		DispatchCollision2D(scene, collision, CollisionDispatchPhase::Exit);
 	}
 
 	void ScriptSystem::OnGui(Scene& scene)

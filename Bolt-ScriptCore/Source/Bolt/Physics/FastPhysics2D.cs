@@ -1,159 +1,63 @@
-﻿
-
 using System;
 
-namespace Bolt.Physics
+namespace Bolt.Physics;
+
+public static class FastPhysics2D
 {
-    public static class FastPhysics2D
+    public static int MaxPolygonVertices
     {
-        public static int MaxPolygonVertices = 8;
-
-        private static Entity? ToEntity(ulong entityID)
-        {
-            return entityID == 0 ? null : new Entity(entityID);
-        }
-
-        private static bool IsValidDistance(float maxDistance)
-        {
-            return maxDistance > 0.0f && !float.IsNaN(maxDistance);
-        }
-
-        private static bool IsValidDirection(Vector2 direction)
-        {
-            return direction.LengthSquared() > Mathf.Epsilon * Mathf.Epsilon;
-        }
-
-        public static RaycastHit2D Raycast(Vector2 origin, Vector2 direction, float maxDistance = Mathf.Infinity)
-        {
-            throw new System.NotImplementedException();
-        }
-
-        public static bool RaycastCheck(Vector2 origin, Vector2 direction, float maxDistance = Mathf.Infinity)
-        {
-            throw new System.NotImplementedException();
-        }
-
-        public static Entity? OverlapCircle(Vector2 origin, float radius)
-        {
-
-            throw new System.NotImplementedException();
-        }
-
-        public static bool OverlapCircleCheck(Vector2 origin, float radius)
-        {
-            throw new System.NotImplementedException();
-        }
-
-        public static Entity? OverlapBox(Vector2 origin, Vector2 size, float rotation = 0)
-        {
-
-            throw new System.NotImplementedException();
-        }
-
-        public static bool OverlapBoxCheck(Vector2 origin, Vector2 size, float rotation = 0)
-        {
-
-            throw new System.NotImplementedException();
-        }
-
-        public static Entity[] OverlapCircleAll(Vector2 origin, float radius)
-        {
-
-            throw new System.NotImplementedException();
-        }
-
-        public static Entity[] OverlapBoxAll(Vector2 origin, Vector2 size, float rotation = 0)
-        {
-
-            throw new System.NotImplementedException();
-        }
-
-        public static Entity? OverlapPolygon(Vector2 origin, params float[] points)
-        {
-
-            throw new System.NotImplementedException();
-        }
-
-        public static bool OverlapPolygonCheck(Vector2 origin, params float[] points)
-        {
-            throw new System.NotImplementedException();
-        }
-
-        public static Entity[] OverlapPolygonAll(Vector2 origin, params float[] points)
-        {
-
-            throw new System.NotImplementedException();
-        }
-
-        public static Entity? OverlapPoint(Vector2 origin)
-        {
-            throw new System.NotImplementedException();
-        }
-        public static Entity[] OverlapPointAll(Vector2 origin)
-        {
-            throw new System.NotImplementedException();
-        }
-        public static bool OverlapPointCheck(Vector2 origin)
-        {
-            throw new System.NotImplementedException();
-        }
-
-
-        private delegate int OverlapQuery(Span<ulong> buffer);
-
-        private static Entity[] ToEntities(OverlapQuery query)
-        {
-            ulong[] ids = ExecuteOverlapQuery(query);
-            if (ids.Length == 0)
-                return Array.Empty<Entity>();
-
-            Entity[] entities = new Entity[ids.Length];
-            for (int i = 0; i < ids.Length; i++)
-                entities[i] = new Entity(ids[i]);
-            return entities;
-        }
-
-        private static ulong[] ExecuteOverlapQuery(OverlapQuery query)
-        {
-            int capacity = Math.Max(16, InternalCalls.Scene_GetEntityCount());
-            ulong[] buffer = new ulong[capacity];
-
-            while (true)
-            {
-                int count = query(buffer);
-                if (count <= 0)
-                    return Array.Empty<ulong>();
-
-                if (count <= buffer.Length)
-                {
-                    if (count == buffer.Length)
-                        return buffer;
-
-                    ulong[] result = new ulong[count];
-                    Array.Copy(buffer, result, count);
-                    return result;
-                }
-
-                buffer = new ulong[count];
-            }
-        }
-
-        private static bool IsValidPolygon(float[] points)
-        {
-            if (points == null || points.Length < 6 || points.Length % 2 != 0)
-                return false;
-
-            int vertexCount = points.Length / 2;
-            if (vertexCount > MaxPolygonVertices)
-                return false;
-
-            for (int i = 0; i < points.Length; i++)
-            {
-                if (float.IsNaN(points[i]) || float.IsInfinity(points[i]))
-                    return false;
-            }
-
-            return true;
-        }
+        get => Physics2D.MaxPolygonVertices;
+        set => Physics2D.MaxPolygonVertices = value;
     }
+
+    public static RaycastHit2D Raycast(Vector2 origin, Vector2 direction, float maxDistance = Mathf.Infinity)
+        => Physics2D.Raycast(origin, direction, maxDistance);
+
+    public static bool RaycastCheck(Vector2 origin, Vector2 direction, float maxDistance = Mathf.Infinity)
+        => Physics2D.RaycastCheck(origin, direction, maxDistance);
+
+    public static Entity? OverlapCircle(Vector2 origin, float radius)
+        => Physics2D.OverlapCircle(origin, radius);
+
+    public static bool OverlapCircleCheck(Vector2 origin, float radius)
+        => Physics2D.OverlapCircleCheck(origin, radius);
+
+    public static Entity? OverlapBox(Vector2 origin, Vector2 size, float rotation = 0)
+        => Physics2D.OverlapBox(origin, size, rotation);
+
+    public static bool OverlapBoxCheck(Vector2 origin, Vector2 size, float rotation = 0)
+        => Physics2D.OverlapBoxCheck(origin, size, rotation);
+
+    public static Entity[] OverlapCircleAll(Vector2 origin, float radius)
+        => Physics2D.OverlapCircleAll(origin, radius);
+
+    public static Entity[] OverlapBoxAll(Vector2 origin, Vector2 size, float rotation = 0)
+        => Physics2D.OverlapBoxAll(origin, size, rotation);
+
+    public static Entity? OverlapPolygon(Vector2 origin, params float[] points)
+        => Physics2D.OverlapPolygon(origin, points);
+
+    public static bool OverlapPolygonCheck(Vector2 origin, params float[] points)
+        => Physics2D.OverlapPolygonCheck(origin, points);
+
+    public static Entity[] OverlapPolygonAll(Vector2 origin, params float[] points)
+        => Physics2D.OverlapPolygonAll(origin, points);
+
+    public static Entity? ContainsPoint(Vector2 origin)
+        => Physics2D.ContainsPoint(origin);
+
+    public static Entity[] ContainsPointAll(Vector2 origin)
+        => Physics2D.ContainsPointAll(origin);
+
+    public static bool ContainsPointCheck(Vector2 origin)
+        => Physics2D.ContainsPointCheck(origin);
+
+    [Obsolete("Use ContainsPoint.")]
+    public static Entity? OverlapPoint(Vector2 origin) => ContainsPoint(origin);
+
+    [Obsolete("Use ContainsPointAll.")]
+    public static Entity[] OverlapPointAll(Vector2 origin) => ContainsPointAll(origin);
+
+    [Obsolete("Use ContainsPointCheck.")]
+    public static bool OverlapPointCheck(Vector2 origin) => ContainsPointCheck(origin);
 }

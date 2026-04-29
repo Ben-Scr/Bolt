@@ -83,6 +83,88 @@ namespace Bolt {
 			b2World_OverlapShape(world, &proxy, filter, QueryContext::Report, &context);
 			return results;
 		}
+
+		std::optional<EntityHandle> QueryPoint(const Vec2& point, OverlapMode mode) {
+			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
+				return std::nullopt;
+			}
+
+			auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
+			b2WorldId world = phys.GetWorldID();
+			b2QueryFilter filter = b2DefaultQueryFilter();
+			constexpr float epsilon = 0.001f;
+			b2AABB aabb{
+				.lowerBound = { point.x - epsilon, point.y - epsilon },
+				.upperBound = { point.x + epsilon, point.y + epsilon }
+			};
+
+			struct QueryContext {
+				Vec2 point;
+				OverlapMode mode;
+				std::optional<EntityHandle> first;
+				std::optional<EntityHandle> nearest;
+				float bestDist2 = std::numeric_limits<float>::max();
+
+				static bool Report(b2ShapeId shapeId, void* ctx) {
+					auto* self = static_cast<QueryContext*>(ctx);
+					if (!b2Shape_TestPoint(shapeId, { self->point.x, self->point.y })) {
+						return true;
+					}
+
+					EntityHandle handle = GetEntityHandleFromShape(shapeId);
+					if (self->mode == OverlapMode::First) {
+						self->first = handle;
+						return false;
+					}
+
+					b2BodyId bodyId = b2Shape_GetBody(shapeId);
+					b2Transform xf = b2Body_GetTransform(bodyId);
+					float dx = xf.p.x - self->point.x;
+					float dy = xf.p.y - self->point.y;
+					float d2 = dx * dx + dy * dy;
+					if (d2 < self->bestDist2) {
+						self->bestDist2 = d2;
+						self->nearest = handle;
+					}
+					return true;
+				}
+			} context{ point, mode, std::nullopt, std::nullopt };
+
+			b2World_OverlapAABB(world, aabb, filter, QueryContext::Report, &context);
+			return mode == OverlapMode::First ? context.first : context.nearest;
+		}
+
+		std::vector<EntityHandle> QueryPointAll(const Vec2& point) {
+			std::vector<EntityHandle> results;
+			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
+				return results;
+			}
+
+			auto& phys = PhysicsSystem2D::GetMainPhysicsWorld();
+			b2WorldId world = phys.GetWorldID();
+			b2QueryFilter filter = b2DefaultQueryFilter();
+			constexpr float epsilon = 0.001f;
+			b2AABB aabb{
+				.lowerBound = { point.x - epsilon, point.y - epsilon },
+				.upperBound = { point.x + epsilon, point.y + epsilon }
+			};
+
+			struct QueryContext {
+				Vec2 point;
+				std::vector<EntityHandle>* out;
+
+				static bool Report(b2ShapeId shapeId, void* ctx) {
+					auto* self = static_cast<QueryContext*>(ctx);
+					if (b2Shape_TestPoint(shapeId, { self->point.x, self->point.y })) {
+						self->out->push_back(GetEntityHandleFromShape(shapeId));
+					}
+					return true;
+				}
+			} context{ point, &results };
+
+			b2World_OverlapAABB(world, aabb, filter, QueryContext::Report, &context);
+			return results;
+		}
 	}
 
 	std::optional<EntityHandle> Physics2D::OverlapCircle(const Vec2& center, float radius, OverlapMode mode) {
@@ -130,6 +212,9 @@ namespace Bolt {
 		}
 
 		return QueryProxy(center, proxy, mode);
+	}
+	std::optional<EntityHandle> Physics2D::ContainsPoint(const Vec2& point, OverlapMode mode) {
+		return QueryPoint(point, mode);
 	}
 	std::optional<RaycastHit2D> Physics2D::Raycast(const Vec2& origin,const Vec2& direction, float maxDistance) {
 		if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled() || maxDistance <= 0.0f) {
@@ -208,5 +293,8 @@ namespace Bolt {
 		}
 
 		return QueryProxyAll(proxy);
+	}
+	std::vector<EntityHandle> Physics2D::ContainsPointAll(const Vec2& point) {
+		return QueryPointAll(point);
 	}
 }

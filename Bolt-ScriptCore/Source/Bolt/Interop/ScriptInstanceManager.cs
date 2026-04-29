@@ -156,6 +156,24 @@ internal static class ScriptInstanceManager
         }
     }
 
+    private static void DispatchToGameSystems(Action<GameSystem> invoke, string eventName)
+    {
+        foreach (var system in new List<GameSystem>(s_GameSystems.Values))
+        {
+            try { invoke(system); }
+            catch (Exception ex) { Console.Error.WriteLine($"Exception in {eventName}: {ex}"); }
+        }
+    }
+
+    private static void DispatchToGlobalSystems(Action<GlobalSystem> invoke, string eventName)
+    {
+        foreach (var system in new List<GlobalSystem>(s_GlobalSystems.Values))
+        {
+            try { invoke(system); }
+            catch (Exception ex) { Console.Error.WriteLine($"Exception in {eventName}: {ex}"); }
+        }
+    }
+
     internal static void DispatchLogMessage(string message)
     {
         DispatchToScripts(script => script.OnLogMessage(message), nameof(EntityScript.OnLogMessage));
@@ -180,6 +198,17 @@ internal static class ScriptInstanceManager
     {
         Application.RaiseApplicationPaused();
         DispatchToScripts(script => script.OnApplicationPaused(), nameof(EntityScript.OnApplicationPaused));
+        DispatchToGameSystems(system => system.OnApplicationPaused(), nameof(GameSystem.OnApplicationPaused));
+        DispatchToGlobalSystems(system => system.OnApplicationPaused(), nameof(GlobalSystem.OnApplicationPaused));
+    }
+
+    [UnmanagedCallersOnly]
+    public static void RaiseApplicationQuit()
+    {
+        Application.RaiseApplicationQuit();
+        DispatchToScripts(script => script.OnApplicationQuit(), nameof(EntityScript.OnApplicationQuit));
+        DispatchToGameSystems(system => system.OnApplicationQuit(), nameof(GameSystem.OnApplicationQuit));
+        DispatchToGlobalSystems(system => system.OnApplicationQuit(), nameof(GlobalSystem.OnApplicationQuit));
     }
 
     [UnmanagedCallersOnly]
@@ -188,6 +217,8 @@ internal static class ScriptInstanceManager
         bool isFocused = focused != 0;
         Application.RaiseFocusChanged(isFocused);
         DispatchToScripts(script => script.OnFocusChanged(isFocused), nameof(EntityScript.OnFocusChanged));
+        DispatchToGameSystems(system => system.OnFocusChanged(isFocused), nameof(GameSystem.OnFocusChanged));
+        DispatchToGlobalSystems(system => system.OnFocusChanged(isFocused), nameof(GlobalSystem.OnFocusChanged));
     }
 
     [UnmanagedCallersOnly]
@@ -380,32 +411,47 @@ internal static class ScriptInstanceManager
     }
 
     [UnmanagedCallersOnly]
-    public static void InvokeCollisionEnter2D(int handle, ulong selfEntityId, ulong otherEntityId, ulong entityAId, ulong entityBId)
+    public static void InvokeCollisionEnter2D(int handle, ulong selfEntityId, ulong otherEntityId, ulong entityAId, ulong entityBId, float contactPointX, float contactPointY)
     {
-        InvokeCollision2D(handle, selfEntityId, otherEntityId, entityAId, entityBId, isEnter: true);
+        InvokeCollision2D(handle, selfEntityId, otherEntityId, entityAId, entityBId, new Vector2(contactPointX, contactPointY), CollisionPhase.Enter);
     }
 
     [UnmanagedCallersOnly]
-    public static void InvokeCollisionExit2D(int handle, ulong selfEntityId, ulong otherEntityId, ulong entityAId, ulong entityBId)
+    public static void InvokeCollisionStay2D(int handle, ulong selfEntityId, ulong otherEntityId, ulong entityAId, ulong entityBId, float contactPointX, float contactPointY)
     {
-        InvokeCollision2D(handle, selfEntityId, otherEntityId, entityAId, entityBId, isEnter: false);
+        InvokeCollision2D(handle, selfEntityId, otherEntityId, entityAId, entityBId, new Vector2(contactPointX, contactPointY), CollisionPhase.Stay);
     }
 
-    private static void InvokeCollision2D(int handle, ulong selfEntityId, ulong otherEntityId, ulong entityAId, ulong entityBId, bool isEnter)
+    [UnmanagedCallersOnly]
+    public static void InvokeCollisionExit2D(int handle, ulong selfEntityId, ulong otherEntityId, ulong entityAId, ulong entityBId, float contactPointX, float contactPointY)
+    {
+        InvokeCollision2D(handle, selfEntityId, otherEntityId, entityAId, entityBId, new Vector2(contactPointX, contactPointY), CollisionPhase.Exit);
+    }
+
+    private enum CollisionPhase { Enter, Stay, Exit }
+
+    private static void InvokeCollision2D(int handle, ulong selfEntityId, ulong otherEntityId, ulong entityAId, ulong entityBId, Vector2 contactPoint, CollisionPhase phase)
     {
         if (!s_Instances.TryGetValue(handle, out var data)) return;
 
         try
         {
-            var collision = new Collision2D(selfEntityId, otherEntityId, entityAId, entityBId);
-            if (isEnter)
+            var collision = new Collision2D(selfEntityId, otherEntityId, entityAId, entityBId, contactPoint);
+            if (phase == CollisionPhase.Enter)
                 data.Instance.OnCollisionEnter2D(collision);
+            else if (phase == CollisionPhase.Stay)
+                data.Instance.OnCollisionStay2D(collision);
             else
                 data.Instance.OnCollisionExit2D(collision);
         }
         catch (Exception ex)
         {
-            string callbackName = isEnter ? nameof(EntityScript.OnCollisionEnter2D) : nameof(EntityScript.OnCollisionExit2D);
+            string callbackName = phase switch
+            {
+                CollisionPhase.Enter => nameof(EntityScript.OnCollisionEnter2D),
+                CollisionPhase.Stay => nameof(EntityScript.OnCollisionStay2D),
+                _ => nameof(EntityScript.OnCollisionExit2D)
+            };
             Log.Error($"Exception in {callbackName}: {ex}");
         }
     }
@@ -461,6 +507,22 @@ internal static class ScriptInstanceManager
     }
 
     [UnmanagedCallersOnly]
+    public static void InvokeGameSystemEnable(int handle)
+    {
+        if (!s_GameSystems.TryGetValue(handle, out var system)) return;
+        try { system.OnEnable(); }
+        catch (Exception ex) { Log.Error($"Exception in GameSystem.OnEnable(): {ex}"); }
+    }
+
+    [UnmanagedCallersOnly]
+    public static void InvokeGameSystemDisable(int handle)
+    {
+        if (!s_GameSystems.TryGetValue(handle, out var system)) return;
+        try { system.OnDisable(); }
+        catch (Exception ex) { Log.Error($"Exception in GameSystem.OnDisable(): {ex}"); }
+    }
+
+    [UnmanagedCallersOnly]
     public static void InvokeGameSystemDestroy(int handle)
     {
         if (!s_GameSystems.TryGetValue(handle, out var system)) return;
@@ -513,6 +575,22 @@ internal static class ScriptInstanceManager
         if (!s_GlobalSystems.TryGetValue(handle, out var system)) return;
         try { system.OnUpdate(); }
         catch (Exception ex) { Log.Error($"Exception in GlobalSystem.OnUpdate(): {ex}"); }
+    }
+
+    [UnmanagedCallersOnly]
+    public static void InvokeGlobalSystemEnable(int handle)
+    {
+        if (!s_GlobalSystems.TryGetValue(handle, out var system)) return;
+        try { system.OnEnable(); }
+        catch (Exception ex) { Log.Error($"Exception in GlobalSystem.OnEnable(): {ex}"); }
+    }
+
+    [UnmanagedCallersOnly]
+    public static void InvokeGlobalSystemDisable(int handle)
+    {
+        if (!s_GlobalSystems.TryGetValue(handle, out var system)) return;
+        try { system.OnDisable(); }
+        catch (Exception ex) { Log.Error($"Exception in GlobalSystem.OnDisable(): {ex}"); }
     }
 
     [UnmanagedCallersOnly]

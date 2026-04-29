@@ -289,6 +289,9 @@ namespace Bolt {
 			if (m_SelectedPath == path) {
 				m_SelectedPath.clear();
 			}
+			m_SelectedPaths.erase(
+				std::remove(m_SelectedPaths.begin(), m_SelectedPaths.end(), path),
+				m_SelectedPaths.end());
 			if (m_PressedPath == path) {
 				m_PressedPath.clear();
 			}
@@ -308,6 +311,11 @@ namespace Bolt {
 			std::string newPath = (p.parent_path() / newName).string();
 			if (m_SelectedPath == path) {
 				m_SelectedPath = newPath;
+			}
+			for (std::string& selectedPath : m_SelectedPaths) {
+				if (selectedPath == path) {
+					selectedPath = newPath;
+				}
 			}
 
 			std::string ext = std::filesystem::path(newName).extension().string();
