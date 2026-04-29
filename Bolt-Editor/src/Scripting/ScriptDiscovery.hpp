@@ -21,6 +21,7 @@ namespace Bolt::EditorScriptDiscovery {
 		std::filesystem::path Path;
 		std::string Extension;
 		ScriptType Type = ScriptType::Unknown;
+		bool IsManagedComponent = false;
 	};
 
 	inline std::string ToLowerCopy(std::string value)
@@ -95,13 +96,35 @@ namespace Bolt::EditorScriptDiscovery {
 		const std::string& className,
 		const std::filesystem::path& path,
 		const std::string& extension,
-		ScriptType type)
+		ScriptType type,
+		bool isManagedComponent = false)
 	{
 		if (className.empty() || type == ScriptType::Unknown || ContainsScriptEntry(entries, className, type)) {
 			return;
 		}
 
-		entries.push_back({ className, path, extension, type });
+		entries.push_back({ className, path, extension, type, isManagedComponent });
+	}
+
+	inline bool SourceLooksLikeManagedComponent(const std::filesystem::path& filePath)
+	{
+		std::ifstream input(filePath, std::ios::binary);
+		if (!input) {
+			return false;
+		}
+
+		const std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+		std::string compactSource;
+		compactSource.reserve(source.size());
+		for (char ch : source) {
+			if (std::isspace(static_cast<unsigned char>(ch)) == 0) {
+				compactSource.push_back(ch);
+			}
+		}
+
+		return compactSource.find(":Component") != std::string::npos
+			|| compactSource.find(":Bolt.Component") != std::string::npos
+			|| compactSource.find(":global::Bolt.Component") != std::string::npos;
 	}
 
 	inline std::vector<std::string> ExtractRegisteredNativeScriptClasses(const std::filesystem::path& filePath)
@@ -148,7 +171,7 @@ namespace Bolt::EditorScriptDiscovery {
 	{
 		std::string extension = ToLowerCopy(filePath.extension().string());
 		if (IsCSharpScriptExtension(extension)) {
-			AppendScriptEntry(entries, filePath.stem().string(), filePath, extension, ScriptType::Managed);
+			AppendScriptEntry(entries, filePath.stem().string(), filePath, extension, ScriptType::Managed, SourceLooksLikeManagedComponent(filePath));
 			return;
 		}
 

@@ -80,6 +80,26 @@ namespace Bolt {
 			return true;
 		}
 
+		bool AttachManagedComponentToEntity(Entity entity, Scene& scene, const EditorScriptDiscovery::ScriptEntry& scriptEntry)
+		{
+			if (scriptEntry.ClassName.empty() || !scriptEntry.IsManagedComponent) {
+				return false;
+			}
+
+			if (!entity.HasComponent<ScriptComponent>()) {
+				entity.AddComponent<ScriptComponent>();
+			}
+
+			auto& scriptComponent = entity.GetComponent<ScriptComponent>();
+			if (scriptComponent.HasManagedComponent(scriptEntry.ClassName)) {
+				return false;
+			}
+
+			scriptComponent.AddManagedComponent(scriptEntry.ClassName);
+			scene.MarkDirty();
+			return true;
+		}
+
 		bool IsLeftMouseDragPastClickThreshold()
 		{
 			const ImGuiIO& io = ImGui::GetIO();
@@ -1122,7 +1142,7 @@ namespace Bolt {
 					}
 				});
 
-				// Also search scripts by name
+				// Also search C# components and scripts by name.
 				for (const auto& scriptEntry : scriptEntries) {
 					std::string lowerClassName = EditorScriptDiscovery::ToLowerCopy(scriptEntry.ClassName);
 					std::string lowerPath = EditorScriptDiscovery::ToLowerCopy(scriptEntry.Path.string());
@@ -1134,7 +1154,12 @@ namespace Bolt {
 					const std::string label = BuildScriptMenuLabel(scriptEntry);
 					const std::string path = scriptEntry.Path.string();
 					if (ImGuiUtils::MenuItemEllipsis(label, path.c_str(), nullptr, false, true, 260.0f)) {
-						AttachScriptToEntity(entity, scene, scriptEntry);
+						if (scriptEntry.IsManagedComponent) {
+							AttachManagedComponentToEntity(entity, scene, scriptEntry);
+						}
+						else {
+							AttachScriptToEntity(entity, scene, scriptEntry);
+						}
 					}
 				}
 			} else {
@@ -1181,10 +1206,41 @@ namespace Bolt {
 					}
 				}
 
+				// Managed components subcategory.
+				bool hasManagedComponents = false;
+				for (const auto& scriptEntry : scriptEntries) {
+					if (scriptEntry.IsManagedComponent) {
+						hasManagedComponents = true;
+						break;
+					}
+				}
+				if (hasManagedComponents) {
+					if (ImGui::TreeNode("Components (C#)")) {
+						for (const auto& scriptEntry : scriptEntries) {
+							if (!scriptEntry.IsManagedComponent) {
+								continue;
+							}
+							if (entity.HasComponent<ScriptComponent>()
+								&& entity.GetComponent<ScriptComponent>().HasManagedComponent(scriptEntry.ClassName)) {
+								continue;
+							}
+							const std::string label = BuildScriptMenuLabel(scriptEntry);
+							const std::string path = scriptEntry.Path.string();
+							if (ImGuiUtils::MenuItemEllipsis(label, path.c_str(), nullptr, false, true, 260.0f)) {
+								AttachManagedComponentToEntity(entity, scene, scriptEntry);
+							}
+						}
+						ImGui::TreePop();
+					}
+				}
+
 				// Scripts subcategory: managed and native script types as addable items
 				if (!scriptEntries.empty()) {
 					if (ImGui::TreeNode("Scripts")) {
 						for (const auto& scriptEntry : scriptEntries) {
+							if (scriptEntry.IsManagedComponent) {
+								continue;
+							}
 							const std::string label = BuildScriptMenuLabel(scriptEntry);
 							const std::string path = scriptEntry.Path.string();
 							if (ImGuiUtils::MenuItemEllipsis(label, path.c_str(), nullptr, false, true, 260.0f)) {
@@ -1206,7 +1262,12 @@ namespace Bolt {
 				std::vector<EditorScriptDiscovery::ScriptEntry> droppedScripts;
 				EditorScriptDiscovery::CollectScriptFile(std::filesystem::path(droppedPath), droppedScripts);
 				for (const auto& scriptEntry : droppedScripts) {
-					AttachScriptToEntity(entity, scene, scriptEntry);
+					if (scriptEntry.IsManagedComponent) {
+						AttachManagedComponentToEntity(entity, scene, scriptEntry);
+					}
+					else {
+						AttachScriptToEntity(entity, scene, scriptEntry);
+					}
 				}
 			}
 			ImGui::EndDragDropTarget();

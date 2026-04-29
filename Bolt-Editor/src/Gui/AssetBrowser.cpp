@@ -466,6 +466,12 @@ namespace Bolt {
 			if (ImGui::MenuItem("Create Script (C++)")) {
 				CreateNativeScript(m_CurrentDirectory);
 			}
+			if (ImGui::MenuItem("Component (C#)")) {
+				CreateCSharpComponent(m_CurrentDirectory);
+			}
+			if (ImGui::MenuItem("Component (C++)")) {
+				CreateNativeComponent(m_CurrentDirectory);
+			}
 
 			ImGui::EndPopup();
 		}

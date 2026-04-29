@@ -3,9 +3,8 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
-using Bolt;
 
-namespace Bolt.Hosting
+namespace Bolt.Interop
 {
     /// <summary>
     /// Resolves Bolt-ScriptCore from the default context to prevent duplicate type loading.
@@ -120,7 +119,7 @@ namespace Bolt.Hosting
 
         private struct ScriptInstanceData
         {
-            public BoltScript Instance;
+            public EntityScript Instance;
             public MethodInfo? StartMethod;
             public MethodInfo? UpdateMethod;
             public MethodInfo? OnDestroyMethod;
@@ -130,6 +129,8 @@ namespace Bolt.Hosting
         private class ScriptClassInfo
         {
             public Type Type = null!;
+            public bool IsScript;
+            public bool IsComponent;
             public MethodInfo? StartMethod;
             public MethodInfo? UpdateMethod;
             public MethodInfo? OnDestroyMethod;
@@ -145,7 +146,7 @@ namespace Bolt.Hosting
             return new List<ScriptInstanceData>(s_Instances.Values);
         }
 
-        private static void DispatchToScripts(Action<BoltScript> invoke, string eventName)
+        private static void DispatchToScripts(Action<EntityScript> invoke, string eventName)
         {
             foreach (var data in SnapshotInstances())
             {
@@ -156,7 +157,7 @@ namespace Bolt.Hosting
 
         internal static void DispatchLogMessage(string message)
         {
-            DispatchToScripts(script => script.OnLogMessage(message), nameof(BoltScript.OnLogMessage));
+            DispatchToScripts(script => script.OnLogMessage(message), nameof(EntityScript.OnLogMessage));
         }
 
         private static Scene SceneFromName(string name) => new Scene { Name = name };
@@ -170,14 +171,14 @@ namespace Bolt.Hosting
         public static void RaiseApplicationStart()
         {
             Application.RaiseApplicationStart();
-            DispatchToScripts(script => script.OnApplicationStart(), nameof(BoltScript.OnApplicationStart));
+            DispatchToScripts(script => script.OnApplicationStart(), nameof(EntityScript.OnApplicationStart));
         }
 
         [UnmanagedCallersOnly]
         public static void RaiseApplicationPaused()
         {
             Application.RaiseApplicationPaused();
-            DispatchToScripts(script => script.OnApplicationPaused(), nameof(BoltScript.OnApplicationPaused));
+            DispatchToScripts(script => script.OnApplicationPaused(), nameof(EntityScript.OnApplicationPaused));
         }
 
         [UnmanagedCallersOnly]
@@ -185,7 +186,7 @@ namespace Bolt.Hosting
         {
             bool isFocused = focused != 0;
             Application.RaiseFocusChanged(isFocused);
-            DispatchToScripts(script => script.OnFocusChanged(isFocused), nameof(BoltScript.OnFocusChanged));
+            DispatchToScripts(script => script.OnFocusChanged(isFocused), nameof(EntityScript.OnFocusChanged));
         }
 
         [UnmanagedCallersOnly]
@@ -193,7 +194,7 @@ namespace Bolt.Hosting
         {
             KeyCode keyCode = (KeyCode)key;
             Input.RaiseKeyDown(keyCode);
-            DispatchToScripts(script => script.OnKeyDown(keyCode), nameof(BoltScript.OnKeyDown));
+            DispatchToScripts(script => script.OnKeyDown(keyCode), nameof(EntityScript.OnKeyDown));
         }
 
         [UnmanagedCallersOnly]
@@ -201,7 +202,7 @@ namespace Bolt.Hosting
         {
             KeyCode keyCode = (KeyCode)key;
             Input.RaiseKeyUp(keyCode);
-            DispatchToScripts(script => script.OnKeyUp(keyCode), nameof(BoltScript.OnKeyUp));
+            DispatchToScripts(script => script.OnKeyUp(keyCode), nameof(EntityScript.OnKeyUp));
         }
 
         [UnmanagedCallersOnly]
@@ -209,7 +210,7 @@ namespace Bolt.Hosting
         {
             MouseButton mouseButton = (MouseButton)button;
             Input.RaiseMouseDown(mouseButton);
-            DispatchToScripts(script => script.OnMouseDown(mouseButton), nameof(BoltScript.OnMouseDown));
+            DispatchToScripts(script => script.OnMouseDown(mouseButton), nameof(EntityScript.OnMouseDown));
         }
 
         [UnmanagedCallersOnly]
@@ -217,14 +218,14 @@ namespace Bolt.Hosting
         {
             MouseButton mouseButton = (MouseButton)button;
             Input.RaiseMouseUp(mouseButton);
-            DispatchToScripts(script => script.OnMouseUp(mouseButton), nameof(BoltScript.OnMouseUp));
+            DispatchToScripts(script => script.OnMouseUp(mouseButton), nameof(EntityScript.OnMouseUp));
         }
 
         [UnmanagedCallersOnly]
         public static void RaiseMouseScroll(float delta)
         {
             Input.RaiseMouseScroll(delta);
-            DispatchToScripts(script => script.OnMouseScroll(delta), nameof(BoltScript.OnMouseScroll));
+            DispatchToScripts(script => script.OnMouseScroll(delta), nameof(EntityScript.OnMouseScroll));
         }
 
         [UnmanagedCallersOnly]
@@ -232,7 +233,7 @@ namespace Bolt.Hosting
         {
             Vector2 position = new(x, y);
             Input.RaiseMouseMove(position);
-            DispatchToScripts(script => script.OnMouseMove(position), nameof(BoltScript.OnMouseMove));
+            DispatchToScripts(script => script.OnMouseMove(position), nameof(EntityScript.OnMouseMove));
         }
 
         [UnmanagedCallersOnly]
@@ -241,7 +242,7 @@ namespace Bolt.Hosting
             string name = PtrToString(sceneNamePtr);
             SceneManager.RaiseBeforeSceneLoaded(name);
             Scene scene = SceneFromName(name);
-            DispatchToScripts(script => script.OnBeforeSceneLoaded(scene), nameof(BoltScript.OnBeforeSceneLoaded));
+            DispatchToScripts(script => script.OnBeforeSceneLoaded(scene), nameof(EntityScript.OnBeforeSceneLoaded));
         }
 
         [UnmanagedCallersOnly]
@@ -250,7 +251,7 @@ namespace Bolt.Hosting
             string name = PtrToString(sceneNamePtr);
             SceneManager.RaiseSceneLoaded(name);
             Scene scene = SceneFromName(name);
-            DispatchToScripts(script => script.OnSceneLoaded(scene), nameof(BoltScript.OnSceneLoaded));
+            DispatchToScripts(script => script.OnSceneLoaded(scene), nameof(EntityScript.OnSceneLoaded));
         }
 
         [UnmanagedCallersOnly]
@@ -259,7 +260,7 @@ namespace Bolt.Hosting
             string name = PtrToString(sceneNamePtr);
             SceneManager.RaiseBeforeSceneUnloaded(name);
             Scene scene = SceneFromName(name);
-            DispatchToScripts(script => script.OnBeforeSceneUnloaded(scene), nameof(BoltScript.OnBeforeSceneUnloaded));
+            DispatchToScripts(script => script.OnBeforeSceneUnloaded(scene), nameof(EntityScript.OnBeforeSceneUnloaded));
         }
 
         [UnmanagedCallersOnly]
@@ -268,7 +269,7 @@ namespace Bolt.Hosting
             string name = PtrToString(sceneNamePtr);
             SceneManager.RaiseSceneUnloaded(name);
             Scene scene = SceneFromName(name);
-            DispatchToScripts(script => script.OnSceneUnloaded(scene), nameof(BoltScript.OnSceneUnloaded));
+            DispatchToScripts(script => script.OnSceneUnloaded(scene), nameof(EntityScript.OnSceneUnloaded));
         }
 
         private static void UnloadCurrentUserAssemblyContext()
@@ -297,9 +298,9 @@ namespace Bolt.Hosting
             {
                 string className = Marshal.PtrToStringUTF8((IntPtr)classNamePtr)!;
                 var classInfo = GetOrCacheClass(className);
-                if (classInfo == null) return 0;
+                if (classInfo == null || !classInfo.IsScript) return 0;
 
-                var instance = (BoltScript)Activator.CreateInstance(classInfo.Type)!;
+                var instance = (EntityScript)Activator.CreateInstance(classInfo.Type)!;
                 instance._SetEntityID(entityID);
 
                 int handle = s_NextHandle++;
@@ -358,7 +359,7 @@ namespace Bolt.Hosting
         public static unsafe int ClassExists(byte* classNamePtr)
         {
             string className = Marshal.PtrToStringUTF8((IntPtr)classNamePtr)!;
-            return GetOrCacheClass(className) != null ? 1 : 0;
+            return GetOrCacheClass(className)?.IsScript == true ? 1 : 0;
         }
 
         [UnmanagedCallersOnly]
@@ -429,7 +430,7 @@ namespace Bolt.Hosting
                 foreach (var field in fields)
                 {
                     // Skip fields from BoltScript base class
-                    if (field.DeclaringType == typeof(BoltScript)) continue;
+                    if (field.DeclaringType == typeof(EntityScript)) continue;
 
                     var showAttr = field.GetCustomAttribute<ShowInEditorAttribute>();
                     if (showAttr == null) continue;
@@ -467,6 +468,15 @@ namespace Bolt.Hosting
                         headerSize = headerAttr.Size;
                     }
 
+                    float spaceHeight = 0.0f;
+                    bool hasSpace = false;
+                    var spaceAttr = field.GetCustomAttribute<SpaceAttribute>();
+                    if (spaceAttr != null)
+                    {
+                        spaceHeight = spaceAttr.Height;
+                        hasSpace = true;
+                    }
+
                     if (!first) sb.Append(',');
                     first = false;
 
@@ -481,6 +491,8 @@ namespace Bolt.Hosting
                       .Append(",\"tooltip\":\"").Append(EscapeJson(tooltip))
                       .Append("\",\"headerContent\":\"").Append(EscapeJson(headerContent))
                       .Append("\",\"headerSize\":").Append(headerSize.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                      .Append(",\"hasSpace\":").Append(hasSpace ? "true" : "false")
+                      .Append(",\"spaceHeight\":").Append(spaceHeight.ToString(System.Globalization.CultureInfo.InvariantCulture))
                       .Append("}");
                 }
 
@@ -848,9 +860,9 @@ namespace Bolt.Hosting
                 var classInfo = GetOrCacheClass(className);
                 if (classInfo == null) return NullTerminated("[]");
 
-                // Create a temporary instance just to read default values
-                BoltScript? tempInstance = null;
-                try { tempInstance = (BoltScript)Activator.CreateInstance(classInfo.Type)!; }
+                // Create a temporary instance just to read default values.
+                object? tempInstance = null;
+                try { tempInstance = Activator.CreateInstance(classInfo.Type)!; }
                 catch { return NullTerminated("[]"); }
 
                 var fields = classInfo.Type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -861,7 +873,8 @@ namespace Bolt.Hosting
 
                 foreach (var field in fields)
                 {
-                    if (field.DeclaringType == typeof(BoltScript)) continue;
+                    if (field.DeclaringType == typeof(EntityScript)) continue;
+                    if (field.DeclaringType == typeof(Component)) continue;
 
                     var showAttr = field.GetCustomAttribute<ShowInEditorAttribute>();
                     if (showAttr == null) continue;
@@ -899,6 +912,15 @@ namespace Bolt.Hosting
                         headerSize = headerAttr.Size;
                     }
 
+                    float spaceHeight = 0.0f;
+                    bool hasSpace = false;
+                    var spaceAttr = field.GetCustomAttribute<SpaceAttribute>();
+                    if (spaceAttr != null)
+                    {
+                        spaceHeight = spaceAttr.Height;
+                        hasSpace = true;
+                    }
+
                     if (!first) sb.Append(',');
                     first = false;
 
@@ -913,6 +935,8 @@ namespace Bolt.Hosting
                       .Append(",\"tooltip\":\"").Append(EscapeJson(tooltip))
                       .Append("\",\"headerContent\":\"").Append(EscapeJson(headerContent))
                       .Append("\",\"headerSize\":").Append(headerSize.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                      .Append(",\"hasSpace\":").Append(hasSpace ? "true" : "false")
+                      .Append(",\"spaceHeight\":").Append(spaceHeight.ToString(System.Globalization.CultureInfo.InvariantCulture))
                       .Append("}");
                 }
 
@@ -934,7 +958,9 @@ namespace Bolt.Hosting
                 return cached;
 
             Type? type = FindType(className);
-            if (type == null || !type.IsSubclassOf(typeof(BoltScript)))
+            bool isScript = type != null && type.IsSubclassOf(typeof(EntityScript));
+            bool isComponent = type != null && type.IsSubclassOf(typeof(Component)) && !Entity.TryGetNativeComponentName(type, out _);
+            if (type == null || (!isScript && !isComponent))
             {
                 s_ClassCache[className] = null;
                 return null;
@@ -943,9 +969,11 @@ namespace Bolt.Hosting
             var info = new ScriptClassInfo
             {
                 Type = type,
-                StartMethod = type.GetMethod("Start", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes),
-                UpdateMethod = type.GetMethod("Update", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes),
-                OnDestroyMethod = type.GetMethod("OnDestroy", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes),
+                IsScript = isScript,
+                IsComponent = isComponent,
+                StartMethod = isScript ? type.GetMethod("Start", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes) : null,
+                UpdateMethod = isScript ? type.GetMethod("Update", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes) : null,
+                OnDestroyMethod = isScript ? type.GetMethod("OnDestroy", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes) : null,
             };
 
             s_ClassCache[className] = info;

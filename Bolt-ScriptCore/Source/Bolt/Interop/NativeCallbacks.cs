@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Bolt.Hosting
+namespace Bolt.Interop
 {
     /// <summary>
     /// Layout must match the C++ NativeBindings struct exactly (Sequential, blittable).
@@ -47,6 +47,7 @@ namespace Bolt.Hosting
         public delegate* unmanaged<ulong, byte*, int> Entity_HasComponent;
         public delegate* unmanaged<ulong, byte*, int> Entity_AddComponent;
         public delegate* unmanaged<ulong, byte*, int> Entity_RemoveComponent;
+        public delegate* unmanaged<ulong, byte*, byte*> Entity_GetManagedComponentFields;
 
         // ── NameComponent ────────────────────────────────────────────
         public delegate* unmanaged<ulong, byte*> NameComponent_GetName;

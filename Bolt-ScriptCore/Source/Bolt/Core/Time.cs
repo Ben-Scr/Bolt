@@ -1,3 +1,4 @@
+using Bolt.Interop;
 
 namespace Bolt
 {

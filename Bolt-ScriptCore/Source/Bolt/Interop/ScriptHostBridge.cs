@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Bolt.Hosting
+namespace Bolt.Interop
 {
     /// <summary>
     /// Layout must match the C++ ManagedCallbacks struct exactly.

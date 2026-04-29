@@ -452,6 +452,7 @@ endforeach()
 		root.AddMember("startupScene", project.StartupScene);
 		root.AddMember("lastOpenedScene", project.LastOpenedScene);
 		root.AddMember("gameViewAspect", project.GameViewAspect);
+		root.AddMember("gameViewVsync", project.GameViewVsync);
 		root.AddMember("buildWidth", project.BuildWidth);
 		root.AddMember("buildHeight", project.BuildHeight);
 		root.AddMember("buildFullscreen", project.BuildFullscreen);
@@ -608,6 +609,9 @@ endforeach()
 					if (!gameViewAspect.empty()) {
 						project.GameViewAspect = gameViewAspect;
 					}
+				}
+				if (const Json::Value* gameViewVsyncValue = root.FindMember("gameViewVsync")) {
+					project.GameViewVsync = gameViewVsyncValue->AsBoolOr(true);
 				}
 				if (const Json::Value* buildWidthValue = root.FindMember("buildWidth")) {
 					project.BuildWidth = buildWidthValue->AsIntOr(1280);

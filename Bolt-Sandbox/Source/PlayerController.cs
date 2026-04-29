@@ -1,6 +1,6 @@
 using Bolt;
 
-public class PlayerController : BoltScript
+public class PlayerController : EntityScript
 {
     private float speed = 5.0f;
 

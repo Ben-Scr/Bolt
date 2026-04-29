@@ -44,6 +44,7 @@ namespace Bolt {
 		bool EnableAudio = BOLT_DEFAULT_ENABLE_AUDIO != 0;
 		bool SetWindowIcon = BOLT_DEFAULT_SET_WINDOW_ICON != 0;
 		bool Vsync = BOLT_DEFAULT_ENABLE_VSYNC != 0;
+		bool UseTargetFrameRateForMainLoop = true;
 	};
 
 } // namespace Bolt

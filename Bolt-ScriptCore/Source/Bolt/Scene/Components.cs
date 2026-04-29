@@ -51,33 +51,21 @@ namespace Bolt
 
         public Vector2 Up
         {
-            get
-            {
-                throw new System.NotImplementedException();
-            }
+            get => new Vector2(-Mathf.Sin(Rotation), Mathf.Cos(Rotation));
         }
 
         public Vector2 Down
         {
-            get
-            {
-                throw new System.NotImplementedException();
-            }
+            get => -Up;
         }
 
         public Vector2 Left
         {
-            get
-            {
-                throw new System.NotImplementedException();
-            }
+            get => -Right;
         }
         public Vector2 Right
         {
-            get
-            {
-                throw new System.NotImplementedException();
-            }
+            get => new Vector2(Mathf.Cos(Rotation), Mathf.Sin(Rotation));
         }
     }
 
@@ -155,18 +143,64 @@ namespace Bolt
 
         public Vector2 ScreenToWorld(Vector2 screenPos)
         {
-            ulong entityId = RequireComponent<Camera2DComponent>();
-            InternalCalls.Camera2D_ScreenToWorld(entityId, screenPos.X, screenPos.Y, out float wx, out float wy);
-            return new Vector2(wx, wy);
+            GetViewportSize(out float viewportWidth, out float viewportHeight);
+            if (viewportWidth <= 0.0f || viewportHeight <= 0.0f)
+                return Vector2.Zero;
+
+            GetCameraBasis(viewportWidth, viewportHeight, out Vector2 position, out float cos, out float sin, out float halfWidth, out float halfHeight);
+
+            float localX = ((2.0f * screenPos.X / viewportWidth) - 1.0f) * halfWidth;
+            float localY = (1.0f - (2.0f * screenPos.Y / viewportHeight)) * halfHeight;
+
+            return new Vector2(
+                position.X + (cos * localX) - (sin * localY),
+                position.Y + (sin * localX) + (cos * localY));
         }
 
         public Vector2 WorldToScreen(Vector2 worldPos)
         {
-            return Vector2.Zero;
+            GetViewportSize(out float viewportWidth, out float viewportHeight);
+            if (viewportWidth <= 0.0f || viewportHeight <= 0.0f)
+                return Vector2.Zero;
+
+            GetCameraBasis(viewportWidth, viewportHeight, out Vector2 position, out float cos, out float sin, out float halfWidth, out float halfHeight);
+            if (halfWidth <= Mathf.Epsilon || halfHeight <= Mathf.Epsilon)
+                return Vector2.Zero;
+
+            Vector2 delta = worldPos - position;
+            float localX = (cos * delta.X) + (sin * delta.Y);
+            float localY = (-sin * delta.X) + (cos * delta.Y);
+
+            float ndcX = localX / halfWidth;
+            float ndcY = localY / halfHeight;
+
+            return new Vector2(
+                (ndcX + 1.0f) * 0.5f * viewportWidth,
+                (1.0f - ndcY) * 0.5f * viewportHeight);
         }
 
         public float ViewportWidth => InternalCalls.Camera2D_GetViewportWidth(RequireComponent<Camera2DComponent>());
         public float ViewportHeight => InternalCalls.Camera2D_GetViewportHeight(RequireComponent<Camera2DComponent>());
+
+        private void GetViewportSize(out float viewportWidth, out float viewportHeight)
+        {
+            ulong entityId = RequireComponent<Camera2DComponent>();
+            viewportWidth = InternalCalls.Camera2D_GetViewportWidth(entityId);
+            viewportHeight = InternalCalls.Camera2D_GetViewportHeight(entityId);
+        }
+
+        private void GetCameraBasis(float viewportWidth, float viewportHeight, out Vector2 position, out float cos, out float sin, out float halfWidth, out float halfHeight)
+        {
+            Transform2DComponent transform = Entity.Transform;
+            position = transform.Position;
+
+            float rotation = transform.Rotation;
+            cos = Mathf.Cos(rotation);
+            sin = Mathf.Sin(rotation);
+
+            halfHeight = OrthographicSize * Zoom;
+            halfWidth = halfHeight * (viewportWidth / viewportHeight);
+        }
     }
 
     // ── Rigidbody2DComponent ────────────────────────────────────────────

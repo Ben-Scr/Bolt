@@ -45,6 +45,7 @@ namespace Bolt {
 		int      (*Entity_HasComponent)(uint64_t entityID, const char* componentName);
 		int      (*Entity_AddComponent)(uint64_t entityID, const char* componentName);
 		int      (*Entity_RemoveComponent)(uint64_t entityID, const char* componentName);
+		const char* (*Entity_GetManagedComponentFields)(uint64_t entityID, const char* componentName);
 
 		// ── NameComponent ────────────────────────────────────────────
 		const char* (*NameComponent_GetName)(uint64_t entityID);

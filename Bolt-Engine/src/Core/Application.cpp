@@ -91,8 +91,8 @@ namespace Bolt {
 				}
 				auto now = Clock::now();
 
-				// Info: CPU idling for fps cap if vsync is disabled, or for paused frame cap.
-				if (targetFps > 0.0f && (!m_Window->IsVsync() || IsEnginePaused()))
+				// CPU idling for runtime fps caps. The editor renders Game View pacing separately.
+				if (m_Configuration.UseTargetFrameRateForMainLoop && targetFps > 0.0f && (!m_Window->IsVsync() || IsEnginePaused()))
 				{
 					auto const nextFrameTime = m_LastFrameTime + targetFrameTime;
 					auto const idleStart = Clock::now();
@@ -141,10 +141,12 @@ namespace Bolt {
 					m_Time.AdvanceFrameCount();
 				}
 				catch (const std::exception& e) {
+					m_IsRenderingFrame = false;
 					BT_ERROR_TAG("Application", "Unhandled frame exception: {}", e.what());
 					m_ShouldQuit = true;
 				}
 				catch (...) {
+					m_IsRenderingFrame = false;
 					BT_ERROR_TAG("Application", "Unhandled frame exception: unknown exception");
 					m_ShouldQuit = true;
 				}
@@ -249,6 +251,8 @@ namespace Bolt {
 	}
 
 	void Application::BeginFrame() {
+		m_IsRenderingFrame = true;
+
 		CoreInput();
 
 		const bool enginePaused = IsEnginePaused();
@@ -299,6 +303,7 @@ namespace Bolt {
 		}
 
 		m_Input.Update();
+		m_IsRenderingFrame = false;
 	}
 
 	void Application::DispatchEvent(BoltEvent& event) {
@@ -402,6 +407,27 @@ namespace Bolt {
 	}
 
 	void Application::RenderOnceForRefresh() {
+		if (m_IsRenderingFrame || m_IsRenderingRefresh || !m_Window || m_ShouldQuit) {
+			return;
+		}
+
+		struct RefreshRenderGuard {
+			explicit RefreshRenderGuard(Application& application)
+				: App(application)
+			{
+				App.m_IsRenderingRefresh = true;
+			}
+
+			~RefreshRenderGuard()
+			{
+				App.m_IsRenderingRefresh = false;
+			}
+
+			Application& App;
+		};
+
+		RefreshRenderGuard guard(*this);
+
 		if (m_ImGuiRenderer) {
 			BOLT_TRY_CATCH_LOG(m_ImGuiRenderer->BeginFrame());
 			if (m_SceneManager) BOLT_TRY_CATCH_LOG(m_SceneManager->OnGuiScenes());

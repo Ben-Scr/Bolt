@@ -28,6 +28,7 @@ namespace Bolt {
 		std::string StartupScene = "SampleScene";
 		std::string LastOpenedScene = "SampleScene";
 		std::string GameViewAspect = "Free Aspect";
+		bool GameViewVsync = true;
 
 		// Build settings
 		int BuildWidth = 1280;

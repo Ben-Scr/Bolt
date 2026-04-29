@@ -1,9 +1,8 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using Bolt.Hosting;
 
-namespace Bolt
+namespace Bolt.Interop
 {
     internal static unsafe class InternalCalls
     {
@@ -176,6 +175,19 @@ namespace Bolt
             Encoding.UTF8.GetBytes(componentName, buf);
             buf[len] = 0;
             fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Entity_RemoveComponent(entityID, ptr) != 0;
+        }
+
+        internal static string Entity_GetManagedComponentFields(ulong entityID, string componentName)
+        {
+            int len = Encoding.UTF8.GetByteCount(componentName);
+            Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
+            Encoding.UTF8.GetBytes(componentName, buf);
+            buf[len] = 0;
+            fixed (byte* ptr = buf)
+            {
+                byte* result = NativeCallbacks.Bindings.Entity_GetManagedComponentFields(entityID, ptr);
+                return Marshal.PtrToStringUTF8((IntPtr)result) ?? "{}";
+            }
         }
 
         internal static ulong Entity_Create(string name)

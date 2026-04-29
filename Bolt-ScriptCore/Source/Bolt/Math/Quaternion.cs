@@ -1,10 +1,9 @@
 ﻿
-namespace Bolt
+namespace Bolt;
+
+public struct Quaternion
 {
-    public struct Quaternion
-    {
-        public float X, Y, Z;
-    }
+    public float X, Y, Z;
 }
 
 

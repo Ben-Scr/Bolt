@@ -2,6 +2,7 @@
 #include "Assets/AssetRegistry.hpp"
 #include "Scripting/ScriptBindings.hpp"
 #include "Scripting/ScriptEngine.hpp"
+#include "Scripting/ScriptComponent.hpp"
 #include "Core/Application.hpp"
 #include "Core/Input.hpp"
 #include "Core/Time.hpp"
@@ -13,6 +14,7 @@
 #include "Serialization/SceneSerializer.hpp"
 #include "Serialization/Path.hpp"
 #include "Serialization/File.hpp"
+#include "Serialization/Json.hpp"
 #include "Project/ProjectManager.hpp"
 #include "Project/BoltProject.hpp"
 #include "Scene/ComponentRegistry.hpp"
@@ -143,6 +145,86 @@ namespace Bolt {
 		return found;
 	}
 
+	static bool HasManagedComponent(Scene& scene, EntityHandle handle, const std::string& className) {
+		if (!scene.IsValid(handle) || !scene.HasComponent<ScriptComponent>(handle)) return false;
+		return scene.GetComponent<ScriptComponent>(handle).HasManagedComponent(className);
+	}
+
+	static bool AddManagedComponent(Scene& scene, EntityHandle handle, const std::string& className) {
+		if (!scene.IsValid(handle) || className.empty()) return false;
+		if (!scene.HasComponent<ScriptComponent>(handle)) {
+			scene.AddComponent<ScriptComponent>(handle);
+		}
+		auto& scriptComponent = scene.GetComponent<ScriptComponent>(handle);
+		if (scriptComponent.HasManagedComponent(className)) return true;
+		scriptComponent.AddManagedComponent(className);
+		scene.MarkDirty();
+		return true;
+	}
+
+	static bool RemoveManagedComponent(Scene& scene, EntityHandle handle, const std::string& className) {
+		if (!scene.IsValid(handle) || !scene.HasComponent<ScriptComponent>(handle)) return false;
+		const bool removed = scene.GetComponent<ScriptComponent>(handle).RemoveManagedComponent(className);
+		if (removed) scene.MarkDirty();
+		return removed;
+	}
+
+	static const char* Bolt_Entity_GetManagedComponentFields(uint64_t entityID, const char* componentName)
+	{
+		s_StringReturnBuffer = "{}";
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		const std::string className = componentName ? componentName : "";
+		if (className.empty() || !ResolveEntityReference(entityID, scene, handle)
+			|| !scene->HasComponent<ScriptComponent>(handle)) {
+			return s_StringReturnBuffer.c_str();
+		}
+
+		const auto& scriptComponent = scene->GetComponent<ScriptComponent>(handle);
+		if (!scriptComponent.HasManagedComponent(className)) {
+			return s_StringReturnBuffer.c_str();
+		}
+
+		Json::Value root = Json::Value::MakeObject();
+		const std::string prefix = className + ".";
+		for (const auto& [key, value] : scriptComponent.PendingFieldValues) {
+			if (key.rfind(prefix, 0) != 0) {
+				continue;
+			}
+			root.AddMember(key.substr(prefix.size()), Json::Value(value));
+		}
+
+		s_StringReturnBuffer = Json::Stringify(root, false);
+		return s_StringReturnBuffer.c_str();
+	}
+
+	struct QueryComponentRequirement {
+		const ComponentInfo* Native = nullptr;
+		std::string ManagedClassName;
+
+		bool Has(Scene& scene, EntityHandle handle, Entity entity) const {
+			if (Native && Native->has) {
+				return Native->has(entity);
+			}
+			return HasManagedComponent(scene, handle, ManagedClassName);
+		}
+	};
+
+	static bool BuildComponentRequirement(const std::string& name, QueryComponentRequirement& out) {
+		if (name.empty()) {
+			return false;
+		}
+
+		const ComponentInfo* info = FindComponentByName(name);
+		if (info && info->has) {
+			out.Native = info;
+			return true;
+		}
+
+		out.ManagedClassName = name;
+		return true;
+	}
+
 	int Bolt_Entity_HasComponent(uint64_t entityID, const char* componentName)
 	{
 		Scene* scene = nullptr;
@@ -150,7 +232,7 @@ namespace Bolt {
 		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
 
 		const ComponentInfo* info = FindComponentByName(componentName);
-		if (!info || !info->has) return 0;
+		if (!info || !info->has) return HasManagedComponent(*scene, handle, componentName ? componentName : "") ? 1 : 0;
 		return info->has(scene->GetEntity(handle)) ? 1 : 0;
 	}
 
@@ -161,7 +243,7 @@ namespace Bolt {
 		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
 
 		const ComponentInfo* info = FindComponentByName(componentName);
-		if (!info || !info->add) return 0;
+		if (!info || !info->add) return AddManagedComponent(*scene, handle, componentName ? componentName : "") ? 1 : 0;
 
 		Entity entity = scene->GetEntity(handle);
 		if (info->has && info->has(entity)) return 1;
@@ -176,7 +258,7 @@ namespace Bolt {
 		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
 
 		const ComponentInfo* info = FindComponentByName(componentName);
-		if (!info || !info->remove) return 0;
+		if (!info || !info->remove) return RemoveManagedComponent(*scene, handle, componentName ? componentName : "") ? 1 : 0;
 
 		Entity entity = scene->GetEntity(handle);
 		if (info->has && !info->has(entity)) return 0;
@@ -338,20 +420,20 @@ namespace Bolt {
 		if (!scene || !componentNames || !outEntityIDs || maxOut <= 0) return 0;
 		if (!scene->IsLoaded()) return 0;
 
-		// Parse pipe-delimited component names
-		std::vector<const ComponentInfo*> infos;
+		// Parse pipe-delimited component names.
+		std::vector<QueryComponentRequirement> requirements;
 		std::string names(componentNames);
 		size_t start = 0;
 		while (start < names.size()) {
 			size_t end = names.find('|', start);
 			if (end == std::string::npos) end = names.size();
 			std::string name = names.substr(start, end - start);
-			const ComponentInfo* info = FindComponentByName(name);
-			if (!info || !info->has) return 0; // Unknown component = 0 results
-			infos.push_back(info);
+			QueryComponentRequirement requirement;
+			if (!BuildComponentRequirement(name, requirement)) return 0;
+			requirements.push_back(std::move(requirement));
 			start = end + 1;
 		}
-		if (infos.empty()) return 0;
+		if (requirements.empty()) return 0;
 
 		int count = 0;
 		auto& registry = scene->GetRegistry();
@@ -361,8 +443,8 @@ namespace Bolt {
 
 			Entity entity = scene->GetEntity(entityHandle);
 			bool match = true;
-			for (auto* info : infos) {
-				if (!info->has(entity)) { match = false; break; }
+			for (const auto& requirement : requirements) {
+				if (!requirement.Has(*scene, entityHandle, entity)) { match = false; break; }
 			}
 			if (match) {
 				if (count < maxOut)
@@ -439,8 +521,8 @@ namespace Bolt {
 		}
 	}
 
-	// Helper: parse pipe-delimited names into ComponentInfo pointers
-	static bool ParseComponentNames(const char* names, std::vector<const ComponentInfo*>& out) {
+	// Helper: parse pipe-delimited names into native or managed component requirements.
+	static bool ParseComponentNames(const char* names, std::vector<QueryComponentRequirement>& out) {
 		if (!names || names[0] == '\0') return true; // empty is valid (no filter)
 		std::string str(names);
 		size_t start = 0;
@@ -449,9 +531,9 @@ namespace Bolt {
 			if (end == std::string::npos) end = str.size();
 			std::string name = str.substr(start, end - start);
 			if (!name.empty()) {
-				const ComponentInfo* info = FindComponentByName(name);
-				if (!info || !info->has) return false;
-				out.push_back(info);
+				QueryComponentRequirement requirement;
+				if (!BuildComponentRequirement(name, requirement)) return false;
+				out.push_back(std::move(requirement));
 			}
 			start = end + 1;
 		}
@@ -469,7 +551,7 @@ namespace Bolt {
 		if (!scene || !outEntityIDs || maxOut <= 0) return 0;
 		if (!scene->IsLoaded()) return 0;
 
-		std::vector<const ComponentInfo*> withInfos, withoutInfos, mustHaveInfos;
+		std::vector<QueryComponentRequirement> withInfos, withoutInfos, mustHaveInfos;
 		if (!ParseComponentNames(withComponents, withInfos)) return 0;
 		if (!ParseComponentNames(withoutComponents, withoutInfos)) return 0;
 		if (!ParseComponentNames(mustHaveComponents, mustHaveInfos)) return 0;
@@ -490,20 +572,20 @@ namespace Bolt {
 
 			// WITH: entity must have all these components
 			bool match = true;
-			for (auto* info : withInfos) {
-				if (!info->has(entity)) { match = false; break; }
+			for (const auto& requirement : withInfos) {
+				if (!requirement.Has(*scene, entityHandle, entity)) { match = false; break; }
 			}
 			if (!match) continue;
 
 			// MUST HAVE (With<>): entity must have these too
-			for (auto* info : mustHaveInfos) {
-				if (!info->has(entity)) { match = false; break; }
+			for (const auto& requirement : mustHaveInfos) {
+				if (!requirement.Has(*scene, entityHandle, entity)) { match = false; break; }
 			}
 			if (!match) continue;
 
 			// WITHOUT: entity must NOT have any of these
-			for (auto* info : withoutInfos) {
-				if (info->has(entity)) { match = false; break; }
+			for (const auto& requirement : withoutInfos) {
+				if (requirement.Has(*scene, entityHandle, entity)) { match = false; break; }
 			}
 			if (!match) continue;
 
@@ -1078,6 +1160,7 @@ namespace Bolt {
 		b.Entity_HasComponent = &Bolt_Entity_HasComponent;
 		b.Entity_AddComponent = &Bolt_Entity_AddComponent;
 		b.Entity_RemoveComponent = &Bolt_Entity_RemoveComponent;
+		b.Entity_GetManagedComponentFields = &Bolt_Entity_GetManagedComponentFields;
 
 		b.NameComponent_GetName = &Bolt_NameComponent_GetName;
 		b.NameComponent_SetName = &Bolt_NameComponent_SetName;

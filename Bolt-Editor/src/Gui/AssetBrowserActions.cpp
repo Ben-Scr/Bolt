@@ -78,7 +78,11 @@ namespace Bolt {
 
 		if (m_PendingScriptType != PendingScriptType::None) {
 			std::string className = newName;
-			std::string ext = (m_PendingScriptType == PendingScriptType::CSharp) ? ".cs" : ".cpp";
+			const bool isCSharp = m_PendingScriptType == PendingScriptType::CSharp
+				|| m_PendingScriptType == PendingScriptType::CSharpComponent;
+			const bool isComponent = m_PendingScriptType == PendingScriptType::CSharpComponent
+				|| m_PendingScriptType == PendingScriptType::NativeComponent;
+			std::string ext = isCSharp ? ".cs" : (isComponent ? ".hpp" : ".cpp");
 
 			if (!className.empty() && className.find('.') == std::string::npos) {
 			}
@@ -89,7 +93,7 @@ namespace Bolt {
 					className = className.substr(0, className.size() - ext.size());
 			}
 
-			if (className.empty()) className = "NewScript";
+			if (className.empty()) className = isComponent ? "NewComponent" : "NewScript";
 
 			std::string finalFileName = className + ext;
 			std::string finalPath = (std::filesystem::path(m_PendingScriptDir) / finalFileName).string();
@@ -99,20 +103,27 @@ namespace Bolt {
 				std::filesystem::remove(m_RenamePath, ec);
 			}
 
-			if (m_PendingScriptType == PendingScriptType::CSharp) {
-				std::string boilerplate =
-					"using Bolt;\n"
-					"\n"
-					"public class " + className + " : BoltScript\n"
-					"{\n"
-					"    public void Start()\n"
-					"    {\n"
-					"    }\n"
-					"\n"
-					"    public void Update()\n"
-					"    {\n"
-					"    }\n"
-					"}\n";
+			if (isCSharp) {
+				std::string boilerplate = isComponent
+					? "using Bolt;\n"
+					  "\n"
+					  "public class " + className + " : Component\n"
+					  "{\n"
+					  "    [ShowInEditor]\n"
+					  "    public float Value = 0.0f;\n"
+					  "}\n"
+					: "using Bolt;\n"
+					  "\n"
+					  "public class " + className + " : BoltScript\n"
+					  "{\n"
+					  "    public void Start()\n"
+					  "    {\n"
+					  "    }\n"
+					  "\n"
+					  "    public void Update()\n"
+					  "    {\n"
+					  "    }\n"
+					  "}\n";
 
 				std::ofstream file(finalPath);
 				if (file.is_open()) { file << boilerplate; file.close(); }
@@ -129,24 +140,30 @@ namespace Bolt {
 				}
 			}
 			else {
-				std::string boilerplate =
-					"#include <Scripting/NativeScript.hpp>\n"
-					"\n"
-					"class " + className + " : public Bolt::NativeScript {\n"
-					"public:\n"
-					"    void Start() override\n"
-					"    {\n"
-					"    }\n"
-					"\n"
-					"    void Update(float dt) override\n"
-					"    {\n"
-					"    }\n"
-					"\n"
-					"    void OnDestroy() override\n"
-					"    {\n"
-					"    }\n"
-					"};\n"
-					"REGISTER_SCRIPT(" + className + ")\n";
+				std::string boilerplate = isComponent
+					? "#pragma once\n"
+					  "\n"
+					  "struct " + className + "\n"
+					  "{\n"
+					  "    float Value = 0.0f;\n"
+					  "};\n"
+					: "#include <Scripting/NativeScript.hpp>\n"
+					  "\n"
+					  "class " + className + " : public Bolt::NativeScript {\n"
+					  "public:\n"
+					  "    void Start() override\n"
+					  "    {\n"
+					  "    }\n"
+					  "\n"
+					  "    void Update(float dt) override\n"
+					  "    {\n"
+					  "    }\n"
+					  "\n"
+					  "    void OnDestroy() override\n"
+					  "    {\n"
+					  "    }\n"
+					  "};\n"
+					  "REGISTER_SCRIPT(" + className + ")\n";
 
 				std::ofstream file(finalPath);
 				if (file.is_open()) { file << boilerplate; file.close(); }
@@ -379,6 +396,48 @@ namespace Bolt {
 		m_SelectedPath = scriptPath;
 		std::string name = std::filesystem::path(scriptPath).stem().string();
 		BeginRename(scriptPath, name);
+	}
+
+	void AssetBrowser::CreateCSharpComponent(const std::string& parentDir) {
+		std::string baseName = "NewComponent";
+		std::string ext = ".cs";
+		std::string componentPath = (std::filesystem::path(parentDir) / (baseName + ext)).string();
+		int counter = 1;
+		while (std::filesystem::exists(componentPath)) {
+			componentPath = (std::filesystem::path(parentDir) / (baseName + std::to_string(counter) + ext)).string();
+			counter++;
+		}
+
+		m_PendingScriptType = PendingScriptType::CSharpComponent;
+		m_PendingScriptDir = parentDir;
+
+		m_NeedsRefresh = true;
+		Refresh();
+
+		m_SelectedPath = componentPath;
+		std::string name = std::filesystem::path(componentPath).stem().string();
+		BeginRename(componentPath, name);
+	}
+
+	void AssetBrowser::CreateNativeComponent(const std::string& parentDir) {
+		std::string baseName = "NewComponent";
+		std::string ext = ".hpp";
+		std::string componentPath = (std::filesystem::path(parentDir) / (baseName + ext)).string();
+		int counter = 1;
+		while (std::filesystem::exists(componentPath)) {
+			componentPath = (std::filesystem::path(parentDir) / (baseName + std::to_string(counter) + ext)).string();
+			counter++;
+		}
+
+		m_PendingScriptType = PendingScriptType::NativeComponent;
+		m_PendingScriptDir = parentDir;
+
+		m_NeedsRefresh = true;
+		Refresh();
+
+		m_SelectedPath = componentPath;
+		std::string name = std::filesystem::path(componentPath).stem().string();
+		BeginRename(componentPath, name);
 	}
 
 	void AssetBrowser::CreateScene(const std::string& parentDir) {

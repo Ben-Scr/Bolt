@@ -3,6 +3,34 @@
 #include <imgui.h>
 
 namespace Bolt::ImGuiUtils {
+	float GetInspectorLabelColumnWidth()
+	{
+		return 160.0f;
+	}
+
+	void DrawInspectorLabel(const char* label)
+	{
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float labelColumnWidth = GetInspectorLabelColumnWidth();
+		const float availableLabelWidth = std::max(1.0f, labelColumnWidth - style.ItemSpacing.x);
+
+		ImGui::AlignTextToFramePadding();
+
+		bool truncated = false;
+		const std::string clippedLabel = Ellipsize(label ? label : "", availableLabelWidth, &truncated);
+		ImGui::TextUnformatted(clippedLabel.c_str());
+		if (truncated && ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("%s", label);
+		}
+	}
+
+	void BeginInspectorFieldRow(const char* label)
+	{
+		DrawInspectorLabel(label);
+		ImGui::SameLine(GetInspectorLabelColumnWidth());
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+	}
+
 	std::string Ellipsize(const std::string& text, float maxWidth, bool* outTruncated)
 	{
 		if (outTruncated) {

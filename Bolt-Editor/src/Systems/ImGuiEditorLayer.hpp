@@ -134,6 +134,12 @@ namespace Bolt {
 		bool m_IsGameViewFocused = false;
 		int m_GameViewAspectPresetIndex = 0;
 		bool m_GameViewAspectLoaded = false;
+		bool m_GameViewVsync = true;
+		bool m_GameViewVsyncLoaded = false;
+		bool m_GameViewHasRendered = false;
+		int m_LastGameViewFbW = 0;
+		int m_LastGameViewFbH = 0;
+		std::chrono::steady_clock::time_point m_LastGameViewRenderTime{};
 
 		Viewport m_EditorViewport{ 1, 1 };
 		bool m_IsViewportHovered = false;

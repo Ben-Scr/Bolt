@@ -1,6 +1,7 @@
 using System;
+using Bolt.Interop;
 
-namespace Bolt
+namespace Bolt.Graphics
 {
     public sealed class Texture : IEquatable<Texture>
     {

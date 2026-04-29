@@ -278,6 +278,12 @@ namespace Bolt {
 			}
 			m_GameViewAspectLoaded = true;
 		}
+		if (!m_GameViewVsyncLoaded) {
+			if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+				m_GameViewVsync = project->GameViewVsync;
+			}
+			m_GameViewVsyncLoaded = true;
+		}
 
 		ImGui::SetNextItemWidth(140.0f);
 		if (ImGui::BeginCombo("##GameViewAspect", k_GameViewAspectPresets[m_GameViewAspectPresetIndex].Label)) {
@@ -300,6 +306,15 @@ namespace Bolt {
 		if (BoltProject* project = ProjectManager::GetCurrentProject()) {
 			ImGui::SameLine();
 			ImGui::TextDisabled("Build: %dx%d", project->BuildWidth, project->BuildHeight);
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Checkbox("VSync##GameView", &m_GameViewVsync)) {
+			m_GameViewHasRendered = false;
+			if (BoltProject* project = ProjectManager::GetCurrentProject()) {
+				project->GameViewVsync = m_GameViewVsync;
+				project->Save();
+			}
 		}
 
 		ImGui::Separator();
@@ -342,7 +357,39 @@ namespace Bolt {
 				gameCam->UpdateViewport();
 				glm::mat4 vp = gameCam->GetViewProjectionMatrix();
 				AABB viewAABB = gameCam->GetViewportAABB();
-				RenderSceneIntoFBO(m_GameViewFBO, scene, vp, viewAABB, true, true, gameCam->GetClearColor());
+				const auto now = std::chrono::steady_clock::now();
+				float targetFps = 0.0f;
+				if (m_GameViewVsync) {
+					if (auto* window = Application::GetWindow()) {
+						const GLFWvidmode* videoMode = window->GetVideomode();
+						targetFps = videoMode ? static_cast<float>(videoMode->refreshRate) : 60.0f;
+					}
+					else {
+						targetFps = 60.0f;
+					}
+				}
+				else {
+					targetFps = std::max(Application::GetTargetFramerate(), 0.0f);
+				}
+
+				bool renderFrame = !m_GameViewHasRendered
+					|| m_LastGameViewFbW != fbW
+					|| m_LastGameViewFbH != fbH;
+				if (!renderFrame && targetFps > 0.0f) {
+					const auto frameDuration = std::chrono::duration<double>(1.0 / static_cast<double>(targetFps));
+					renderFrame = now - m_LastGameViewRenderTime >= frameDuration;
+				}
+				else if (targetFps <= 0.0f) {
+					renderFrame = true;
+				}
+
+				if (renderFrame) {
+					RenderSceneIntoFBO(m_GameViewFBO, scene, vp, viewAABB, true, true, gameCam->GetClearColor());
+					m_LastGameViewRenderTime = now;
+					m_LastGameViewFbW = fbW;
+					m_LastGameViewFbH = fbH;
+					m_GameViewHasRendered = true;
+				}
 
 				savedViewport->SetSize(savedW, savedH);
 				gameCam->UpdateViewport();

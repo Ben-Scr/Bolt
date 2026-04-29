@@ -61,6 +61,8 @@ namespace Bolt {
 		void CreateFolder(const std::string& parentDir);
 		void CreateScript(const std::string& parentDir);
 		void CreateNativeScript(const std::string& parentDir);
+		void CreateCSharpComponent(const std::string& parentDir);
+		void CreateNativeComponent(const std::string& parentDir);
 		void CreateScene(const std::string& parentDir);
 
 		void BeginRename(const std::string& path, const std::string& currentName);
@@ -88,7 +90,7 @@ namespace Bolt {
 		std::string m_PendingSceneLoad;
 
 		// Deferred script creation - boilerplate/project script is written after rename is committed.
-		enum class PendingScriptType { None, CSharp, Native };
+		enum class PendingScriptType { None, CSharp, Native, CSharpComponent, NativeComponent };
 		PendingScriptType m_PendingScriptType = PendingScriptType::None;
 		std::string m_PendingScriptDir;  // parent directory for the new script
 

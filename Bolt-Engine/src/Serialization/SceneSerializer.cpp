@@ -116,6 +116,52 @@ namespace Bolt {
 				}
 			}
 
+			for (const std::string& className : scriptComponent.ManagedComponents) {
+				if (className.empty() || !callbacks.GetClassFieldDefs) {
+					continue;
+				}
+
+				const char* rawJson = callbacks.GetClassFieldDefs(className.c_str());
+				if (!rawJson || !*rawJson) {
+					continue;
+				}
+
+				Value fieldArray;
+				std::string parseError;
+				if (!Json::TryParse(rawJson, fieldArray, &parseError) || !fieldArray.IsArray()) {
+					BT_CORE_WARN_TAG("SceneSerializer", "Failed to parse managed component field metadata for {}: {}", className, parseError);
+					continue;
+				}
+
+				const std::string prefix = className + ".";
+				for (Value& fieldValue : fieldArray.GetArray()) {
+					if (!fieldValue.IsObject()) {
+						continue;
+					}
+
+					const std::string fieldName = GetStringMember(fieldValue, "name");
+					if (fieldName.empty()) {
+						continue;
+					}
+
+					const auto pendingValueIt = scriptComponent.PendingFieldValues.find(prefix + fieldName);
+					if (pendingValueIt != scriptComponent.PendingFieldValues.end()) {
+						fieldValue.AddMember("value", Value(pendingValueIt->second));
+					}
+
+					const std::string fieldType = GetStringMember(fieldValue, "type");
+					const std::string currentValue = GetStringMember(fieldValue, "value");
+					const std::string normalizedValue = NormalizeScriptAssetValue(fieldType, currentValue);
+					if (normalizedValue != currentValue) {
+						fieldValue.AddMember("value", Value(normalizedValue));
+					}
+				}
+
+				if (!fieldArray.GetArray().empty()) {
+					fieldsByClass.AddMember(className, std::move(fieldArray));
+				}
+			}
+
 			return fieldsByClass;
 		}
 
@@ -398,7 +444,16 @@ namespace Bolt {
 						scriptsValue.Append(std::move(scriptValue));
 					}
 					entityValue.AddMember("Scripts", std::move(scriptsValue));
+				}
+				if (!scriptComponent.ManagedComponents.empty()) {
+					Value componentsValue = Value::MakeArray();
+					for (const std::string& className : scriptComponent.ManagedComponents) {
+						componentsValue.Append(Value(className));
+					}
+					entityValue.AddMember("ManagedComponents", std::move(componentsValue));
+				}
 
+				if (!scriptComponent.Scripts.empty() || !scriptComponent.ManagedComponents.empty()) {
 					Value scriptFields = SerializeScriptFields(scriptComponent);
 					if (!scriptFields.GetObject().empty()) {
 						entityValue.AddMember("ScriptFields", std::move(scriptFields));

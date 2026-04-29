@@ -73,3 +73,4 @@ namespace Bolt.Cryptography
             return AesHelper.DecryptBytes(bytes, aesKey.Key ?? new byte[0]);
         }
     }
+}

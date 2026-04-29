@@ -71,8 +71,8 @@ namespace Bolt {
 		}
 
 		static bool DrawAssetSelectionField(const char* label, const std::string& displayName, const std::string& tooltip = {}) {
-			ImGui::TextUnformatted(label);
-
+			ImGui::PushID(label);
+			ImGuiUtils::BeginInspectorFieldRow(label);
 			const std::string resolvedDisplayName = displayName.empty() ? std::string("(None)") : displayName;
 			const float fieldWidth = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
 			bool truncated = false;
@@ -81,7 +81,7 @@ namespace Bolt {
 				fieldWidth - ImGui::GetStyle().FramePadding.x * 2.0f,
 				&truncated);
 
-			const bool clicked = ImGui::Button(buttonText.c_str(), ImVec2(fieldWidth, 0.0f));
+			const bool clicked = ImGui::Button((buttonText + "##Value").c_str(), ImVec2(fieldWidth, 0.0f));
 			if (ImGui::IsItemHovered() && (truncated || !tooltip.empty())) {
 				ImGui::BeginTooltip();
 				ImGui::TextUnformatted(resolvedDisplayName.c_str());
@@ -91,6 +91,7 @@ namespace Bolt {
 				ImGui::EndTooltip();
 			}
 
+			ImGui::PopID();
 			return clicked;
 		}
 
@@ -357,9 +358,15 @@ namespace Bolt {
 	void DrawTransform2DInspector(Entity entity)
 	{
 		auto& transform = entity.GetComponent<Transform2DComponent>();
-		ImGui::DragFloat2("Position", &transform.Position.x, 0.05f);
-		ImGui::DragFloat2("Scale", &transform.Scale.x, 0.05f, 0.001f);
-		ImGui::DragFloat("Rotation", &transform.Rotation, 0.01f);
+		ImGuiUtils::DrawInspectorControl("Position", [&transform](const char* id) {
+			return ImGui::DragFloat2(id, &transform.Position.x, 0.05f);
+		});
+		ImGuiUtils::DrawInspectorControl("Scale", [&transform](const char* id) {
+			return ImGui::DragFloat2(id, &transform.Scale.x, 0.05f, 0.001f);
+		});
+		ImGuiUtils::DrawInspectorControl("Rotation", [&transform](const char* id) {
+			return ImGui::DragFloat(id, &transform.Rotation, 0.01f);
+		});
 	}
 
 	void DrawRigidbody2DInspector(Entity entity)
@@ -371,16 +378,24 @@ namespace Bolt {
 		float gravityScale = rb2D.GetGravityScale();
 		float rotation = rb2D.GetRotation();
 
-		if (ImGui::DragFloat2("Position", &position.x, 0.05f))
+		if (ImGuiUtils::DrawInspectorControl("Position", [&position](const char* id) {
+			return ImGui::DragFloat2(id, &position.x, 0.05f);
+		}))
 			rb2D.SetPosition(position);
 
-		if (ImGui::DragFloat2("Velocity", &velocity.x, 0.05f))
+		if (ImGuiUtils::DrawInspectorControl("Velocity", [&velocity](const char* id) {
+			return ImGui::DragFloat2(id, &velocity.x, 0.05f);
+		}))
 			rb2D.SetVelocity(velocity);
 
-		if (ImGui::DragFloat("Rotation", &rotation, 0.01f))
+		if (ImGuiUtils::DrawInspectorControl("Rotation", [&rotation](const char* id) {
+			return ImGui::DragFloat(id, &rotation, 0.01f);
+		}))
 			rb2D.SetRotation(rotation);
 
-		if (ImGui::SliderFloat("Gravity Scale", &gravityScale, 0.0f, 1.0f))
+		if (ImGuiUtils::DrawInspectorControl("Gravity Scale", [&gravityScale](const char* id) {
+			return ImGui::SliderFloat(id, &gravityScale, 0.0f, 1.0f);
+		}))
 			rb2D.SetGravityScale(gravityScale);
 
 		ImGuiUtils::DrawEnumCombo<BodyType>("Body Type", rb2D.GetBodyType(), [&rb2D](BodyType newType) {
@@ -391,9 +406,15 @@ namespace Bolt {
 	void DrawSpriteRendererInspector(Entity entity)
 	{
 		auto& sprite = entity.GetComponent<SpriteRendererComponent>();
-		ImGui::ColorEdit4("Color", &sprite.Color.r, ImGuiColorEditFlags_NoInputs);
-		ImGui::DragScalar("Sorting Order", ImGuiDataType_S16, &sprite.SortingOrder, 1.0f);
-		ImGui::DragScalar("Sorting Layer", ImGuiDataType_U8, &sprite.SortingLayer, 1.0f);
+		ImGuiUtils::DrawInspectorControl("Color", [&sprite](const char* id) {
+			return ImGui::ColorEdit4(id, &sprite.Color.r, ImGuiColorEditFlags_NoInputs);
+		});
+		ImGuiUtils::DrawInspectorControl("Sorting Order", [&sprite](const char* id) {
+			return ImGui::DragScalar(id, ImGuiDataType_S16, &sprite.SortingOrder, 1.0f);
+		});
+		ImGuiUtils::DrawInspectorControl("Sorting Layer", [&sprite](const char* id) {
+			return ImGui::DragScalar(id, ImGuiDataType_U8, &sprite.SortingLayer, 1.0f);
+		});
 
 		std::string textureDisplayName = "(None)";
 		std::string textureTooltip;
@@ -449,11 +470,15 @@ namespace Bolt {
 	{
 		auto& camera = entity.GetComponent<Camera2DComponent>();
 		float zoom = camera.GetZoom();
-		if (ImGui::DragFloat("Zoom", &zoom, 0.01f, 0.01f, 100.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Zoom", [&zoom](const char* id) {
+			return ImGui::DragFloat(id, &zoom, 0.01f, 0.01f, 100.0f);
+		})) {
 			camera.SetZoom(zoom);
 		}
 		float ortho = camera.GetOrthographicSize();
-		if (ImGui::DragFloat("Orthographic Size", &ortho, 0.05f, 0.05f, 1000.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Orthographic Size", [&ortho](const char* id) {
+			return ImGui::DragFloat(id, &ortho, 0.05f, 0.05f, 1000.0f);
+		})) {
 			camera.SetOrthographicSize(ortho);
 		}
 
@@ -471,7 +496,10 @@ namespace Bolt {
 	{
 		auto& ps = entity.GetComponent<ParticleSystem2DComponent>();
 
-		if (ImGui::Button(ps.IsPlaying() ? "Pause" : "Play")) {
+		const std::string playbackLabel = std::string(ps.IsPlaying() ? "Pause" : "Play") + "##Value";
+		if (ImGuiUtils::DrawInspectorControl("Playback", [&playbackLabel](const char*) {
+			return ImGui::Button(playbackLabel.c_str());
+		})) {
 			if (ps.IsPlaying()) {
 				ps.Pause();
 			}
@@ -480,25 +508,41 @@ namespace Bolt {
 			}
 		}
 
-		ImGui::Checkbox("Play On Awake", &ps.PlayOnAwake);
+		ImGuiUtils::DrawInspectorControl("Play On Awake", [&ps](const char* id) {
+			return ImGui::Checkbox(id, &ps.PlayOnAwake);
+		});
 
-		ImGui::InputFloat("LifeTime", &ps.ParticleSettings.LifeTime);
-		ImGui::InputFloat("Scale", &ps.ParticleSettings.Scale);
-		ImGui::InputFloat("Speed", &ps.ParticleSettings.Speed);
+		ImGuiUtils::DrawInspectorControl("LifeTime", [&ps](const char* id) {
+			return ImGui::InputFloat(id, &ps.ParticleSettings.LifeTime);
+		});
+		ImGuiUtils::DrawInspectorControl("Scale", [&ps](const char* id) {
+			return ImGui::InputFloat(id, &ps.ParticleSettings.Scale);
+		});
+		ImGuiUtils::DrawInspectorControl("Speed", [&ps](const char* id) {
+			return ImGui::InputFloat(id, &ps.ParticleSettings.Speed);
+		});
 
-		if (ImGui::RadioButton("Gravity", ps.ParticleSettings.UseGravity))
+		if (ImGuiUtils::DrawInspectorControl("Gravity", [&ps](const char* id) {
+			return ImGui::RadioButton(id, ps.ParticleSettings.UseGravity);
+		}))
 			ps.ParticleSettings.UseGravity = !ps.ParticleSettings.UseGravity;
 
 		ImGuiUtils::DrawEnabled(ps.ParticleSettings.UseGravity, [&ps]() {
-			ImGui::InputFloat2("Gravity Value", &ps.ParticleSettings.Gravity.x);
+			ImGuiUtils::DrawInspectorControl("Gravity Value", [&ps](const char* id) {
+				return ImGui::InputFloat2(id, &ps.ParticleSettings.Gravity.x);
 			});
+		});
 
-		if (ImGui::RadioButton("Random Colors", ps.ParticleSettings.UseRandomColors))
+		if (ImGuiUtils::DrawInspectorControl("Random Colors", [&ps](const char* id) {
+			return ImGui::RadioButton(id, ps.ParticleSettings.UseRandomColors);
+		}))
 			ps.ParticleSettings.UseRandomColors = !ps.ParticleSettings.UseRandomColors;
 
 		if (ImGui::CollapsingHeader("Emission", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::PushID("Emission");
-			ImGui::InputInt("Emit Over Time", (int*)&ps.EmissionSettings.EmitOverTime);
+			ImGuiUtils::DrawInspectorControl("Emit Over Time", [&ps](const char* id) {
+				return ImGui::InputInt(id, (int*)&ps.EmissionSettings.EmitOverTime);
+			});
 
 			ImGuiUtils::DrawEnumCombo<ParticleSystem2DComponent::ShapeType>("Shape Type", std::visit([](auto&& shape) -> ParticleSystem2DComponent::ShapeType {
 				using T = std::decay_t<decltype(shape)>;
@@ -520,8 +564,12 @@ namespace Bolt {
 				std::visit([&](auto& s) {
 					using T = std::decay_t<decltype(s)>;
 					if constexpr (std::is_same_v<T, ParticleSystem2DComponent::CircleParams>) {
-						ImGui::InputFloat("Radius", &s.Radius);
-						ImGui::Checkbox("On Circle Edge", &s.IsOnCircle);
+						ImGuiUtils::DrawInspectorControl("Radius", [&s](const char* id) {
+							return ImGui::InputFloat(id, &s.Radius);
+						});
+						ImGuiUtils::DrawInspectorControl("On Circle Edge", [&s](const char* id) {
+							return ImGui::Checkbox(id, &s.IsOnCircle);
+						});
 					}
 					else if constexpr (std::is_same_v<T, ParticleSystem2DComponent::SquareParams>) {
 						ImGuiUtils::DrawVec2("Half Extents", s.HalfExtends);
@@ -533,9 +581,15 @@ namespace Bolt {
 		if (ImGui::CollapsingHeader("Rendering")) {
 			ImGui::PushID("Rendering");
 			ps.RenderingSettings.Color = ImGuiUtils::DrawColorPick4("Color", ps.RenderingSettings.Color);
-			ImGui::DragInt("Max Particles", (int*)&ps.RenderingSettings.MaxParticles, 1.0f, 1, 10000);
-			ImGui::InputInt("Sorting Order", (int*)&ps.RenderingSettings.SortingOrder);
-			ImGui::InputInt("Sorting Layer", (int*)&ps.RenderingSettings.SortingLayer);
+			ImGuiUtils::DrawInspectorControl("Max Particles", [&ps](const char* id) {
+				return ImGui::DragInt(id, (int*)&ps.RenderingSettings.MaxParticles, 1.0f, 1, 10000);
+			});
+			ImGuiUtils::DrawInspectorControl("Sorting Order", [&ps](const char* id) {
+				return ImGui::InputInt(id, (int*)&ps.RenderingSettings.SortingOrder);
+			});
+			ImGuiUtils::DrawInspectorControl("Sorting Layer", [&ps](const char* id) {
+				return ImGui::InputInt(id, (int*)&ps.RenderingSettings.SortingLayer);
+			});
 
 			if (Texture2D* texture = TextureManager::GetTexture(ps.GetTextureHandle())) {
 				ImGuiUtils::DrawTexturePreview(texture->GetHandle(), texture->GetWidth(), texture->GetHeight());
@@ -558,11 +612,15 @@ namespace Bolt {
 		Vec2 size = collider.GetScale();
 		Vec2 offset = collider.GetCenter();
 
-		if (ImGui::DragFloat2("Offset", &offset.x, 0.05f)) {
+		if (ImGuiUtils::DrawInspectorControl("Offset", [&offset](const char* id) {
+			return ImGui::DragFloat2(id, &offset.x, 0.05f);
+		})) {
 			collider.SetCenter(offset, *scene);
 		}
 
-		if (ImGui::DragFloat2("Size", &size.x, 0.05f, 0.001f, 1000.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Size", [&size](const char* id) {
+			return ImGui::DragFloat2(id, &size.x, 0.05f, 0.001f, 1000.0f);
+		})) {
 			size.x = std::max(size.x, 0.001f);
 			size.y = std::max(size.y, 0.001f);
 
@@ -577,32 +635,44 @@ namespace Bolt {
 		}
 
 		bool sensor = collider.IsSensor();
-		if (ImGui::Checkbox("Sensor", &sensor)) {
+		if (ImGuiUtils::DrawInspectorControl("Sensor", [&sensor](const char* id) {
+			return ImGui::Checkbox(id, &sensor);
+		})) {
 			collider.SetSensor(sensor, *scene);
 		}
 
 		bool contactEvents = collider.CanRegisterContacts();
-		if (ImGui::Checkbox("Contact Events", &contactEvents)) {
+		if (ImGuiUtils::DrawInspectorControl("Contact Events", [&contactEvents](const char* id) {
+			return ImGui::Checkbox(id, &contactEvents);
+		})) {
 			collider.SetRegisterContacts(contactEvents);
 		}
 
 		bool enabled = collider.IsEnabled();
-		if (ImGui::Checkbox("Collider Enabled", &enabled)) {
+		if (ImGuiUtils::DrawInspectorControl("Collider Enabled", [&enabled](const char* id) {
+			return ImGui::Checkbox(id, &enabled);
+		})) {
 			collider.SetEnabled(enabled);
 		}
 
 		float friction = collider.GetFriction();
-		if (ImGui::DragFloat("Friction", &friction, 0.01f, 0.0f, 10.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Friction", [&friction](const char* id) {
+			return ImGui::DragFloat(id, &friction, 0.01f, 0.0f, 10.0f);
+		})) {
 			collider.SetFriction(friction);
 		}
 
 		float bounciness = collider.GetBounciness();
-		if (ImGui::DragFloat("Bounciness", &bounciness, 0.01f, 0.0f, 1.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Bounciness", [&bounciness](const char* id) {
+			return ImGui::DragFloat(id, &bounciness, 0.01f, 0.0f, 1.0f);
+		})) {
 			collider.SetBounciness(bounciness);
 		}
 
 		uint64_t layerMask = collider.GetLayer();
-		if (ImGui::InputScalar("Layer Mask", ImGuiDataType_U64, &layerMask)) {
+		if (ImGuiUtils::DrawInspectorControl("Layer Mask", [&layerMask](const char* id) {
+			return ImGui::InputScalar(id, ImGuiDataType_U64, &layerMask);
+		})) {
 			collider.SetLayer(layerMask);
 		}
 
@@ -729,22 +799,30 @@ namespace Bolt {
 		auto& audio = entity.GetComponent<AudioSourceComponent>();
 
 		bool playOnAwake = audio.GetPlayOnAwake();
-		if (ImGui::Checkbox("Play On Awake", &playOnAwake)) {
+		if (ImGuiUtils::DrawInspectorControl("Play On Awake", [&playOnAwake](const char* id) {
+			return ImGui::Checkbox(id, &playOnAwake);
+		})) {
 			audio.SetPlayOnAwake(playOnAwake);
 		}
 
 		float volume = audio.GetVolume();
-		if (ImGui::SliderFloat("Volume", &volume, 0.0f, 1.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Volume", [&volume](const char* id) {
+			return ImGui::SliderFloat(id, &volume, 0.0f, 1.0f);
+		})) {
 			audio.SetVolume(volume);
 		}
 
 		float pitch = audio.GetPitch();
-		if (ImGui::DragFloat("Pitch", &pitch, 0.01f, 0.1f, 3.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Pitch", [&pitch](const char* id) {
+			return ImGui::DragFloat(id, &pitch, 0.01f, 0.1f, 3.0f);
+		})) {
 			audio.SetPitch(pitch);
 		}
 
 		bool loop = audio.IsLooping();
-		if (ImGui::Checkbox("Loop", &loop)) {
+		if (ImGuiUtils::DrawInspectorControl("Loop", [&loop](const char* id) {
+			return ImGui::Checkbox(id, &loop);
+		})) {
 			audio.SetLoop(loop);
 		}
 
@@ -782,20 +860,28 @@ namespace Bolt {
 
 		const char* bodyTypeNames[] = { "Static", "Dynamic", "Kinematic" };
 		int currentType = static_cast<int>(body.Type);
-		if (ImGui::Combo("Body Type", &currentType, bodyTypeNames, 3)) {
+		if (ImGuiUtils::DrawInspectorControl("Body Type", [&currentType, &bodyTypeNames](const char* id) {
+			return ImGui::Combo(id, &currentType, bodyTypeNames, 3);
+		})) {
 			body.Type = static_cast<BoltPhys::BodyType>(currentType);
 			if (body.m_Body) body.m_Body->SetBodyType(body.Type);
 		}
 
-		if (ImGui::DragFloat("Mass", &body.Mass, 0.1f, 0.001f, 10000.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Mass", [&body](const char* id) {
+			return ImGui::DragFloat(id, &body.Mass, 0.1f, 0.001f, 10000.0f);
+		})) {
 			if (body.m_Body) body.m_Body->SetMass(body.Mass);
 		}
 
-		if (ImGui::Checkbox("Use Gravity", &body.UseGravity)) {
+		if (ImGuiUtils::DrawInspectorControl("Use Gravity", [&body](const char* id) {
+			return ImGui::Checkbox(id, &body.UseGravity);
+		})) {
 			if (body.m_Body) body.m_Body->SetGravityEnabled(body.UseGravity);
 		}
 
-		if (ImGui::Checkbox("Boundary Check", &body.BoundaryCheck)) {
+		if (ImGuiUtils::DrawInspectorControl("Boundary Check", [&body](const char* id) {
+			return ImGui::Checkbox(id, &body.BoundaryCheck);
+		})) {
 			if (body.m_Body) body.m_Body->SetBoundaryCheckEnabled(body.BoundaryCheck);
 		}
 
@@ -813,7 +899,9 @@ namespace Bolt {
 	{
 		auto& collider = entity.GetComponent<BoltBoxCollider2DComponent>();
 
-		if (ImGui::DragFloat2("Half Extents", &collider.HalfExtents.x, 0.05f, 0.01f, 100.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Half Extents", [&collider](const char* id) {
+			return ImGui::DragFloat2(id, &collider.HalfExtents.x, 0.05f, 0.01f, 100.0f);
+		})) {
 			if (collider.m_Collider) {
 				collider.m_Collider->SetHalfExtents({ collider.HalfExtents.x, collider.HalfExtents.y });
 			}
@@ -824,7 +912,9 @@ namespace Bolt {
 	{
 		auto& collider = entity.GetComponent<BoltCircleCollider2DComponent>();
 
-		if (ImGui::DragFloat("Radius", &collider.Radius, 0.05f, 0.01f, 100.0f)) {
+		if (ImGuiUtils::DrawInspectorControl("Radius", [&collider](const char* id) {
+			return ImGui::DragFloat(id, &collider.Radius, 0.05f, 0.01f, 100.0f);
+		})) {
 			if (collider.m_Collider) {
 				collider.m_Collider->SetRadius(collider.Radius);
 			}

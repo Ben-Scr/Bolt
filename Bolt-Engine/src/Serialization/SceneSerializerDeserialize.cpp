@@ -116,6 +116,56 @@ namespace Bolt {
 				}
 			}
 
+			for (const std::string& className : scriptComponent.ManagedComponents) {
+				if (className.empty() || !callbacks.GetClassFieldDefs) {
+					continue;
+				}
+
+				const char* rawJson = callbacks.GetClassFieldDefs(className.c_str());
+				if (!rawJson || !*rawJson) {
+					continue;
+				}
+
+				Value fieldArray;
+				std::string parseError;
+				if (!Json::TryParse(rawJson, fieldArray, &parseError) || !fieldArray.IsArray()) {
+					BT_CORE_WARN_TAG(
+						"SceneSerializer",
+						"Failed to parse managed component field metadata for {}: {}",
+						className,
+						parseError);
+					continue;
+				}
+
+				const std::string prefix = className + ".";
+				for (Value& fieldValue : fieldArray.GetArray()) {
+					if (!fieldValue.IsObject()) {
+						continue;
+					}
+
+					const std::string fieldName = GetStringMember(fieldValue, "name");
+					if (fieldName.empty()) {
+						continue;
+					}
+
+					const auto pendingValueIt = scriptComponent.PendingFieldValues.find(prefix + fieldName);
+					if (pendingValueIt != scriptComponent.PendingFieldValues.end()) {
+						fieldValue.AddMember("value", Value(pendingValueIt->second));
+					}
+
+					const std::string fieldType = GetStringMember(fieldValue, "type");
+					const std::string currentValue = GetStringMember(fieldValue, "value");
+					const std::string normalizedValue = NormalizeScriptAssetValue(fieldType, currentValue);
+					if (normalizedValue != currentValue) {
+						fieldValue.AddMember("value", Value(normalizedValue));
+					}
+				}
+
+				if (!fieldArray.GetArray().empty()) {
+					fieldsByClass.AddMember(className, std::move(fieldArray));
+				}
+			}
+
 			return fieldsByClass;
 		}
 
@@ -398,7 +448,16 @@ namespace Bolt {
 						scriptsValue.Append(std::move(scriptValue));
 					}
 					entityValue.AddMember("Scripts", std::move(scriptsValue));
+				}
+				if (!scriptComponent.ManagedComponents.empty()) {
+					Value componentsValue = Value::MakeArray();
+					for (const std::string& className : scriptComponent.ManagedComponents) {
+						componentsValue.Append(Value(className));
+					}
+					entityValue.AddMember("ManagedComponents", std::move(componentsValue));
+				}
 
+				if (!scriptComponent.Scripts.empty() || !scriptComponent.ManagedComponents.empty()) {
 					Value scriptFields = SerializeScriptFields(scriptComponent);
 					if (!scriptFields.GetObject().empty()) {
 						entityValue.AddMember("ScriptFields", std::move(scriptFields));
@@ -730,11 +789,24 @@ namespace Bolt {
 				&image.TextureAssetId);
 		}
 
+		ScriptComponent* scriptComponent = nullptr;
+		auto getOrCreateScriptComponent = [&]() -> ScriptComponent& {
+			if (!scriptComponent) {
+				if (scene.HasComponent<ScriptComponent>(entity)) {
+					scriptComponent = &scene.GetComponent<ScriptComponent>(entity);
+				}
+				else {
+					scriptComponent = &scene.AddComponent<ScriptComponent>(entity);
+				}
+			}
+			return *scriptComponent;
+		};
+
 		if (const Value* scriptsValue = GetArrayMember(entityValue, "Scripts")) {
-			auto& scriptComponent = scene.AddComponent<ScriptComponent>(entity);
+			auto& scripts = getOrCreateScriptComponent();
 			for (const Value& scriptValue : scriptsValue->GetArray()) {
 				if (scriptValue.IsString()) {
-					scriptComponent.AddScript(scriptValue.AsStringOr(), ScriptType::Unknown);
+					scripts.AddScript(scriptValue.AsStringOr(), ScriptType::Unknown);
 					continue;
 				}
 
@@ -750,14 +822,40 @@ namespace Bolt {
 					continue;
 				}
 
-				scriptComponent.AddScript(
+				scripts.AddScript(
 					className,
 					ScriptTypeFromString(GetStringMember(scriptValue, "type")));
 			}
+		}
 
-			if (const Value* fieldsByClass = GetObjectMember(entityValue, "ScriptFields")) {
+		if (const Value* componentsValue = GetArrayMember(entityValue, "ManagedComponents")) {
+			auto& components = getOrCreateScriptComponent();
+			for (const Value& componentValue : componentsValue->GetArray()) {
+				if (componentValue.IsString()) {
+					components.AddManagedComponent(componentValue.AsStringOr());
+					continue;
+				}
+
+				if (!componentValue.IsObject()) {
+					continue;
+				}
+
+				std::string className = GetStringMember(componentValue, "className");
+				if (className.empty()) {
+					className = GetStringMember(componentValue, "class");
+				}
+				if (!className.empty()) {
+					components.AddManagedComponent(className);
+				}
+			}
+		}
+
+		if (const Value* fieldsByClass = GetObjectMember(entityValue, "ScriptFields")) {
+			if (scriptComponent || scene.HasComponent<ScriptComponent>(entity)) {
+				auto& fieldsComponent = getOrCreateScriptComponent();
 				for (const auto& [className, fieldsValue] : fieldsByClass->GetObject()) {
-					if (!scriptComponent.HasScript(className) || !fieldsValue.IsArray()) {
+					if ((!fieldsComponent.HasScript(className) && !fieldsComponent.HasManagedComponent(className))
+						|| !fieldsValue.IsArray()) {
 						continue;
 					}
 
@@ -776,7 +874,7 @@ namespace Bolt {
 							continue;
 						}
 
-						scriptComponent.PendingFieldValues[className + "." + fieldName] =
+						fieldsComponent.PendingFieldValues[className + "." + fieldName] =
 							ValueToFieldString(*valueValue);
 					}
 				}

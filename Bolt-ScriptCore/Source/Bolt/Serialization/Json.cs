@@ -13,7 +13,7 @@ namespace Bolt.Serialization
             PropertyNameCaseInsensitive = true,
             WriteIndented = false
         };
-        public static readonly JsonSerializerOptions FormatedJson = new JsonSerializerOptions
+        public static readonly JsonSerializerOptions FormattedJson = new JsonSerializerOptions
         {
             IncludeFields = true,
             PropertyNameCaseInsensitive = true,

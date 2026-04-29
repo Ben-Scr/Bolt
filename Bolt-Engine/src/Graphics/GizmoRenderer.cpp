@@ -25,6 +25,12 @@ namespace Bolt {
 				dst.push_back({ v.x, v.y, v.z, c.r, c.g, c.b, c.a });
 			}
 		}
+
+		static Vec2 RotateGizmoPoint(const Vec2& v, float radians) {
+			const float c = Cos(radians);
+			const float s = Sin(radians);
+			return Vec2(v.x * c + v.y * s, -v.x * s + v.y * c);
+		}
 	}
 
 	bool GizmoRenderer2D::m_IsInitialized = false;
@@ -140,7 +146,7 @@ namespace Bolt {
 			};
 
 			for (int i = 0; i < 4; ++i) {
-				Vec2 rotated = Rotated(corners[i], square.Radiant);
+				Vec2 rotated = RotateGizmoPoint(corners[i], square.Radiant);
 				Vec2 final = square.Center + rotated;
 				m_GizmoVertices.push_back({ final.x, final.y, 0.0f, color });
 			}

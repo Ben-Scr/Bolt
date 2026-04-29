@@ -32,6 +32,7 @@ public:
 		config.EnableGuiRenderer = false;
 		config.EnablePhysics2D = true;
 		config.SetWindowIcon = true;
+		config.UseTargetFrameRateForMainLoop = false;
 		SetRunInBackground(true);
 		return config;
 	}

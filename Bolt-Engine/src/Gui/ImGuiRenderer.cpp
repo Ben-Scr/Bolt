@@ -20,6 +20,7 @@ namespace Bolt {
 
 		ImGuiIO& io = ImGui::GetIO();
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+		io.ConfigWindowsResizeFromEdges = false;
 
 		BT_VERIFY(ImGui_ImplGlfw_InitForOpenGL(window, true), "Failed to init glfw for imgui!" );
 		BT_VERIFY(ImGui_ImplOpenGL3_Init("#version 330 core"), "Failed to init openGL3 for imgui!");
@@ -151,9 +152,9 @@ namespace Bolt {
 		c[ImGuiCol_SeparatorActive]      = ImVec4(0.44f, 0.44f, 0.50f, 1.00f);
 
 		// Resize grip
-		c[ImGuiCol_ResizeGrip]           = ImVec4(0.28f, 0.28f, 0.32f, 0.40f);
-		c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.36f, 0.36f, 0.42f, 0.70f);
-		c[ImGuiCol_ResizeGripActive]     = ImVec4(0.44f, 0.44f, 0.50f, 1.00f);
+		c[ImGuiCol_ResizeGrip]           = ImVec4(0, 0, 0, 0);
+		c[ImGuiCol_ResizeGripHovered]    = ImVec4(0, 0, 0, 0);
+		c[ImGuiCol_ResizeGripActive]     = ImVec4(0, 0, 0, 0);
 
 		// Tabs
 		c[ImGuiCol_Tab]                  = ImVec4(0.15f, 0.15f, 0.18f, 1.00f);

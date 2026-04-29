@@ -44,6 +44,8 @@ namespace Bolt {
 			bool hasClamp = false;
 			float clampMin = 0.0f;
 			float clampMax = 0.0f;
+			bool hasSpace = false;
+			float spaceHeight = 0.0f;
 		};
 
 		struct SceneEntityReference {
@@ -100,6 +102,8 @@ namespace Bolt {
 				if (const Json::Value* tooltipValue = item.FindMember("tooltip")) field.tooltip = tooltipValue->AsStringOr();
 				if (const Json::Value* headerContentValue = item.FindMember("headerContent")) field.headerContent = headerContentValue->AsStringOr();
 				if (const Json::Value* headerSizeValue = item.FindMember("headerSize")) field.headerSize = static_cast<int>(headerSizeValue->AsDoubleOr(0.0));
+				if (const Json::Value* hasSpaceValue = item.FindMember("hasSpace")) field.hasSpace = hasSpaceValue->AsBoolOr(false);
+				if (const Json::Value* spaceHeightValue = item.FindMember("spaceHeight")) field.spaceHeight = static_cast<float>(spaceHeightValue->AsDoubleOr(0.0));
 
 				if (field.displayName.empty()) field.displayName = field.name;
 				fields.push_back(std::move(field));
@@ -419,14 +423,8 @@ namespace Bolt {
 			bool missing,
 			bool& hoveredAny)
 		{
-			constexpr float labelColumnWidth = 160.0f;
-
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextUnformatted(label);
-			hoveredAny |= ImGui::IsItemHovered();
-
-			ImGui::SameLine(labelColumnWidth);
-
+			ImGui::PushID(label);
+			ImGuiUtils::BeginInspectorFieldRow(label);
 			float buttonWidth = std::max(ImGui::GetContentRegionAvail().x, 120.0f);
 			const ImGuiStyle& style = ImGui::GetStyle();
 
@@ -455,6 +453,7 @@ namespace Bolt {
 				ImGui::EndTooltip();
 			}
 			ImGui::PopStyleColor(3);
+			ImGui::PopID();
 
 			return openPicker;
 		}
@@ -525,29 +524,75 @@ namespace Bolt {
 			ImGui::EndPopup();
 		}
 		
-		static float GetEditorLabelColumnWidth()
-		{
-			return 160.0f;
-		}
-
 		static void BeginEditorFieldRow(const char* label)
 		{
-			const ImGuiStyle& style = ImGui::GetStyle();
-			const float labelColumnWidth = GetEditorLabelColumnWidth();
+			ImGuiUtils::BeginInspectorFieldRow(label);
+		}
 
-			ImGui::AlignTextToFramePadding();
+		static bool ParseFloatList(const std::string& value, float* outValues, int count)
+		{
+			if (!outValues || count <= 0) return false;
+			std::string remaining = value;
+			for (int i = 0; i < count; ++i) {
+				const std::size_t separator = remaining.find(',');
+				const std::string token = separator == std::string::npos
+					? remaining
+					: remaining.substr(0, separator);
+				outValues[i] = static_cast<float>(std::atof(token.c_str()));
+				if (separator == std::string::npos) {
+					return i + 1 == count;
+				}
+				remaining = remaining.substr(separator + 1);
+			}
+			return true;
+		}
 
-			const float availableLabelWidth = std::max(1.0f, labelColumnWidth - style.ItemSpacing.x);
+		static bool ParseIntList(const std::string& value, int* outValues, int count)
+		{
+			if (!outValues || count <= 0) return false;
+			std::string remaining = value;
+			for (int i = 0; i < count; ++i) {
+				const std::size_t separator = remaining.find(',');
+				const std::string token = separator == std::string::npos
+					? remaining
+					: remaining.substr(0, separator);
+				outValues[i] = std::atoi(token.c_str());
+				if (separator == std::string::npos) {
+					return i + 1 == count;
+				}
+				remaining = remaining.substr(separator + 1);
+			}
+			return true;
+		}
 
-			bool truncated = false;
-			std::string clippedLabel = ImGuiUtils::Ellipsize(label, availableLabelWidth, &truncated);
+		static std::string FormatFloatList(const float* values, int count)
+		{
+			char buf[160];
+			if (count == 2) {
+				std::snprintf(buf, sizeof(buf), "%g,%g", values[0], values[1]);
+			}
+			else if (count == 3) {
+				std::snprintf(buf, sizeof(buf), "%g,%g,%g", values[0], values[1], values[2]);
+			}
+			else {
+				std::snprintf(buf, sizeof(buf), "%g,%g,%g,%g", values[0], values[1], values[2], values[3]);
+			}
+			return buf;
+		}
 
-			ImGui::TextUnformatted(clippedLabel.c_str());
-			if (truncated && ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", label);
-
-			ImGui::SameLine(labelColumnWidth);
-			ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+		static std::string FormatIntList(const int* values, int count)
+		{
+			char buf[160];
+			if (count == 2) {
+				std::snprintf(buf, sizeof(buf), "%d,%d", values[0], values[1]);
+			}
+			else if (count == 3) {
+				std::snprintf(buf, sizeof(buf), "%d,%d,%d", values[0], values[1], values[2]);
+			}
+			else {
+				std::snprintf(buf, sizeof(buf), "%d,%d,%d,%d", values[0], values[1], values[2], values[3]);
+			}
+			return buf;
 		}
 
 		static void RenderEditorField(const std::string& fieldKey, int32_t gcHandle, EditorFieldInfo& field) {
@@ -711,6 +756,34 @@ namespace Bolt {
 					std::snprintf(buf, sizeof(buf), "%g,%g,%g,%g",
 						col[0], col[1], col[2], col[3]);
 					newValue = buf;
+				}
+				hoveredAny |= ImGui::IsItemHovered();
+			}
+			else if (type == "vector2" || type == "vector3" || type == "vector4") {
+				const int componentCount = type == "vector2" ? 2 : (type == "vector3" ? 3 : 4);
+				float values[4] = {};
+				ParseFloatList(field.value, values, componentCount);
+
+				BeginEditorFieldRow(label);
+				if ((componentCount == 2 && ImGui::DragFloat2("##Value", values, 0.1f))
+					|| (componentCount == 3 && ImGui::DragFloat3("##Value", values, 0.1f))
+					|| (componentCount == 4 && ImGui::DragFloat4("##Value", values, 0.1f))) {
+					changed = true;
+					newValue = FormatFloatList(values, componentCount);
+				}
+				hoveredAny |= ImGui::IsItemHovered();
+			}
+			else if (type == "vector2Int" || type == "vector3Int" || type == "vector4Int") {
+				const int componentCount = type == "vector2Int" ? 2 : (type == "vector3Int" ? 3 : 4);
+				int values[4] = {};
+				ParseIntList(field.value, values, componentCount);
+
+				BeginEditorFieldRow(label);
+				if ((componentCount == 2 && ImGui::DragInt2("##Value", values, 1.0f))
+					|| (componentCount == 3 && ImGui::DragInt3("##Value", values, 1.0f))
+					|| (componentCount == 4 && ImGui::DragInt4("##Value", values, 1.0f))) {
+					changed = true;
+					newValue = FormatIntList(values, componentCount);
 				}
 				hoveredAny |= ImGui::IsItemHovered();
 			}
@@ -890,6 +963,9 @@ namespace Bolt {
 				const std::string fieldKey = MakeFieldKey(scriptIndex, instance.GetClassName(), field.name);
 
 				RenderFieldHeader(field);
+				if (field.hasSpace && field.spaceHeight > 0.0f) {
+					ImGui::Dummy(ImVec2(0.0f, field.spaceHeight));
+				}
 				RenderEditorField(fieldKey, hasLiveInstance ? static_cast<int32_t>(instance.GetGCHandle()) : 0, field);
 
 				if (field.value != oldValue) {
@@ -903,6 +979,44 @@ namespace Bolt {
 						std::string key = instance.GetClassName() + "." + field.name;
 						sc.PendingFieldValues[key] = field.value;
 					}
+				}
+			}
+			ImGui::Unindent(8.0f);
+		}
+
+		static void RenderFieldsForManagedComponent(ScriptComponent& sc, const std::string& className, std::size_t componentIndex) {
+			auto& callbacks = ScriptEngine::GetCallbacks();
+			if (!callbacks.GetClassFieldDefs) {
+				return;
+			}
+
+			const char* json = callbacks.GetClassFieldDefs(className.c_str());
+			if (!json || !*json || (json[0] == '[' && json[1] == ']')) return;
+
+			auto fields = ParseEditorFields(json);
+			if (fields.empty()) return;
+
+			for (auto& field : fields) {
+				const std::string key = className + "." + field.name;
+				auto it = sc.PendingFieldValues.find(key);
+				if (it != sc.PendingFieldValues.end()) {
+					field.value = it->second;
+				}
+			}
+
+			ImGui::Indent(8.0f);
+			for (auto& field : fields) {
+				const std::string oldValue = field.value;
+				const std::string fieldKey = className + "#component" + std::to_string(componentIndex) + "." + field.name;
+
+				RenderFieldHeader(field);
+				if (field.hasSpace && field.spaceHeight > 0.0f) {
+					ImGui::Dummy(ImVec2(0.0f, field.spaceHeight));
+				}
+				RenderEditorField(fieldKey, 0, field);
+
+				if (field.value != oldValue) {
+					sc.PendingFieldValues[className + "." + field.name] = field.value;
 				}
 			}
 			ImGui::Unindent(8.0f);
@@ -992,6 +1106,34 @@ namespace Bolt {
 		auto& scriptComp = entity.GetComponent<ScriptComponent>();
 
 		size_t removeIndex = SIZE_MAX;
+		size_t removeManagedComponentIndex = SIZE_MAX;
+
+		for (size_t i = 0; i < scriptComp.ManagedComponents.size(); i++) {
+			const std::string& className = scriptComp.ManagedComponents[i];
+			std::string label = className.empty() ? "C# Component" : className + " (C# Component)";
+
+			ImGui::PushID(("managed-component-" + std::to_string(i)).c_str());
+
+			bool removeRequested = false;
+			bool open = ImGuiUtils::BeginComponentSection(label.c_str(), removeRequested);
+
+			if (removeRequested) {
+				removeManagedComponentIndex = i;
+			}
+
+			if (open) {
+				if (ScriptEngine::IsInitialized()) {
+					RenderFieldsForManagedComponent(scriptComp, className, i);
+				}
+				else {
+					ImGui::TextDisabled("Script engine not initialized");
+				}
+
+				ImGuiUtils::EndComponentSection();
+			}
+
+			ImGui::PopID();
+		}
 
 		for (size_t i = 0; i < scriptComp.Scripts.size(); i++) {
 			auto& instance = scriptComp.Scripts[i];
@@ -1010,16 +1152,11 @@ namespace Bolt {
 			}
 
 			if (open) {
-				ImGui::AlignTextToFramePadding();
-				ImGui::BeginDisabled();
-				BeginEditorFieldRow("Script");
-				ImGui::EndDisabled();
-				ImGui::SameLine();
-
-				ImGui::BeginDisabled();
-				//TODO(Ben-Scr): The Button should be aligned the same way as the other editor fields.
-				ImGui::Button((label + "##ScriptClass").c_str());
-				ImGui::EndDisabled();
+				ImGuiUtils::DrawInspectorValue("Script", [&label](const char* id) {
+					ImGui::BeginDisabled();
+					ImGui::Button((label + id).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
+					ImGui::EndDisabled();
+				});
 
 				if (instance.GetType() != ScriptType::Native && ScriptEngine::IsInitialized()) {
 					RenderScriptFieldsForInstance(scriptComp, instance, i);
@@ -1033,6 +1170,13 @@ namespace Bolt {
 
 		if (removeIndex != SIZE_MAX) {
 			ScriptSystem::RemoveScript(entity, removeIndex);
+		}
+		if (removeManagedComponentIndex != SIZE_MAX && removeManagedComponentIndex < scriptComp.ManagedComponents.size()) {
+			if (scriptComp.RemoveManagedComponent(scriptComp.ManagedComponents[removeManagedComponentIndex])) {
+				if (Scene* scene = entity.GetScene()) {
+					scene->MarkDirty();
+				}
+			}
 		}
 
 		RenderScriptPicker();

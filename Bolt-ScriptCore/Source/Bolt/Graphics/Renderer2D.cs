@@ -1,7 +1,7 @@
 ﻿
-namespace Bolt
+namespace Bolt.Graphics
 {
-    internal class Renderer2D
+    public class Renderer2D
     {
     }
 }
