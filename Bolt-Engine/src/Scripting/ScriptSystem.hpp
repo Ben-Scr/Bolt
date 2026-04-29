@@ -12,6 +12,7 @@
 
 namespace Bolt {
 	struct ScriptSystemProcessTaskState;
+	struct Collision2D;
 
 	class BOLT_API ScriptSystem : public ISystem {
 	public:
@@ -21,6 +22,9 @@ namespace Bolt {
 		void OnDestroy(Scene& scene) override;
 		static bool RemoveScript(Entity entity, size_t index);
 		static void RemoveAllScripts(Entity entity);
+		static void SetScriptsEnabled(Entity entity, bool enabled);
+		static void DispatchCollisionEnter2D(Scene& scene, const Collision2D& collision);
+		static void DispatchCollisionExit2D(Scene& scene, const Collision2D& collision);
 
 		void SetCoreAssemblyPath(const std::string& path) { m_CoreAssemblyPath = path; }
 		void SetUserAssemblyPath(const std::string& path) { m_UserAssemblyPath = path; }

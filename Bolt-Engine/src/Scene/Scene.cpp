@@ -6,9 +6,9 @@
 
 #include "Components/Physics/Rigidbody2DComponent.hpp"
 #include "Components/Physics/BoxCollider2DComponent.hpp"
-#include "Components/Physics/BoltBody2DComponent.hpp"
-#include "Components/Physics/BoltBoxCollider2DComponent.hpp"
-#include "Components/Physics/BoltCircleCollider2DComponent.hpp"
+#include "Components/Physics/FastBody2DComponent.hpp"
+#include "Components/Physics/FastBoxCollider2DComponent.hpp"
+#include "Components/Physics/FastCircleCollider2DComponent.hpp"
 #include "Physics/PhysicsSystem2D.hpp"
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 #include "Components/Graphics/SpriteRendererComponent.hpp"
@@ -19,34 +19,265 @@
 
 #include "Components/Graphics/Camera2DComponent.hpp"
 #include "Components/General/UUIDComponent.hpp"
+#include "Components/General/EntityMetaDataComponent.hpp"
+#include "Components/General/PrefabInstanceComponent.hpp"
 #include "Core/Application.hpp"
 #include "Scripting/ScriptComponent.hpp"
+#include "Scripting/ScriptEngine.hpp"
 #include "Scripting/ScriptSystem.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <limits>
 #include <typeinfo>
+#include <utility>
 
 namespace Bolt {
+	namespace {
+		class ManagedGameSystem final : public ISystem {
+		public:
+			explicit ManagedGameSystem(std::string className)
+				: m_ClassName(std::move(className)) {}
+
+			const std::string& GetClassName() const { return m_ClassName; }
+
+			void Start(Scene& scene) override
+			{
+				if (m_Handle == 0) {
+					if (!ScriptEngine::GameSystemClassExists(m_ClassName)) {
+						BT_CORE_WARN_TAG("Scene", "GameSystem '{}' was registered on scene '{}' but no matching class was found", m_ClassName, scene.GetName());
+						return;
+					}
+					m_Handle = ScriptEngine::CreateGameSystemInstance(m_ClassName, scene.GetName());
+				}
+
+				if (m_Handle != 0) {
+					ScriptEngine::InvokeGameSystemStart(m_Handle);
+				}
+			}
+
+			void Update(Scene&) override
+			{
+				if (m_Handle != 0) {
+					ScriptEngine::InvokeGameSystemUpdate(m_Handle);
+				}
+			}
+
+			void OnDestroy(Scene&) override
+			{
+				if (m_Handle == 0) {
+					return;
+				}
+
+				ScriptEngine::InvokeGameSystemDestroy(m_Handle);
+				ScriptEngine::DestroyGameSystemInstance(m_Handle);
+				m_Handle = 0;
+			}
+
+		private:
+			std::string m_ClassName;
+			uint32_t m_Handle = 0;
+		};
+
+		bool IsManagedGameSystem(const std::unique_ptr<ISystem>& system)
+		{
+			return dynamic_cast<ManagedGameSystem*>(system.get()) != nullptr;
+		}
+	}
+
 	Entity Scene::CreateEntity() {
-		auto entityHandle = CreateEntityHandle();
+		auto entityHandle = CreateEntityHandle(EntityOrigin::Scene);
 		AddComponent<Transform2DComponent>(entityHandle);
 		return Entity(entityHandle, *this);
 	}
 	Entity Scene::CreateEntity(const std::string& name) {
-		auto entityHandle = CreateEntityHandle();
+		auto entityHandle = CreateEntityHandle(EntityOrigin::Scene);
 		AddComponent<Transform2DComponent>(entityHandle);
 		AddComponent<NameComponent>(entityHandle, name);
 		return Entity(entityHandle, *this);
 	}
 
-	EntityHandle Scene::CreateEntityHandle() {
+	Entity Scene::CreateRuntimeEntity() {
+		auto entityHandle = CreateEntityHandle(EntityOrigin::Runtime);
+		AddComponent<Transform2DComponent>(entityHandle);
+		return Entity(entityHandle, *this);
+	}
+
+	Entity Scene::CreateRuntimeEntity(const std::string& name) {
+		auto entityHandle = CreateEntityHandle(EntityOrigin::Runtime);
+		AddComponent<Transform2DComponent>(entityHandle);
+		AddComponent<NameComponent>(entityHandle, name);
+		return Entity(entityHandle, *this);
+	}
+
+	Entity Scene::CreatePrefabInstance(AssetGUID prefabGuid, const std::string& name) {
+		auto entityHandle = CreateEntityHandle(EntityOrigin::Prefab, prefabGuid);
+		AddComponent<Transform2DComponent>(entityHandle);
+		AddComponent<NameComponent>(entityHandle, name);
+		return Entity(entityHandle, *this);
+	}
+
+	EntityHandle Scene::CreateEntityHandle(EntityOrigin origin, AssetGUID prefabGuid, AssetGUID sceneGuid, EntityID runtimeId) {
 		EntityHandle entityHandle = m_Registry.create();
-		AddComponent<UUIDComponent>(entityHandle);
-		if (!Application::GetIsPlaying()) {
+		SetEntityMetaData(entityHandle, origin, prefabGuid, sceneGuid, runtimeId);
+		if (origin != EntityOrigin::Runtime && !Application::GetIsPlaying()) {
 			m_Dirty = true;
 		}
 		return entityHandle;
+	}
+
+	EntityID Scene::AllocateRuntimeEntityID() {
+		while (m_NextRuntimeEntityID == 0 || m_RuntimeIdToEntity.contains(m_NextRuntimeEntityID)) {
+			++m_NextRuntimeEntityID;
+		}
+
+		return m_NextRuntimeEntityID++;
+	}
+
+	void Scene::RegisterEntityIdentity(EntityHandle entity) {
+		if (!m_Registry.valid(entity) || !m_Registry.all_of<EntityMetaDataComponent>(entity)) {
+			return;
+		}
+
+		const EntityMetaData& metaData = m_Registry.get<EntityMetaDataComponent>(entity).MetaData;
+		if (metaData.RuntimeID != 0) {
+			m_RuntimeIdToEntity[metaData.RuntimeID] = entity;
+		}
+		if (metaData.Origin == EntityOrigin::Scene && static_cast<uint64_t>(metaData.SceneGUID) != 0) {
+			m_SceneGuidToEntity[static_cast<uint64_t>(metaData.SceneGUID)] = entity;
+		}
+	}
+
+	void Scene::UnregisterEntityIdentity(EntityHandle entity) {
+		if (!m_Registry.valid(entity) || !m_Registry.all_of<EntityMetaDataComponent>(entity)) {
+			return;
+		}
+
+		const EntityMetaData& metaData = m_Registry.get<EntityMetaDataComponent>(entity).MetaData;
+		if (metaData.RuntimeID != 0) {
+			auto runtimeIt = m_RuntimeIdToEntity.find(metaData.RuntimeID);
+			if (runtimeIt != m_RuntimeIdToEntity.end() && runtimeIt->second == entity) {
+				m_RuntimeIdToEntity.erase(runtimeIt);
+			}
+		}
+		if (static_cast<uint64_t>(metaData.SceneGUID) != 0) {
+			auto sceneIt = m_SceneGuidToEntity.find(static_cast<uint64_t>(metaData.SceneGUID));
+			if (sceneIt != m_SceneGuidToEntity.end() && sceneIt->second == entity) {
+				m_SceneGuidToEntity.erase(sceneIt);
+			}
+		}
+	}
+
+	void Scene::SetEntityMetaData(
+		EntityHandle entity,
+		EntityOrigin origin,
+		AssetGUID prefabGuid,
+		AssetGUID sceneGuid,
+		EntityID runtimeId) {
+		if (entity == entt::null || !m_Registry.valid(entity)) {
+			return;
+		}
+
+		UnregisterEntityIdentity(entity);
+
+		EntityMetaData metaData;
+		if (m_Registry.all_of<EntityMetaDataComponent>(entity)) {
+			metaData = m_Registry.get<EntityMetaDataComponent>(entity).MetaData;
+		}
+
+		metaData.RuntimeID = runtimeId != 0 ? runtimeId : (metaData.RuntimeID != 0 ? metaData.RuntimeID : AllocateRuntimeEntityID());
+		metaData.Origin = origin;
+		metaData.PrefabGUID = origin == EntityOrigin::Prefab ? prefabGuid : AssetGUID(0);
+		metaData.SceneGUID = origin == EntityOrigin::Scene
+			? (static_cast<uint64_t>(sceneGuid) != 0 ? sceneGuid : AssetGUID(UUID()))
+			: AssetGUID(0);
+
+		m_Registry.emplace_or_replace<EntityMetaDataComponent>(entity, EntityMetaDataComponent{ metaData });
+
+		UUID legacyId = UUID(metaData.RuntimeID);
+		if (metaData.Origin == EntityOrigin::Scene && static_cast<uint64_t>(metaData.SceneGUID) != 0) {
+			legacyId = metaData.SceneGUID;
+		}
+		m_Registry.emplace_or_replace<UUIDComponent>(entity, legacyId);
+
+		if (metaData.Origin == EntityOrigin::Prefab && static_cast<uint64_t>(metaData.PrefabGUID) != 0) {
+			m_Registry.emplace_or_replace<PrefabInstanceComponent>(entity, PrefabInstanceComponent{ metaData.PrefabGUID });
+		}
+		else if (m_Registry.all_of<PrefabInstanceComponent>(entity)) {
+			m_Registry.remove<PrefabInstanceComponent>(entity);
+		}
+
+		RegisterEntityIdentity(entity);
+		if (origin != EntityOrigin::Runtime && !Application::GetIsPlaying()) {
+			m_Dirty = true;
+		}
+	}
+
+	EntityMetaData* Scene::GetEntityMetaData(EntityHandle entity) {
+		if (entity == entt::null || !m_Registry.valid(entity) || !m_Registry.all_of<EntityMetaDataComponent>(entity)) {
+			return nullptr;
+		}
+
+		return &m_Registry.get<EntityMetaDataComponent>(entity).MetaData;
+	}
+
+	const EntityMetaData* Scene::GetEntityMetaData(EntityHandle entity) const {
+		if (entity == entt::null || !m_Registry.valid(entity) || !m_Registry.all_of<EntityMetaDataComponent>(entity)) {
+			return nullptr;
+		}
+
+		return &m_Registry.get<EntityMetaDataComponent>(entity).MetaData;
+	}
+
+	EntityOrigin Scene::GetEntityOrigin(EntityHandle entity) const {
+		const EntityMetaData* metaData = GetEntityMetaData(entity);
+		return metaData ? metaData->Origin : EntityOrigin::Runtime;
+	}
+
+	EntityID Scene::GetRuntimeID(EntityHandle entity) const {
+		const EntityMetaData* metaData = GetEntityMetaData(entity);
+		return metaData ? metaData->RuntimeID : 0;
+	}
+
+	AssetGUID Scene::GetSceneEntityGUID(EntityHandle entity) const {
+		const EntityMetaData* metaData = GetEntityMetaData(entity);
+		return metaData ? metaData->SceneGUID : AssetGUID(0);
+	}
+
+	AssetGUID Scene::GetPrefabGUID(EntityHandle entity) const {
+		const EntityMetaData* metaData = GetEntityMetaData(entity);
+		return metaData ? metaData->PrefabGUID : AssetGUID(0);
+	}
+
+	bool Scene::TryResolveRuntimeID(EntityID runtimeId, EntityHandle& outHandle) const {
+		outHandle = entt::null;
+		if (runtimeId == 0) {
+			return false;
+		}
+
+		const auto it = m_RuntimeIdToEntity.find(runtimeId);
+		if (it == m_RuntimeIdToEntity.end() || !IsValid(it->second)) {
+			return false;
+		}
+
+		outHandle = it->second;
+		return true;
+	}
+
+	bool Scene::TryResolveSceneGUID(AssetGUID sceneGuid, EntityHandle& outHandle) const {
+		outHandle = entt::null;
+		const uint64_t guidValue = static_cast<uint64_t>(sceneGuid);
+		if (guidValue == 0) {
+			return false;
+		}
+
+		const auto it = m_SceneGuidToEntity.find(guidValue);
+		if (it == m_SceneGuidToEntity.end() || !IsValid(it->second)) {
+			return false;
+		}
+
+		outHandle = it->second;
+		return true;
 	}
 
 	void Scene::DestroyEntity(Entity entity) { DestroyEntity(entity.GetHandle()); }
@@ -69,6 +300,92 @@ namespace Bolt {
 	}
 
 	void Scene::MarkDirty() { if (!Application::GetIsPlaying()) m_Dirty = true; }
+
+	bool Scene::HasGameSystem(const std::string& className) const
+	{
+		return std::find(m_GameSystemClassNames.begin(), m_GameSystemClassNames.end(), className) != m_GameSystemClassNames.end();
+	}
+
+	bool Scene::AddGameSystem(const std::string& className)
+	{
+		if (className.empty() || HasGameSystem(className)) {
+			return false;
+		}
+
+		m_GameSystemClassNames.push_back(className);
+		m_Systems.push_back(std::make_unique<ManagedGameSystem>(className));
+		MarkDirty();
+		return true;
+	}
+
+	bool Scene::RemoveGameSystem(size_t index)
+	{
+		if (index >= m_GameSystemClassNames.size()) {
+			return false;
+		}
+
+		const std::string className = m_GameSystemClassNames[index];
+		for (auto it = m_Systems.begin(); it != m_Systems.end(); ++it) {
+			if (auto* managedSystem = dynamic_cast<ManagedGameSystem*>(it->get());
+				managedSystem && managedSystem->GetClassName() == className) {
+				if (m_IsLoaded) {
+					managedSystem->OnDestroy(*this);
+				}
+				m_Systems.erase(it);
+				break;
+			}
+		}
+
+		m_GameSystemClassNames.erase(m_GameSystemClassNames.begin() + static_cast<std::ptrdiff_t>(index));
+		MarkDirty();
+		return true;
+	}
+
+	bool Scene::MoveGameSystem(size_t fromIndex, size_t toIndex)
+	{
+		if (fromIndex >= m_GameSystemClassNames.size() || toIndex >= m_GameSystemClassNames.size() || fromIndex == toIndex) {
+			return false;
+		}
+
+		const std::string moved = m_GameSystemClassNames[fromIndex];
+		m_GameSystemClassNames.erase(m_GameSystemClassNames.begin() + static_cast<std::ptrdiff_t>(fromIndex));
+		m_GameSystemClassNames.insert(m_GameSystemClassNames.begin() + static_cast<std::ptrdiff_t>(toIndex), moved);
+
+		for (auto it = m_Systems.begin(); it != m_Systems.end(); ) {
+			if (IsManagedGameSystem(*it)) {
+				if (m_IsLoaded) {
+					(*it)->OnDestroy(*this);
+				}
+				it = m_Systems.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
+
+		for (const std::string& className : m_GameSystemClassNames) {
+			m_Systems.push_back(std::make_unique<ManagedGameSystem>(className));
+		}
+
+		MarkDirty();
+		return true;
+	}
+
+	void Scene::ClearGameSystems()
+	{
+		for (auto it = m_Systems.begin(); it != m_Systems.end(); ) {
+			if (IsManagedGameSystem(*it)) {
+				if (m_IsLoaded) {
+					(*it)->OnDestroy(*this);
+				}
+				it = m_Systems.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
+		m_GameSystemClassNames.clear();
+	}
 
 	Camera2DComponent* Scene::GetMainCamera() {
 		const auto isUsableCamera = [this](EntityHandle entity) {
@@ -117,6 +434,7 @@ namespace Bolt {
 			m_Dirty = true;
 		}
 
+		UnregisterEntityIdentity(nativeEntity);
 		TrackEntityDestruction(nativeEntity);
 		m_Registry.destroy(nativeEntity);
 		UntrackEntityDestruction(nativeEntity);
@@ -255,12 +573,12 @@ namespace Bolt {
 		m_Registry.on_destroy<DisabledTag>().connect<&Scene::OnDisabledTagDestroy>(this);
 
 		// Bolt-Physics component hooks
-		m_Registry.on_construct<BoltBody2DComponent>().connect<&Scene::OnBoltBody2DConstruct>(this);
-		m_Registry.on_destroy<BoltBody2DComponent>().connect<&Scene::OnBoltBody2DDestroy>(this);
-		m_Registry.on_construct<BoltBoxCollider2DComponent>().connect<&Scene::OnBoltBoxCollider2DConstruct>(this);
-		m_Registry.on_destroy<BoltBoxCollider2DComponent>().connect<&Scene::OnBoltBoxCollider2DDestroy>(this);
-		m_Registry.on_construct<BoltCircleCollider2DComponent>().connect<&Scene::OnBoltCircleCollider2DConstruct>(this);
-		m_Registry.on_destroy<BoltCircleCollider2DComponent>().connect<&Scene::OnBoltCircleCollider2DDestroy>(this);
+		m_Registry.on_construct<FastBody2DComponent>().connect<&Scene::OnFastBody2DConstruct>(this);
+		m_Registry.on_destroy<FastBody2DComponent>().connect<&Scene::OnFastBody2DDestroy>(this);
+		m_Registry.on_construct<FastBoxCollider2DComponent>().connect<&Scene::OnFastBoxCollider2DConstruct>(this);
+		m_Registry.on_destroy<FastBoxCollider2DComponent>().connect<&Scene::OnFastBoxCollider2DDestroy>(this);
+		m_Registry.on_construct<FastCircleCollider2DComponent>().connect<&Scene::OnFastCircleCollider2DConstruct>(this);
+		m_Registry.on_destroy<FastCircleCollider2DComponent>().connect<&Scene::OnFastCircleCollider2DDestroy>(this);
 	}
 
 	void Scene::OnRigidBody2DComponentConstruct(entt::registry& registry, EntityHandle entity)
@@ -407,8 +725,8 @@ namespace Bolt {
 
 	// ── Bolt-Physics component hooks ────────────────────────────────
 
-	void Scene::OnBoltBody2DConstruct(entt::registry& registry, EntityHandle entity) {
-		auto& comp = registry.get<BoltBody2DComponent>(entity);
+	void Scene::OnFastBody2DConstruct(entt::registry& registry, EntityHandle entity) {
+		auto& comp = registry.get<FastBody2DComponent>(entity);
 		auto& boltWorld = PhysicsSystem2D::GetBoltPhysicsWorld();
 
 		comp.m_Body = boltWorld.CreateBody(entity, comp.Type);
@@ -425,27 +743,27 @@ namespace Bolt {
 		}
 	}
 
-	void Scene::OnBoltBody2DDestroy(entt::registry& registry, EntityHandle entity) {
+	void Scene::OnFastBody2DDestroy(entt::registry& registry, EntityHandle entity) {
 		PhysicsSystem2D::GetBoltPhysicsWorld().DestroyBody(entity);
 	}
 
-	void Scene::OnBoltBoxCollider2DConstruct(entt::registry& registry, EntityHandle entity) {
-		auto& comp = registry.get<BoltBoxCollider2DComponent>(entity);
+	void Scene::OnFastBoxCollider2DConstruct(entt::registry& registry, EntityHandle entity) {
+		auto& comp = registry.get<FastBoxCollider2DComponent>(entity);
 		auto& boltWorld = PhysicsSystem2D::GetBoltPhysicsWorld();
 		comp.m_Collider = boltWorld.CreateBoxCollider(entity, comp.HalfExtents);
 	}
 
-	void Scene::OnBoltBoxCollider2DDestroy(entt::registry& registry, EntityHandle entity) {
+	void Scene::OnFastBoxCollider2DDestroy(entt::registry& registry, EntityHandle entity) {
 		PhysicsSystem2D::GetBoltPhysicsWorld().DestroyCollider(entity);
 	}
 
-	void Scene::OnBoltCircleCollider2DConstruct(entt::registry& registry, EntityHandle entity) {
-		auto& comp = registry.get<BoltCircleCollider2DComponent>(entity);
+	void Scene::OnFastCircleCollider2DConstruct(entt::registry& registry, EntityHandle entity) {
+		auto& comp = registry.get<FastCircleCollider2DComponent>(entity);
 		auto& boltWorld = PhysicsSystem2D::GetBoltPhysicsWorld();
 		comp.m_Collider = boltWorld.CreateCircleCollider(entity, comp.Radius);
 	}
 
-	void Scene::OnBoltCircleCollider2DDestroy(entt::registry& registry, EntityHandle entity) {
+	void Scene::OnFastCircleCollider2DDestroy(entt::registry& registry, EntityHandle entity) {
 		PhysicsSystem2D::GetBoltPhysicsWorld().DestroyCollider(entity);
 	}
 
@@ -461,6 +779,10 @@ namespace Bolt {
 
 		if (auto* collider = registry.try_get<BoxCollider2DComponent>(entity); collider && collider->IsValid()) {
 			collider->SetEnabled(enabled);
+		}
+
+		if (registry.all_of<ScriptComponent>(entity)) {
+			ScriptSystem::SetScriptsEnabled(Entity(entity, *this), enabled);
 		}
 
 		if (!registry.all_of<Camera2DComponent>(entity)) {

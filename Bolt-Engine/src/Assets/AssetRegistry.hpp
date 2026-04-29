@@ -71,14 +71,27 @@ namespace Bolt {
 			return id;
 		}
 
+		static uint64_t GetGUID(const std::string& path) {
+			return GetOrCreateAssetUUID(path);
+		}
+
 		static std::string ResolvePath(uint64_t assetId) {
 			EnsureUpToDate();
-			const auto it = s_IdToRecord.find(assetId);
+			auto it = s_IdToRecord.find(assetId);
 			if (it == s_IdToRecord.end()) {
 				return {};
 			}
 
-			if (!std::filesystem::exists(it->second.Path)) {
+			if (std::filesystem::exists(it->second.Path)) {
+				return it->second.Path;
+			}
+
+			// A file may have moved outside the editor after the registry was
+			// built. Re-scan the project once and resolve by the stable meta GUID.
+			s_Dirty = true;
+			EnsureUpToDate();
+			it = s_IdToRecord.find(assetId);
+			if (it == s_IdToRecord.end() || !std::filesystem::exists(it->second.Path)) {
 				return {};
 			}
 
@@ -127,6 +140,41 @@ namespace Bolt {
 				return aName < bName;
 			});
 
+			return records;
+		}
+
+		static std::vector<Record> FindAll(AssetKind kind, const std::string& pathPrefix = {}) {
+			EnsureUpToDate();
+
+			std::string normalizedPrefix;
+			if (!pathPrefix.empty()) {
+				std::filesystem::path prefixPath(pathPrefix);
+				if (!prefixPath.is_absolute()) {
+					const std::string root = GetAssetsRoot();
+					if (!root.empty()) {
+						prefixPath = std::filesystem::path(root) / prefixPath;
+					}
+				}
+				normalizedPrefix = NormalizePath(prefixPath.string());
+			}
+
+			std::vector<Record> records;
+			for (const auto& [id, record] : s_IdToRecord) {
+				(void)id;
+				if (kind != AssetKind::Unknown && record.Kind != kind) {
+					continue;
+				}
+				if (!normalizedPrefix.empty()
+					&& (record.Path.size() < normalizedPrefix.size()
+						|| record.Path.compare(0, normalizedPrefix.size(), normalizedPrefix) != 0)) {
+					continue;
+				}
+				records.push_back(record);
+			}
+
+			std::sort(records.begin(), records.end(), [](const Record& a, const Record& b) {
+				return a.Path < b.Path;
+			});
 			return records;
 		}
 
@@ -379,7 +427,10 @@ namespace Bolt {
 				return 0;
 			}
 
-			const Json::Value* uuidValue = meta.FindMember("uuid");
+			const Json::Value* uuidValue = meta.FindMember("AssetGUID");
+			if (!uuidValue) {
+				uuidValue = meta.FindMember("uuid");
+			}
 			if (!uuidValue) {
 				return 0;
 			}
@@ -398,6 +449,7 @@ namespace Bolt {
 
 		static void WriteMeta(const std::string& assetPath, uint64_t id, AssetKind kind) {
 			Json::Value meta = Json::Value::MakeObject();
+			meta.AddMember("AssetGUID", Json::Value(std::to_string(id)));
 			meta.AddMember("uuid", Json::Value(std::to_string(id)));
 			meta.AddMember("kind", Json::Value(ToString(kind)));
 			File::WriteAllText(GetMetaPath(assetPath), Json::Stringify(meta, true));

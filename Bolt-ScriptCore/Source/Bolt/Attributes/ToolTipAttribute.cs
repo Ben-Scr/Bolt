@@ -1,15 +1,13 @@
 using System;
 
-namespace Bolt
+namespace Bolt;
+[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+public class ToolTipAttribute : Attribute
 {
-    [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
-    public class ToolTipAttribute : Attribute
-    {
-        public string Text { get; }
+    public string Text { get; }
 
-        public ToolTipAttribute(string text)
-        {
-            Text = text;
-        }
+    public ToolTipAttribute(string text)
+    {
+        Text = text;
     }
 }

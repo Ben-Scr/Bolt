@@ -267,6 +267,9 @@ namespace Bolt {
 			if (gameplayActive && m_Configuration.EnableAudio) 
 				AudioManager::Update();
 
+			if (gameplayActive)
+				ScriptEngine::UpdateGlobalSystems();
+
 			Update();
 
 			for (const auto& layer : m_LayerStack) {
@@ -485,6 +488,8 @@ namespace Bolt {
 	}
 
 	void Application::Shutdown(bool invokeOnQuit) {
+		m_IsShuttingDown = true;
+
 		if (invokeOnQuit) {
 			try {
 				OnQuit();
@@ -504,6 +509,7 @@ namespace Bolt {
 		m_LayerStack.Clear();
 
 		if (m_SceneManager) m_SceneManager->Shutdown();
+		if (ScriptEngine::IsInitialized()) ScriptEngine::Shutdown();
 		TextureManager::Shutdown();
 
 		if (m_PhysicsSystem2D) m_PhysicsSystem2D->Shutdown();
@@ -539,6 +545,7 @@ namespace Bolt {
 		m_WindowHasFocus = true;
 		m_IsPlaymodePaused = false;
 		m_IsGameInputEnabled = true;
+		m_IsShuttingDown = false;
 		m_WasEnginePaused = false;
 		m_FixedUpdateAccumulator = 0.0;
 		m_PendingFileDrops.clear();

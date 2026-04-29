@@ -466,6 +466,19 @@ endforeach()
 			buildScenes.Append(sceneName);
 		}
 		root.AddMember("buildScenes", std::move(buildScenes));
+
+		Json::Value globalSystems = Json::Value::MakeArray();
+		for (const auto& registration : project.GlobalSystems) {
+			if (registration.ClassName.empty()) {
+				continue;
+			}
+
+			Json::Value systemValue = Json::Value::MakeObject();
+			systemValue.AddMember("className", registration.ClassName);
+			systemValue.AddMember("active", registration.Active);
+			globalSystems.Append(std::move(systemValue));
+		}
+		root.AddMember("globalSystems", std::move(globalSystems));
 		return root;
 	}
 
@@ -637,6 +650,31 @@ endforeach()
 						}
 					}
 				}
+				if (const Json::Value* globalSystemsValue = root.FindMember("globalSystems")) {
+					project.GlobalSystems.clear();
+					for (const Json::Value& systemValue : globalSystemsValue->GetArray()) {
+						if (systemValue.IsString()) {
+							const std::string className = systemValue.AsStringOr();
+							if (!className.empty()) {
+								project.GlobalSystems.push_back({ className, true });
+							}
+							continue;
+						}
+
+						if (!systemValue.IsObject()) {
+							continue;
+						}
+
+						const Json::Value* classNameValue = systemValue.FindMember("className");
+						const std::string className = classNameValue ? classNameValue->AsStringOr() : "";
+						if (className.empty()) {
+							continue;
+						}
+
+						const Json::Value* activeValue = systemValue.FindMember("active");
+						project.GlobalSystems.push_back({ className, activeValue ? activeValue->AsBoolOr(true) : true });
+					}
+				}
 			}
 			else if (!jsonText.empty()) {
 				BT_CORE_WARN_TAG("BoltProject", "Failed to parse '{}': {}", configPath, parseError);
@@ -722,6 +760,7 @@ endforeach()
 			Json::Value sceneRoot = Json::Value::MakeObject();
 			sceneRoot.AddMember("version", 1);
 			sceneRoot.AddMember("name", project.StartupScene);
+			sceneRoot.AddMember("systems", Json::Value::MakeArray());
 			sceneRoot.AddMember("entities", Json::Value::MakeArray());
 			File::WriteAllText(project.GetSceneFilePath(project.StartupScene), Json::Stringify(sceneRoot, true));
 		}
@@ -743,10 +782,10 @@ endforeach()
 				igEnd += 12; // length of "</ItemGroup>"
 
 				std::string block = content.substr(igStart, igEnd - igStart);
-				const bool referencesBoltScriptCore = block.find("Bolt-ScriptCore") != std::string::npos;
+				const bool referencesScriptCore = block.find("Bolt-ScriptCore") != std::string::npos;
 				if (block.find("PackageReference") != std::string::npos
-					|| (block.find("<Reference ") != std::string::npos && !referencesBoltScriptCore)
-					|| (block.find("ProjectReference") != std::string::npos && !referencesBoltScriptCore)) {
+					|| (block.find("<Reference ") != std::string::npos && !referencesScriptCore)
+					|| (block.find("ProjectReference") != std::string::npos && !referencesScriptCore)) {
 					existingPackageRefs += "  " + block + "\n";
 				}
 				searchPos = igEnd;
@@ -832,14 +871,14 @@ EndGlobal
 		// Generate starter script
 		std::string starterScript = R"(using Bolt;
 
-public class GameScript : BoltScript
+public class GameScript : EntityScript
 {
-    public void Start()
+    public override void OnStart()
     {
         Log.Info("Hello from )" + name + R"(!");
     }
 
-    public void Update()
+    public override void OnUpdate()
     {
     }
 }

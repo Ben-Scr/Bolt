@@ -22,6 +22,8 @@ namespace Bolt::EditorScriptDiscovery {
 		std::string Extension;
 		ScriptType Type = ScriptType::Unknown;
 		bool IsManagedComponent = false;
+		bool IsGameSystem = false;
+		bool IsGlobalSystem = false;
 	};
 
 	inline std::string ToLowerCopy(std::string value)
@@ -97,20 +99,22 @@ namespace Bolt::EditorScriptDiscovery {
 		const std::filesystem::path& path,
 		const std::string& extension,
 		ScriptType type,
-		bool isManagedComponent = false)
+		bool isManagedComponent = false,
+		bool isGameSystem = false,
+		bool isGlobalSystem = false)
 	{
 		if (className.empty() || type == ScriptType::Unknown || ContainsScriptEntry(entries, className, type)) {
 			return;
 		}
 
-		entries.push_back({ className, path, extension, type, isManagedComponent });
+		entries.push_back({ className, path, extension, type, isManagedComponent, isGameSystem, isGlobalSystem });
 	}
 
-	inline bool SourceLooksLikeManagedComponent(const std::filesystem::path& filePath)
+	inline std::string ReadSourceWithoutWhitespace(const std::filesystem::path& filePath)
 	{
 		std::ifstream input(filePath, std::ios::binary);
 		if (!input) {
-			return false;
+			return {};
 		}
 
 		const std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -122,6 +126,22 @@ namespace Bolt::EditorScriptDiscovery {
 			}
 		}
 
+		return compactSource;
+	}
+
+	inline bool SourceHasBaseClass(const std::string& compactSource, std::string_view baseClassName)
+	{
+		const std::string shortPattern = ":" + std::string(baseClassName);
+		const std::string qualifiedPattern = ":Bolt." + std::string(baseClassName);
+		const std::string globalPattern = ":global::Bolt." + std::string(baseClassName);
+		return compactSource.find(shortPattern) != std::string::npos
+			|| compactSource.find(qualifiedPattern) != std::string::npos
+			|| compactSource.find(globalPattern) != std::string::npos;
+	}
+
+	inline bool SourceLooksLikeManagedComponent(const std::filesystem::path& filePath)
+	{
+		const std::string compactSource = ReadSourceWithoutWhitespace(filePath);
 		return compactSource.find(":Component") != std::string::npos
 			|| compactSource.find(":Bolt.Component") != std::string::npos
 			|| compactSource.find(":global::Bolt.Component") != std::string::npos;
@@ -171,7 +191,11 @@ namespace Bolt::EditorScriptDiscovery {
 	{
 		std::string extension = ToLowerCopy(filePath.extension().string());
 		if (IsCSharpScriptExtension(extension)) {
-			AppendScriptEntry(entries, filePath.stem().string(), filePath, extension, ScriptType::Managed, SourceLooksLikeManagedComponent(filePath));
+			const std::string compactSource = ReadSourceWithoutWhitespace(filePath);
+			const bool isManagedComponent = SourceHasBaseClass(compactSource, "Component");
+			const bool isGameSystem = SourceHasBaseClass(compactSource, "GameSystem");
+			const bool isGlobalSystem = SourceHasBaseClass(compactSource, "GlobalSystem");
+			AppendScriptEntry(entries, filePath.stem().string(), filePath, extension, ScriptType::Managed, isManagedComponent, isGameSystem, isGlobalSystem);
 			return;
 		}
 

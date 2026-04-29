@@ -28,7 +28,7 @@ namespace Bolt {
 			return Entity::Null;
 		}
 
-		return activeScene->CreateEntity();
+		return activeScene->CreateRuntimeEntity();
 	}
 
 	void Entity::Destroy(Entity entity) {
@@ -59,6 +59,38 @@ namespace Bolt {
 		else {
 			return "Unnamed Entity (" + std::to_string(static_cast<std::uint32_t>(m_EntityHandle)) + ")";
 		}
+	}
+
+	const EntityMetaData* Entity::GetMetaData() const {
+		return m_Scene ? m_Scene->GetEntityMetaData(m_EntityHandle) : nullptr;
+	}
+
+	EntityOrigin Entity::GetOrigin() const {
+		return m_Scene ? m_Scene->GetEntityOrigin(m_EntityHandle) : EntityOrigin::Runtime;
+	}
+
+	EntityID Entity::GetRuntimeID() const {
+		return m_Scene ? m_Scene->GetRuntimeID(m_EntityHandle) : 0;
+	}
+
+	AssetGUID Entity::GetSceneGUID() const {
+		return m_Scene ? m_Scene->GetSceneEntityGUID(m_EntityHandle) : AssetGUID(0);
+	}
+
+	AssetGUID Entity::GetPrefabGUID() const {
+		return m_Scene ? m_Scene->GetPrefabGUID(m_EntityHandle) : AssetGUID(0);
+	}
+
+	bool Entity::IsSceneEntity() const {
+		return GetOrigin() == EntityOrigin::Scene;
+	}
+
+	bool Entity::IsPrefabInstance() const {
+		return GetOrigin() == EntityOrigin::Prefab;
+	}
+
+	bool Entity::IsRuntime() const {
+		return GetOrigin() == EntityOrigin::Runtime;
 	}
 
 	void Entity::SetStatic(bool isStatic) {

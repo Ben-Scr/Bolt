@@ -452,25 +452,30 @@ namespace Bolt {
 		}
 
 		if (ImGui::BeginPopup("##AssetGridCtx")) {
-			if (ImGui::MenuItem("Create Folder")) {
-				CreateFolder(m_CurrentDirectory);
-			}
-			ImGui::Separator();
-			if (ImGui::MenuItem("Create Scene")) {
-				CreateScene(m_CurrentDirectory);
-			}
-			ImGui::Separator();
-			if (ImGui::MenuItem("Create Script (C#)")) {
-				CreateScript(m_CurrentDirectory);
-			}
-			if (ImGui::MenuItem("Create Script (C++)")) {
-				CreateNativeScript(m_CurrentDirectory);
-			}
-			if (ImGui::MenuItem("Component (C#)")) {
-				CreateCSharpComponent(m_CurrentDirectory);
-			}
-			if (ImGui::MenuItem("Component (C++)")) {
-				CreateNativeComponent(m_CurrentDirectory);
+			if (ImGui::BeginMenu("Create")) {
+				if (ImGui::MenuItem("EntityScript (C#)")) {
+					CreateScript(m_CurrentDirectory);
+				}
+				if (ImGui::MenuItem("Component (C#)")) {
+					CreateCSharpComponent(m_CurrentDirectory);
+				}
+				if (ImGui::MenuItem("GameSystem (C#)")) {
+					CreateGameSystem(m_CurrentDirectory);
+				}
+				if (ImGui::MenuItem("GlobalSystem (C#)")) {
+					CreateGlobalSystem(m_CurrentDirectory);
+				}
+				if (ImGui::MenuItem("Component (C++)")) {
+					CreateNativeComponent(m_CurrentDirectory);
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Scene")) {
+					CreateScene(m_CurrentDirectory);
+				}
+				if (ImGui::MenuItem("Folder")) {
+					CreateFolder(m_CurrentDirectory);
+				}
+				ImGui::EndMenu();
 			}
 
 			ImGui::EndPopup();

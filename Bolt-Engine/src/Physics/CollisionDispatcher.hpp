@@ -48,12 +48,13 @@ namespace Bolt {
 			m_hit.clear();
 		}
 
-		void Process(b2WorldId world) {
+		void Process(b2WorldId world, const ContactBeginCallback& onBegin = {}, const ContactEndCallback& onEnd = {}) {
 			b2ContactEvents ev = b2World_GetContactEvents(world);
 
 			for (int i = 0; i < ev.beginCount; ++i) {
 				auto& e = ev.beginEvents[i];
 				auto collision2D = Collision2D{ .entityA = PhysicsUtility::GetEntityHandleFromShapeID(e.shapeIdA),.entityB = PhysicsUtility::GetEntityHandleFromShapeID(e.shapeIdB) };
+				if (onBegin) onBegin(collision2D);
 				Dispatch(e.shapeIdA, collision2D, m_begin);
 				Dispatch(e.shapeIdB, collision2D, m_begin);
 			}
@@ -61,6 +62,7 @@ namespace Bolt {
 			for (int i = 0; i < ev.endCount; ++i) {
 				auto& e = ev.endEvents[i];
 				auto collision2D = Collision2D{ .entityA = PhysicsUtility::GetEntityHandleFromShapeID(e.shapeIdA),.entityB = PhysicsUtility::GetEntityHandleFromShapeID(e.shapeIdB) };
+				if (onEnd) onEnd(collision2D);
 				Dispatch(e.shapeIdA, collision2D, m_end);
 				Dispatch(e.shapeIdB, collision2D, m_end);
 			}

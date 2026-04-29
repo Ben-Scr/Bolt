@@ -1,8 +1,12 @@
 #pragma once
 #include <cstdint>
 #include "Core/Export.hpp"
+#include "Core/UUID.hpp"
 
 namespace Bolt {
+    using AssetGUID = UUID;
+    using EntityID = std::uint64_t;
+
     template <class IdTag>
     struct BOLT_API StrongId {
         std::uint64_t value{ 0 };

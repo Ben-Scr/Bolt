@@ -7,6 +7,13 @@ using Bolt.Interop;
 
 namespace Bolt;
 
+public enum EntityOrigin
+{
+    Scene = 0,
+    Prefab = 1,
+    Runtime = 2
+}
+
 public class Entity : IEquatable<Entity>
 {
     public static readonly Entity Invalid = new(0);
@@ -14,20 +21,64 @@ public class Entity : IEquatable<Entity>
     private static readonly Dictionary<(ulong EntityID, Type ComponentType), Component> s_ManagedComponentStore = new();
 
     private readonly Dictionary<Type, Component> m_ComponentCache = new();
+    private readonly ulong m_PrefabAssetGUID;
     private Transform2DComponent? m_TransformComponent;
 
-    protected Entity() { ID = 0; }
-    internal Entity(ulong id) { ID = id; }
+    protected Entity()
+    {
+        ID = 0;
+        m_PrefabAssetGUID = 0;
+    }
+
+    internal Entity(ulong id)
+    {
+        ID = id;
+        m_PrefabAssetGUID = 0;
+    }
+
+    private Entity(ulong id, ulong prefabAssetGuid)
+    {
+        ID = id;
+        m_PrefabAssetGUID = prefabAssetGuid;
+    }
 
     public readonly ulong ID;
-    public Transform2DComponent? Transform 
+
+    internal bool IsPrefabAsset => m_PrefabAssetGUID != 0;
+    public ulong RuntimeID => IsPrefabAsset ? 0 : InternalCalls.Entity_GetRuntimeID(ID);
+    public ulong SceneGUID => IsPrefabAsset ? 0 : InternalCalls.Entity_GetSceneGUID(ID);
+    public ulong PrefabGUID => IsPrefabAsset ? m_PrefabAssetGUID : InternalCalls.Entity_GetPrefabGUID(ID);
+    public EntityOrigin Origin => IsPrefabAsset ? EntityOrigin.Prefab : (EntityOrigin)InternalCalls.Entity_GetOrigin(ID);
+    public bool IsSceneEntity => !IsPrefabAsset && Origin == EntityOrigin.Scene;
+    public bool IsPrefabInstance => IsPrefabAsset || (!IsPrefabAsset && Origin == EntityOrigin.Prefab);
+    public bool IsRuntime => !IsPrefabAsset && Origin == EntityOrigin.Runtime;
+
+    public Transform2DComponent Transform
     {
-        get => m_TransformComponent;
+        get
+        {
+            if (m_TransformComponent == null)
+            {
+                m_TransformComponent = GetComponent<Transform2DComponent>();
+                if (m_TransformComponent == null)
+                    throw new InvalidOperationException("Entity does not have a Transform2DComponent");
+            }
+            return m_TransformComponent;
+        }
         set => m_TransformComponent = value;
     }
 
-    // Maps C# component types to the native ComponentRegistry display names.
-    // These must match the names used in BuiltInComponentRegistration.cpp.
+    public string Name
+    {
+        get
+        {
+            if (IsPrefabAsset)
+                return InternalCalls.Asset_GetDisplayName(m_PrefabAssetGUID);
+
+            return GetComponent<NameComponent>()?.Name ?? "";
+        }
+    }
+
     private static readonly Dictionary<Type, string> s_NativeComponentNames = new()
     {
         { typeof(NameComponent),                  "Name" },
@@ -37,10 +88,10 @@ public class Entity : IEquatable<Entity>
         { typeof(Rigidbody2DComponent),           "Rigidbody 2D" },
         { typeof(BoxCollider2DComponent),         "Box Collider 2D" },
         { typeof(AudioSourceComponent),           "Audio Source" },
-        { typeof(BoltBody2DComponent),            "Bolt Body 2D" },
-        { typeof(BoltBoxCollider2DComponent),     "Bolt Box Collider 2D" },
-        { typeof(BoltCircleCollider2DComponent),  "Bolt Circle Collider 2D" },
-        { typeof(ParticleSystem2DComponent),     "Particle System 2D" },
+        { typeof(FastBody2DComponent),            "Fast Body 2D" },
+        { typeof(FastBoxCollider2DComponent),     "Fast Box Collider 2D" },
+        { typeof(FastCircleCollider2DComponent),  "Fast Circle Collider 2D" },
+        { typeof(ParticleSystem2DComponent),      "Particle System 2D" },
     };
 
     private static string? GetNativeName<T>() where T : Component, new() => GetComponentName(typeof(T));
@@ -52,6 +103,9 @@ public class Entity : IEquatable<Entity>
 
         return type.IsSubclassOf(typeof(Component)) ? type.Name : null;
     }
+
+    internal static Entity FromPrefabGUID(ulong prefabGuid)
+        => prefabGuid != 0 ? new Entity(0, prefabGuid) : Invalid;
 
     internal static string? GetNativeComponentName<T>() where T : Component, new() => GetNativeName<T>();
     internal static bool TryGetNativeComponentName(Type type, out string? name) => s_NativeComponentNames.TryGetValue(type, out name);
@@ -100,32 +154,11 @@ public class Entity : IEquatable<Entity>
         }
     }
 
-    public string Name => GetComponent<NameComponent>()?.Name ?? "";
-
-    public Transform2DComponent Transform
-    {
-        get
-        {
-            if (m_TransformComponent == null)
-            {
-                m_TransformComponent = GetComponent<Transform2DComponent>();
-                if (m_TransformComponent == null)
-                    throw new InvalidOperationException("Entity does not have a Transform2DComponent");
-            }
-            return m_TransformComponent;
-        }
-        set
-        {
-            m_TransformComponent = value;
-        }
-    }
-
-    /// <summary>
-    /// Add a component to this entity on the native side.
-    /// Returns the managed wrapper, or null if the component type is unknown.
-    /// </summary>
     public T? AddComponent<T>() where T : Component, new()
     {
+        if (IsPrefabAsset)
+            return null;
+
         string? nativeName = GetNativeName<T>();
         if (nativeName == null)
             return null;
@@ -136,22 +169,20 @@ public class Entity : IEquatable<Entity>
         return GetComponent<T>();
     }
 
-    /// <summary>
-    /// Check whether this entity has a specific component.
-    /// </summary>
     public bool HasComponent<T>() where T : Component, new()
     {
+        if (IsPrefabAsset)
+            return false;
+
         string? nativeName = GetNativeName<T>();
-        if (nativeName == null) return false;
-        return InternalCalls.Entity_HasComponent(ID, nativeName);
+        return nativeName != null && InternalCalls.Entity_HasComponent(ID, nativeName);
     }
 
-    /// <summary>
-    /// Remove a component from this entity.
-    /// Returns true if the component was removed.
-    /// </summary>
     public bool RemoveComponent<T>() where T : Component, new()
     {
+        if (IsPrefabAsset)
+            return false;
+
         string? nativeName = GetNativeName<T>();
         if (nativeName == null) return false;
 
@@ -164,6 +195,9 @@ public class Entity : IEquatable<Entity>
 
     public T? GetComponent<T>() where T : Component, new()
     {
+        if (IsPrefabAsset)
+            return null;
+
         Type type = typeof(T);
         if (!HasComponent<T>())
         {
@@ -236,6 +270,11 @@ public class Entity : IEquatable<Entity>
         if (type == typeof(ushort) && ushort.TryParse(value, NumberStyles.Integer, ic, out ushort us)) return us;
         if (type == typeof(byte) && byte.TryParse(value, NumberStyles.Integer, ic, out byte b)) return b;
         if (type == typeof(sbyte) && sbyte.TryParse(value, NumberStyles.Integer, ic, out sbyte sb)) return sb;
+        if (type == typeof(Entity)) return ParseEntityReference(value);
+        if (type == typeof(Texture)) return Texture.FromAssetUUID(ParseAssetUUID(value));
+        if (type == typeof(Audio)) return Audio.FromAssetUUID(ParseAssetUUID(value));
+        if (type == typeof(TextureRef)) return new TextureRef(ParseAssetUUID(value));
+        if (type == typeof(AudioRef)) return new AudioRef(ParseAssetUUID(value));
 
         string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
         if (type == typeof(Vector2) && parts.Length >= 2)
@@ -256,6 +295,33 @@ public class Entity : IEquatable<Entity>
         return null;
     }
 
+    internal static ulong ParseAssetUUID(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return 0;
+
+        if (ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out ulong assetId))
+            return assetId;
+
+        return InternalCalls.Asset_GetOrCreateUUIDFromPath(value);
+    }
+
+    internal static Entity ParseEntityReference(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value == "0")
+            return Invalid;
+
+        if (value.StartsWith("prefab:", StringComparison.OrdinalIgnoreCase)
+            && ulong.TryParse(value.AsSpan("prefab:".Length), NumberStyles.None, CultureInfo.InvariantCulture, out ulong prefabGuid))
+        {
+            return FromPrefabGUID(prefabGuid);
+        }
+
+        return ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out ulong id) && id != 0
+            ? new Entity(id)
+            : Invalid;
+    }
+
     public static Entity? FindByName(string name)
     {
         ulong id = InternalCalls.Entity_FindByName(name);
@@ -265,28 +331,39 @@ public class Entity : IEquatable<Entity>
     public static Entity Create(string name)
     {
         ulong id = InternalCalls.Entity_Create(name);
-        return new Entity(id);
-    }
-
-   
-    public static Entity Create(Entity source)
-    {
-        if (source is null || source == Invalid) return Invalid;
-        ulong id = InternalCalls.Entity_Clone(source.ID);
         return id != 0 ? new Entity(id) : Invalid;
     }
 
-    public Entity Clone() => Create(this);
+    public static Entity Instantiate(Entity source)
+    {
+        if (source is null || source == Invalid)
+            return Invalid;
+
+        ulong id = source.IsPrefabAsset
+            ? InternalCalls.Entity_InstantiatePrefab(source.PrefabGUID)
+            : InternalCalls.Entity_Clone(source.ID);
+
+        return id != 0 ? new Entity(id) : Invalid;
+    }
+
+    public static Entity Create(Entity source) => Instantiate(source);
+
+    public Entity Clone() => Instantiate(this);
 
     public void Destroy()
     {
+        if (IsPrefabAsset)
+            return;
+
         InvalidateAllCachedComponents();
         InternalCalls.Entity_Destroy(ID);
     }
 
-    public bool Equals(Entity? other) => other is not null && ID == other.ID;
+    public bool Equals(Entity? other)
+        => other is not null && ID == other.ID && m_PrefabAssetGUID == other.m_PrefabAssetGUID;
+
     public override bool Equals(object? obj) => obj is Entity other && Equals(other);
-    public override int GetHashCode() => (int)ID;
+    public override int GetHashCode() => HashCode.Combine(ID, m_PrefabAssetGUID);
 
     public static bool operator ==(Entity? a, Entity? b)
     {
@@ -298,7 +375,11 @@ public class Entity : IEquatable<Entity>
 
     public static implicit operator bool(Entity? entity)
     {
-        if (entity is null || entity == Invalid) return false;
-        return InternalCalls.Entity_IsValid(entity.ID);
+        if (entity is null || entity == Invalid)
+            return false;
+
+        return entity.IsPrefabAsset
+            ? InternalCalls.Asset_IsValid(entity.m_PrefabAssetGUID)
+            : InternalCalls.Entity_IsValid(entity.ID);
     }
 }

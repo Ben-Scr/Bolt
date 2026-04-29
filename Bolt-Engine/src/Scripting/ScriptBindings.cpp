@@ -25,9 +25,9 @@
 #include "Components/Graphics/Camera2DComponent.hpp"
 #include "Components/Physics/Rigidbody2DComponent.hpp"
 #include "Components/Physics/BoxCollider2DComponent.hpp"
-#include "Components/Physics/BoltBody2DComponent.hpp"
-#include "Components/Physics/BoltBoxCollider2DComponent.hpp"
-#include "Components/Physics/BoltCircleCollider2DComponent.hpp"
+#include "Components/Physics/FastBody2DComponent.hpp"
+#include "Components/Physics/FastBoxCollider2DComponent.hpp"
+#include "Components/Physics/FastCircleCollider2DComponent.hpp"
 #include "Components/Audio/AudioSourceComponent.hpp"
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 #include "Components/Tags.hpp"
@@ -49,8 +49,11 @@ namespace Bolt {
 
 	uint64_t GetEntityScriptId(const Scene& scene, EntityHandle handle)
 	{
-		if (scene.IsValid(handle) && scene.HasComponent<UUIDComponent>(handle)) {
-			return static_cast<uint64_t>(scene.GetComponent<UUIDComponent>(handle).Id);
+		if (scene.IsValid(handle)) {
+			const uint64_t runtimeId = scene.GetRuntimeID(handle);
+			if (runtimeId != 0) {
+				return runtimeId;
+			}
 		}
 
 		return FromEntityHandle(handle);
@@ -58,6 +61,10 @@ namespace Bolt {
 
 	bool TryResolveEntityByUUID(const Scene& scene, uint64_t entityID, EntityHandle& outHandle)
 	{
+		if (scene.TryResolveRuntimeID(entityID, outHandle)) {
+			return true;
+		}
+
 		auto view = scene.GetRegistry().view<UUIDComponent>();
 		for (EntityHandle handle : view) {
 			if (static_cast<uint64_t>(view.get<UUIDComponent>(handle).Id) == entityID) {
@@ -278,7 +285,7 @@ namespace Bolt {
 		Entity source = sourceScene->GetEntity(sourceHandle);
 		std::string name = source.GetName();
 
-		Entity clone = targetScene->CreateEntity(name + " (Clone)");
+		Entity clone = targetScene->CreateRuntimeEntity(name + " (Clone)");
 
 		const auto& registry = SceneManager::Get().GetComponentRegistry();
 		registry.ForEachComponentInfo([&](const std::type_index&, const ComponentInfo& info) {
@@ -290,6 +297,47 @@ namespace Bolt {
 		});
 
 		return GetEntityScriptId(*targetScene, clone.GetHandle());
+	}
+
+	uint64_t Bolt_Entity_InstantiatePrefab(uint64_t prefabGuid)
+	{
+		Scene* targetScene = GetScene();
+		if (!targetScene) return 0;
+
+		const EntityHandle instance = SceneSerializer::InstantiatePrefab(*targetScene, prefabGuid);
+		return instance != entt::null ? GetEntityScriptId(*targetScene, instance) : 0;
+	}
+
+	int Bolt_Entity_GetOrigin(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return static_cast<int>(EntityOrigin::Runtime);
+		return static_cast<int>(scene->GetEntityOrigin(handle));
+	}
+
+	uint64_t Bolt_Entity_GetRuntimeID(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+		return scene->GetRuntimeID(handle);
+	}
+
+	uint64_t Bolt_Entity_GetSceneGUID(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+		return static_cast<uint64_t>(scene->GetSceneEntityGUID(handle));
+	}
+
+	uint64_t Bolt_Entity_GetPrefabGUID(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+		return static_cast<uint64_t>(scene->GetPrefabGUID(handle));
 	}
 
 	// ── Scene ───────────────────────────────────────────────────────────
@@ -329,6 +377,16 @@ namespace Bolt {
 	static const char* Bolt_Scene_GetEntityNameByUUID(uint64_t uuid) {
 		Scene* scene = GetScene();
 		if (!scene) { s_StringReturnBuffer.clear(); return s_StringReturnBuffer.c_str(); }
+
+		Scene* resolvedScene = nullptr;
+		EntityHandle resolvedHandle = entt::null;
+		if (ResolveEntityReference(uuid, resolvedScene, resolvedHandle)
+			&& resolvedScene
+			&& resolvedScene->HasComponent<NameComponent>(resolvedHandle)) {
+			s_StringReturnBuffer = resolvedScene->GetComponent<NameComponent>(resolvedHandle).Name;
+			return s_StringReturnBuffer.c_str();
+		}
+
 		auto view = scene->GetRegistry().view<UUIDComponent, NameComponent>();
 		for (auto [ent, uuidComp, nameComp] : view.each()) {
 			if (static_cast<uint64_t>(uuidComp.Id) == uuid) {
@@ -486,6 +544,24 @@ namespace Bolt {
 	static const char* Bolt_Asset_GetDisplayName(uint64_t assetId)
 	{
 		s_StringReturnBuffer = AssetRegistry::GetDisplayName(assetId);
+		return s_StringReturnBuffer.c_str();
+	}
+
+	static int Bolt_Asset_GetKind(uint64_t assetId)
+	{
+		return static_cast<int>(AssetRegistry::GetKind(assetId));
+	}
+
+	static const char* Bolt_Asset_FindAll(const char* pathPrefix, int kind)
+	{
+		Json::Value ids = Json::Value::MakeArray();
+		for (const AssetRegistry::Record& record : AssetRegistry::FindAll(
+				 static_cast<AssetKind>(kind),
+				 pathPrefix ? pathPrefix : "")) {
+			ids.Append(Json::Value(std::to_string(record.Id)));
+		}
+
+		s_StringReturnBuffer = Json::Stringify(ids, false);
 		return s_StringReturnBuffer.c_str();
 	}
 
@@ -917,20 +993,20 @@ namespace Bolt {
 
 	// ── Bolt-Physics ────────────────────────────────────────────────────
 
-	static int Bolt_BoltBody2D_GetBodyType(uint64_t entityID) { GET_COMPONENT(BoltBody2DComponent, entityID, 1); return static_cast<int>(comp.Type); }
-	static void Bolt_BoltBody2D_SetBodyType(uint64_t entityID, int type) { GET_COMPONENT(BoltBody2DComponent, entityID, ); comp.Type = static_cast<BoltPhys::BodyType>(type); if (comp.m_Body) comp.m_Body->SetBodyType(comp.Type); }
-	static float Bolt_BoltBody2D_GetMass(uint64_t entityID) { GET_COMPONENT(BoltBody2DComponent, entityID, 1.0f); return comp.Mass; }
-	static void Bolt_BoltBody2D_SetMass(uint64_t entityID, float mass) { GET_COMPONENT(BoltBody2DComponent, entityID, ); comp.Mass = mass; if (comp.m_Body) comp.m_Body->SetMass(mass); }
-	static int Bolt_BoltBody2D_GetUseGravity(uint64_t entityID) { GET_COMPONENT(BoltBody2DComponent, entityID, 1); return comp.UseGravity ? 1 : 0; }
-	static void Bolt_BoltBody2D_SetUseGravity(uint64_t entityID, int enabled) { GET_COMPONENT(BoltBody2DComponent, entityID, ); comp.UseGravity = enabled != 0; if (comp.m_Body) comp.m_Body->SetGravityEnabled(comp.UseGravity); }
-	static void Bolt_BoltBody2D_GetVelocity(uint64_t entityID, float* outX, float* outY) { GET_COMPONENT(BoltBody2DComponent, entityID, (void)(*outX = 0, *outY = 0)); Vec2 v = comp.GetVelocity(); *outX = v.x; *outY = v.y; }
-	static void Bolt_BoltBody2D_SetVelocity(uint64_t entityID, float x, float y) { GET_COMPONENT(BoltBody2DComponent, entityID, ); comp.SetVelocity({ x, y }); }
+	static int Bolt_FastBody2D_GetBodyType(uint64_t entityID) { GET_COMPONENT(FastBody2DComponent, entityID, 1); return static_cast<int>(comp.Type); }
+	static void Bolt_FastBody2D_SetBodyType(uint64_t entityID, int type) { GET_COMPONENT(FastBody2DComponent, entityID, ); comp.Type = static_cast<BoltPhys::BodyType>(type); if (comp.m_Body) comp.m_Body->SetBodyType(comp.Type); }
+	static float Bolt_FastBody2D_GetMass(uint64_t entityID) { GET_COMPONENT(FastBody2DComponent, entityID, 1.0f); return comp.Mass; }
+	static void Bolt_FastBody2D_SetMass(uint64_t entityID, float mass) { GET_COMPONENT(FastBody2DComponent, entityID, ); comp.Mass = mass; if (comp.m_Body) comp.m_Body->SetMass(mass); }
+	static int Bolt_FastBody2D_GetUseGravity(uint64_t entityID) { GET_COMPONENT(FastBody2DComponent, entityID, 1); return comp.UseGravity ? 1 : 0; }
+	static void Bolt_FastBody2D_SetUseGravity(uint64_t entityID, int enabled) { GET_COMPONENT(FastBody2DComponent, entityID, ); comp.UseGravity = enabled != 0; if (comp.m_Body) comp.m_Body->SetGravityEnabled(comp.UseGravity); }
+	static void Bolt_FastBody2D_GetVelocity(uint64_t entityID, float* outX, float* outY) { GET_COMPONENT(FastBody2DComponent, entityID, (void)(*outX = 0, *outY = 0)); Vec2 v = comp.GetVelocity(); *outX = v.x; *outY = v.y; }
+	static void Bolt_FastBody2D_SetVelocity(uint64_t entityID, float x, float y) { GET_COMPONENT(FastBody2DComponent, entityID, ); comp.SetVelocity({ x, y }); }
 
-	static void Bolt_BoltBoxCollider2D_GetHalfExtents(uint64_t entityID, float* outX, float* outY) { GET_COMPONENT(BoltBoxCollider2DComponent, entityID, (void)(*outX = 0.5f, *outY = 0.5f)); *outX = comp.HalfExtents.x; *outY = comp.HalfExtents.y; }
-	static void Bolt_BoltBoxCollider2D_SetHalfExtents(uint64_t entityID, float x, float y) { GET_COMPONENT(BoltBoxCollider2DComponent, entityID, ); comp.SetHalfExtents({ x, y }); }
+	static void Bolt_FastBoxCollider2D_GetHalfExtents(uint64_t entityID, float* outX, float* outY) { GET_COMPONENT(FastBoxCollider2DComponent, entityID, (void)(*outX = 0.5f, *outY = 0.5f)); *outX = comp.HalfExtents.x; *outY = comp.HalfExtents.y; }
+	static void Bolt_FastBoxCollider2D_SetHalfExtents(uint64_t entityID, float x, float y) { GET_COMPONENT(FastBoxCollider2DComponent, entityID, ); comp.SetHalfExtents({ x, y }); }
 
-	static float Bolt_BoltCircleCollider2D_GetRadius(uint64_t entityID) { GET_COMPONENT(BoltCircleCollider2DComponent, entityID, 0.5f); return comp.Radius; }
-	static void Bolt_BoltCircleCollider2D_SetRadius(uint64_t entityID, float radius) { GET_COMPONENT(BoltCircleCollider2DComponent, entityID, ); comp.SetRadius(radius); }
+	static float Bolt_FastCircleCollider2D_GetRadius(uint64_t entityID) { GET_COMPONENT(FastCircleCollider2DComponent, entityID, 0.5f); return comp.Radius; }
+	static void Bolt_FastCircleCollider2D_SetRadius(uint64_t entityID, float radius) { GET_COMPONENT(FastCircleCollider2DComponent, entityID, ); comp.SetRadius(radius); }
 
 	// ── ParticleSystem2D ────────────────────────────────────────────────
 
@@ -1157,6 +1233,11 @@ namespace Bolt {
 		PopulateNonComponentBindings(b);
 
 		b.Entity_Clone = &Bolt_Entity_Clone;
+		b.Entity_InstantiatePrefab = &Bolt_Entity_InstantiatePrefab;
+		b.Entity_GetOrigin = &Bolt_Entity_GetOrigin;
+		b.Entity_GetRuntimeID = &Bolt_Entity_GetRuntimeID;
+		b.Entity_GetSceneGUID = &Bolt_Entity_GetSceneGUID;
+		b.Entity_GetPrefabGUID = &Bolt_Entity_GetPrefabGUID;
 		b.Entity_HasComponent = &Bolt_Entity_HasComponent;
 		b.Entity_AddComponent = &Bolt_Entity_AddComponent;
 		b.Entity_RemoveComponent = &Bolt_Entity_RemoveComponent;
@@ -1221,18 +1302,18 @@ namespace Bolt {
 		b.AudioSource_IsPlaying = &Bolt_AudioSource_IsPlaying;
 		b.AudioSource_IsPaused = &Bolt_AudioSource_IsPaused;
 
-		b.BoltBody2D_GetBodyType = &Bolt_BoltBody2D_GetBodyType;
-		b.BoltBody2D_SetBodyType = &Bolt_BoltBody2D_SetBodyType;
-		b.BoltBody2D_GetMass = &Bolt_BoltBody2D_GetMass;
-		b.BoltBody2D_SetMass = &Bolt_BoltBody2D_SetMass;
-		b.BoltBody2D_GetUseGravity = &Bolt_BoltBody2D_GetUseGravity;
-		b.BoltBody2D_SetUseGravity = &Bolt_BoltBody2D_SetUseGravity;
-		b.BoltBody2D_GetVelocity = &Bolt_BoltBody2D_GetVelocity;
-		b.BoltBody2D_SetVelocity = &Bolt_BoltBody2D_SetVelocity;
-		b.BoltBoxCollider2D_GetHalfExtents = &Bolt_BoltBoxCollider2D_GetHalfExtents;
-		b.BoltBoxCollider2D_SetHalfExtents = &Bolt_BoltBoxCollider2D_SetHalfExtents;
-		b.BoltCircleCollider2D_GetRadius = &Bolt_BoltCircleCollider2D_GetRadius;
-		b.BoltCircleCollider2D_SetRadius = &Bolt_BoltCircleCollider2D_SetRadius;
+		b.FastBody2D_GetBodyType = &Bolt_FastBody2D_GetBodyType;
+		b.FastBody2D_SetBodyType = &Bolt_FastBody2D_SetBodyType;
+		b.FastBody2D_GetMass = &Bolt_FastBody2D_GetMass;
+		b.FastBody2D_SetMass = &Bolt_FastBody2D_SetMass;
+		b.FastBody2D_GetUseGravity = &Bolt_FastBody2D_GetUseGravity;
+		b.FastBody2D_SetUseGravity = &Bolt_FastBody2D_SetUseGravity;
+		b.FastBody2D_GetVelocity = &Bolt_FastBody2D_GetVelocity;
+		b.FastBody2D_SetVelocity = &Bolt_FastBody2D_SetVelocity;
+		b.FastBoxCollider2D_GetHalfExtents = &Bolt_FastBoxCollider2D_GetHalfExtents;
+		b.FastBoxCollider2D_SetHalfExtents = &Bolt_FastBoxCollider2D_SetHalfExtents;
+		b.FastCircleCollider2D_GetRadius = &Bolt_FastCircleCollider2D_GetRadius;
+		b.FastCircleCollider2D_SetRadius = &Bolt_FastCircleCollider2D_SetRadius;
 
 		b.Scene_GetActiveSceneName = &Bolt_Scene_GetActiveSceneName;
 		b.Scene_GetEntityCount = &Bolt_Scene_GetEntityCount;
@@ -1254,6 +1335,8 @@ namespace Bolt {
 		b.Asset_GetOrCreateUUIDFromPath = &Bolt_Asset_GetOrCreateUUIDFromPath;
 		b.Asset_GetPath = &Bolt_Asset_GetPath;
 		b.Asset_GetDisplayName = &Bolt_Asset_GetDisplayName;
+		b.Asset_GetKind = &Bolt_Asset_GetKind;
+		b.Asset_FindAll = &Bolt_Asset_FindAll;
 		b.Texture_LoadAsset = &Bolt_Texture_LoadAsset;
 		b.Texture_GetWidth = &Bolt_Texture_GetWidth;
 		b.Texture_GetHeight = &Bolt_Texture_GetHeight;

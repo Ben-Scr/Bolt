@@ -20,9 +20,9 @@
 #include "Components/Tags.hpp"
 #include "Scripting/ScriptComponent.hpp"
 #include "Scripting/ScriptEngine.hpp"
-#include "Components/Physics/BoltBody2DComponent.hpp"
-#include "Components/Physics/BoltBoxCollider2DComponent.hpp"
-#include "Components/Physics/BoltCircleCollider2DComponent.hpp"
+#include "Components/Physics/FastBody2DComponent.hpp"
+#include "Components/Physics/FastBoxCollider2DComponent.hpp"
+#include "Components/Physics/FastCircleCollider2DComponent.hpp"
 #include "Graphics/TextureManager.hpp"
 #include "Audio/AudioManager.hpp"
 #include "Physics/PhysicsTypes.hpp"
@@ -42,6 +42,116 @@ namespace Bolt {
 	namespace {
 		static constexpr int SCENE_FORMAT_VERSION = 1;
 		static constexpr float k_MinScaleAxis = 0.0001f;
+
+		const char* EntityOriginToString(EntityOrigin origin) {
+			switch (origin) {
+			case EntityOrigin::Scene: return "Scene";
+			case EntityOrigin::Prefab: return "Prefab";
+			case EntityOrigin::Runtime: return "Runtime";
+			default: return "Runtime";
+			}
+		}
+
+		void RemoveObjectMember(Value& value, std::string_view key) {
+			if (!value.IsObject()) {
+				return;
+			}
+
+			auto& members = value.GetObject();
+			members.erase(
+				std::remove_if(members.begin(), members.end(), [key](const auto& member) {
+					return member.first == key;
+				}),
+				members.end());
+		}
+
+		void RemoveEntityIdentityMembers(Value& value) {
+			RemoveObjectMember(value, "Origin");
+			RemoveObjectMember(value, "RuntimeID");
+			RemoveObjectMember(value, "EntityID");
+			RemoveObjectMember(value, "SceneGUID");
+			RemoveObjectMember(value, "PrefabGUID");
+			RemoveObjectMember(value, "uuid");
+		}
+
+		bool JsonEquivalent(const Value& left, const Value& right) {
+			return Json::Stringify(left, false) == Json::Stringify(right, false);
+		}
+
+		void BuildOverridePatch(const Value& prefabValue, const Value& instanceValue, const std::string& prefix, Value& overrides) {
+			if (prefabValue.IsObject() && instanceValue.IsObject()) {
+				for (const auto& [key, instanceMember] : instanceValue.GetObject()) {
+					const Value* prefabMember = prefabValue.FindMember(key);
+					const std::string path = prefix.empty() ? key : prefix + "." + key;
+					if (prefabMember && prefabMember->IsObject() && instanceMember.IsObject()) {
+						BuildOverridePatch(*prefabMember, instanceMember, path, overrides);
+						continue;
+					}
+
+					if (!prefabMember || !JsonEquivalent(*prefabMember, instanceMember)) {
+						overrides.AddMember(path, instanceMember);
+					}
+				}
+				return;
+			}
+
+			if (!JsonEquivalent(prefabValue, instanceValue)) {
+				overrides.AddMember(prefix, instanceValue);
+			}
+		}
+
+		bool LoadPrefabEntityValue(uint64_t prefabGuid, Value& outEntityValue) {
+			const std::string prefabPath = AssetRegistry::ResolvePath(prefabGuid);
+			if (prefabPath.empty() || !File::Exists(prefabPath)) {
+				return false;
+			}
+
+			Value root;
+			std::string parseError;
+			if (!Json::TryParse(File::ReadAllText(prefabPath), root, &parseError) || !root.IsObject()) {
+				BT_CORE_WARN_TAG("SceneSerializer", "Failed to parse prefab {}: {}", prefabPath, parseError);
+				return false;
+			}
+
+			if (const Value* entityValue = GetObjectMember(root, "Entity")) {
+				outEntityValue = *entityValue;
+				return true;
+			}
+			if (const Value* entityValue = GetObjectMember(root, "prefab")) {
+				outEntityValue = *entityValue;
+				return true;
+			}
+
+			if (root.FindMember("Transform2D") || root.FindMember("Scripts") || root.FindMember("Name")) {
+				outEntityValue = root;
+				return true;
+			}
+
+			return false;
+		}
+
+		Value SerializeEntity(Scene& scene, EntityHandle entity);
+
+		Value SerializePrefabInstance(Scene& scene, EntityHandle entity) {
+			Value instanceValue = Value::MakeObject();
+			const uint64_t prefabGuid = static_cast<uint64_t>(scene.GetPrefabGUID(entity));
+			instanceValue.AddMember("Origin", Value("Prefab"));
+			instanceValue.AddMember("PrefabGUID", Value(std::to_string(prefabGuid)));
+
+			Value prefabEntityValue;
+			if (prefabGuid == 0 || !LoadPrefabEntityValue(prefabGuid, prefabEntityValue)) {
+				return instanceValue;
+			}
+
+			Value currentEntityValue = SerializeEntity(scene, entity);
+			RemoveEntityIdentityMembers(prefabEntityValue);
+			RemoveEntityIdentityMembers(currentEntityValue);
+
+			Value overrides = Value::MakeObject();
+			BuildOverridePatch(prefabEntityValue, currentEntityValue, {}, overrides);
+			instanceValue.AddMember("Overrides", std::move(overrides));
+			return instanceValue;
+		}
 
 		Value SerializeScriptFields(const ScriptComponent& scriptComponent) {
 			Value fieldsByClass = Value::MakeObject();
@@ -181,6 +291,16 @@ namespace Bolt {
 					Value(std::to_string(static_cast<uint64_t>(registry.get<UUIDComponent>(entity).Id))));
 			}
 
+			if (const EntityMetaData* metaData = scene.GetEntityMetaData(entity)) {
+				entityValue.AddMember("Origin", Value(EntityOriginToString(metaData->Origin)));
+				if (metaData->Origin == EntityOrigin::Scene && static_cast<uint64_t>(metaData->SceneGUID) != 0) {
+					entityValue.AddMember("SceneGUID", Value(std::to_string(static_cast<uint64_t>(metaData->SceneGUID))));
+				}
+				if (metaData->Origin == EntityOrigin::Prefab && static_cast<uint64_t>(metaData->PrefabGUID) != 0) {
+					entityValue.AddMember("PrefabGUID", Value(std::to_string(static_cast<uint64_t>(metaData->PrefabGUID))));
+				}
+			}
+
 			if (registry.all_of<Transform2DComponent>(entity)) {
 				const auto& transform = registry.get<Transform2DComponent>(entity);
 				Value transformValue = Value::MakeObject();
@@ -303,29 +423,29 @@ namespace Bolt {
 				entityValue.AddMember("Camera2D", std::move(cameraValue));
 			}
 
-			if (registry.all_of<BoltBody2DComponent>(entity)) {
-				const auto& boltBody = registry.get<BoltBody2DComponent>(entity);
+			if (registry.all_of<FastBody2DComponent>(entity)) {
+				const auto& boltBody = registry.get<FastBody2DComponent>(entity);
 				Value bodyValue = Value::MakeObject();
 				bodyValue.AddMember("type", Value(static_cast<int>(boltBody.Type)));
 				bodyValue.AddMember("mass", Value(boltBody.Mass));
 				bodyValue.AddMember("useGravity", Value(boltBody.UseGravity));
 				bodyValue.AddMember("boundaryCheck", Value(boltBody.BoundaryCheck));
-				entityValue.AddMember("BoltBody2D", std::move(bodyValue));
+				entityValue.AddMember("FastBody2D", std::move(bodyValue));
 			}
 
-			if (registry.all_of<BoltBoxCollider2DComponent>(entity)) {
-				const auto& collider = registry.get<BoltBoxCollider2DComponent>(entity);
+			if (registry.all_of<FastBoxCollider2DComponent>(entity)) {
+				const auto& collider = registry.get<FastBoxCollider2DComponent>(entity);
 				Value colliderValue = Value::MakeObject();
 				colliderValue.AddMember("halfX", Value(collider.HalfExtents.x));
 				colliderValue.AddMember("halfY", Value(collider.HalfExtents.y));
-				entityValue.AddMember("BoltBoxCollider2D", std::move(colliderValue));
+				entityValue.AddMember("FastBoxCollider2D", std::move(colliderValue));
 			}
 
-			if (registry.all_of<BoltCircleCollider2DComponent>(entity)) {
-				const auto& collider = registry.get<BoltCircleCollider2DComponent>(entity);
+			if (registry.all_of<FastCircleCollider2DComponent>(entity)) {
+				const auto& collider = registry.get<FastCircleCollider2DComponent>(entity);
 				Value colliderValue = Value::MakeObject();
 				colliderValue.AddMember("radius", Value(collider.Radius));
-				entityValue.AddMember("BoltCircleCollider2D", std::move(colliderValue));
+				entityValue.AddMember("FastCircleCollider2D", std::move(colliderValue));
 			}
 
 			if (registry.all_of<ParticleSystem2DComponent>(entity)) {
@@ -471,13 +591,31 @@ namespace Bolt {
 		root.AddMember("name", Value(scene.GetName()));
 		root.AddMember("sceneId", Value(std::to_string(static_cast<uint64_t>(scene.GetSceneId()))));
 
+		Value systemsValue = Value::MakeArray();
+		for (const std::string& className : scene.GetGameSystemClassNames()) {
+			if (!className.empty()) {
+				systemsValue.Append(Value(className));
+			}
+		}
+		root.AddMember("systems", std::move(systemsValue));
+
 		Value entitiesValue = Value::MakeArray();
 		auto& registry = scene.GetRegistry();
 		auto view = registry.view<entt::entity>();
 		std::vector<entt::entity> entities(view.begin(), view.end());
 
 		for (const entt::entity entity : entities) {
-			entitiesValue.Append(SerializeEntity(scene, entity));
+			const EntityOrigin origin = scene.GetEntityOrigin(entity);
+			switch (origin) {
+			case EntityOrigin::Scene:
+				entitiesValue.Append(SerializeEntity(scene, entity));
+				break;
+			case EntityOrigin::Prefab:
+				entitiesValue.Append(SerializePrefabInstance(scene, entity));
+				break;
+			case EntityOrigin::Runtime:
+				break;
+			}
 		}
 
 		root.AddMember("entities", std::move(entitiesValue));
@@ -492,6 +630,7 @@ namespace Bolt {
 			}
 
 			File::WriteAllText(path, Json::Stringify(SerializeScene(scene), true));
+			AssetRegistry::GetOrCreateAssetUUID(path);
 			scene.ClearDirty();
 			BT_CORE_INFO_TAG("SceneSerializer", "Saved scene: {}", scene.GetName());
 			return true;
@@ -502,6 +641,14 @@ namespace Bolt {
 		}
 	}
 
+	Json::Value SceneSerializer::SerializeEntityFull(Scene& scene, EntityHandle entity) {
+		if (entity == entt::null || !scene.IsValid(entity)) {
+			return Value::MakeObject();
+		}
+
+		return SerializeEntity(scene, entity);
+	}
+
 	bool SceneSerializer::SaveEntityToFile(Scene& scene, EntityHandle entity, const std::string& path) {
 		try {
 			const std::filesystem::path parentDir = std::filesystem::path(path).parent_path();
@@ -509,9 +656,20 @@ namespace Bolt {
 				std::filesystem::create_directories(parentDir);
 			}
 
+			Value prefabEntity = SerializeEntity(scene, entity);
+			RemoveEntityIdentityMembers(prefabEntity);
+
 			Value root = Value::MakeObject();
-			root.AddMember("prefab", SerializeEntity(scene, entity));
+			root.AddMember("version", Value(SCENE_FORMAT_VERSION));
+			root.AddMember("type", Value("Prefab"));
+			root.AddMember("Entity", prefabEntity);
+			root.AddMember("prefab", prefabEntity);
 			File::WriteAllText(path, Json::Stringify(root, true));
+			const uint64_t prefabGuid = AssetRegistry::GetOrCreateAssetUUID(path);
+			if (prefabGuid != 0) {
+				root.AddMember("AssetGUID", Value(std::to_string(prefabGuid)));
+				File::WriteAllText(path, Json::Stringify(root, true));
+			}
 
 			std::string name = "Entity";
 			if (scene.GetRegistry().all_of<NameComponent>(entity)) {

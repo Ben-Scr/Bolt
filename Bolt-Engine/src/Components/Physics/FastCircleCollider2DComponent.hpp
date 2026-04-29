@@ -6,7 +6,7 @@
 namespace Bolt {
 
 	/// Circle collider component using the Bolt-Physics library.
-	struct BOLT_API BoltCircleCollider2DComponent {
+	struct BOLT_API FastCircleCollider2DComponent {
 		float Radius = 0.5f;
 
 		// Runtime pointer — set by scene hooks, not serialized

@@ -94,7 +94,7 @@ namespace Bolt {
 
 		if (scene.HasComponent<Camera2DComponent>(m_SelectedEntity)) {
 			auto& camera = scene.GetComponent<Camera2DComponent>(m_SelectedEntity);
-			Gizmo::SetColor(Color(0.35f, 0.75f, 1.0f, 1.0f));
+			Gizmo::SetColor(Color::White());
 			Gizmo::SetLineWidth(1.5f);
 			Gizmo::DrawSquare(transform.Position, camera.WorldViewPort(), rotationDegrees);
 		}
@@ -109,8 +109,8 @@ namespace Bolt {
 			}
 		}
 
-		if (scene.HasComponent<BoltBoxCollider2DComponent>(m_SelectedEntity)) {
-			auto& collider = scene.GetComponent<BoltBoxCollider2DComponent>(m_SelectedEntity);
+		if (scene.HasComponent<FastBoxCollider2DComponent>(m_SelectedEntity)) {
+			auto& collider = scene.GetComponent<FastBoxCollider2DComponent>(m_SelectedEntity);
 			const Vec2 halfExtents = collider.GetHalfExtents();
 			const Vec2 worldSize(
 				std::abs(halfExtents.x * transform.Scale.x) * 2.0f,
@@ -120,8 +120,8 @@ namespace Bolt {
 			Gizmo::DrawSquare(transform.Position, worldSize, rotationDegrees);
 		}
 
-		if (scene.HasComponent<BoltCircleCollider2DComponent>(m_SelectedEntity)) {
-			auto& collider = scene.GetComponent<BoltCircleCollider2DComponent>(m_SelectedEntity);
+		if (scene.HasComponent<FastCircleCollider2DComponent>(m_SelectedEntity)) {
+			auto& collider = scene.GetComponent<FastCircleCollider2DComponent>(m_SelectedEntity);
 			const float worldRadius = collider.GetRadius() * std::max(std::abs(transform.Scale.x), std::abs(transform.Scale.y));
 			Gizmo::SetColor(Color(0.10f, 0.85f, 0.85f, 1.0f));
 			Gizmo::SetLineWidth(2.0f);
@@ -301,11 +301,6 @@ namespace Bolt {
 				}
 			}
 			ImGui::EndCombo();
-		}
-
-		if (BoltProject* project = ProjectManager::GetCurrentProject()) {
-			ImGui::SameLine();
-			ImGui::TextDisabled("Build: %dx%d", project->BuildWidth, project->BuildHeight);
 		}
 
 		ImGui::SameLine();

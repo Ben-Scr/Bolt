@@ -5,6 +5,7 @@
 #include "Scripting/ScriptGlue.hpp"
 #include <string>
 #include <cstdint>
+#include <vector>
 
 namespace Bolt {
 
@@ -41,6 +42,10 @@ namespace Bolt {
 		static void InvokeStart(uint32_t handle);
 		static void InvokeUpdate(uint32_t handle);
 		static void InvokeOnDestroy(uint32_t handle);
+		static void InvokeOnEnable(uint32_t handle);
+		static void InvokeOnDisable(uint32_t handle);
+		static void InvokeCollisionEnter2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
+		static void InvokeCollisionExit2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
 		static bool ClassExists(const std::string& className);
 
 		static void RaiseApplicationStart();
@@ -57,7 +62,24 @@ namespace Bolt {
 		static void RaiseBeforeSceneUnloaded(const std::string& sceneName);
 		static void RaiseSceneUnloaded(const std::string& sceneName);
 
+		static uint32_t CreateGameSystemInstance(const std::string& className, const std::string& sceneName);
+		static void DestroyGameSystemInstance(uint32_t handle);
+		static void InvokeGameSystemStart(uint32_t handle);
+		static void InvokeGameSystemUpdate(uint32_t handle);
+		static void InvokeGameSystemDestroy(uint32_t handle);
+		static bool GameSystemClassExists(const std::string& className);
+
+		static void InitializeGlobalSystems(const std::vector<std::string>& classNames);
+		static void UpdateGlobalSystems();
+		static void ShutdownGlobalSystems();
+		static bool GlobalSystemClassExists(const std::string& className);
+
 		static const ManagedCallbacks& GetCallbacks() { return s_Callbacks; }
+
+		struct GlobalSystemInstance {
+			std::string ClassName;
+			uint32_t Handle = 0;
+		};
 
 	private:
 		static bool s_Initialized;
@@ -65,6 +87,7 @@ namespace Bolt {
 		static std::string s_CoreAssemblyPath;
 		static std::string s_UserAssemblyPath;
 		static bool s_HasUserAssembly;
+		static std::vector<GlobalSystemInstance> s_GlobalSystems;
 
 		static DotNetHost s_Host;
 		static ManagedCallbacks s_Callbacks;

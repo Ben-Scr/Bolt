@@ -42,6 +42,11 @@ namespace Bolt {
 		void     (*Entity_Destroy)(uint64_t entityID);
 		uint64_t (*Entity_Create)(const char* name);
 		uint64_t (*Entity_Clone)(uint64_t sourceEntityID);
+		uint64_t (*Entity_InstantiatePrefab)(uint64_t prefabGuid);
+		int      (*Entity_GetOrigin)(uint64_t entityID);
+		uint64_t (*Entity_GetRuntimeID)(uint64_t entityID);
+		uint64_t (*Entity_GetSceneGUID)(uint64_t entityID);
+		uint64_t (*Entity_GetPrefabGUID)(uint64_t entityID);
 		int      (*Entity_HasComponent)(uint64_t entityID, const char* componentName);
 		int      (*Entity_AddComponent)(uint64_t entityID, const char* componentName);
 		int      (*Entity_RemoveComponent)(uint64_t entityID, const char* componentName);
@@ -114,18 +119,18 @@ namespace Bolt {
 		int   (*AudioSource_IsPaused)(uint64_t entityID);
 
 		// ── Bolt-Physics ─────────────────────────────────────────────
-		int   (*BoltBody2D_GetBodyType)(uint64_t entityID);
-		void  (*BoltBody2D_SetBodyType)(uint64_t entityID, int type);
-		float (*BoltBody2D_GetMass)(uint64_t entityID);
-		void  (*BoltBody2D_SetMass)(uint64_t entityID, float mass);
-		int   (*BoltBody2D_GetUseGravity)(uint64_t entityID);
-		void  (*BoltBody2D_SetUseGravity)(uint64_t entityID, int enabled);
-		void  (*BoltBody2D_GetVelocity)(uint64_t entityID, float* outX, float* outY);
-		void  (*BoltBody2D_SetVelocity)(uint64_t entityID, float x, float y);
-		void  (*BoltBoxCollider2D_GetHalfExtents)(uint64_t entityID, float* outX, float* outY);
-		void  (*BoltBoxCollider2D_SetHalfExtents)(uint64_t entityID, float x, float y);
-		float (*BoltCircleCollider2D_GetRadius)(uint64_t entityID);
-		void  (*BoltCircleCollider2D_SetRadius)(uint64_t entityID, float radius);
+		int   (*FastBody2D_GetBodyType)(uint64_t entityID);
+		void  (*FastBody2D_SetBodyType)(uint64_t entityID, int type);
+		float (*FastBody2D_GetMass)(uint64_t entityID);
+		void  (*FastBody2D_SetMass)(uint64_t entityID, float mass);
+		int   (*FastBody2D_GetUseGravity)(uint64_t entityID);
+		void  (*FastBody2D_SetUseGravity)(uint64_t entityID, int enabled);
+		void  (*FastBody2D_GetVelocity)(uint64_t entityID, float* outX, float* outY);
+		void  (*FastBody2D_SetVelocity)(uint64_t entityID, float x, float y);
+		void  (*FastBoxCollider2D_GetHalfExtents)(uint64_t entityID, float* outX, float* outY);
+		void  (*FastBoxCollider2D_SetHalfExtents)(uint64_t entityID, float x, float y);
+		float (*FastCircleCollider2D_GetRadius)(uint64_t entityID);
+		void  (*FastCircleCollider2D_SetRadius)(uint64_t entityID, float radius);
 
 		// ── Scene ────────────────────────────────────────────────────
 		const char* (*Scene_GetActiveSceneName)();
@@ -147,6 +152,8 @@ namespace Bolt {
 		uint64_t    (*Asset_GetOrCreateUUIDFromPath)(const char* path);
 		const char* (*Asset_GetPath)(uint64_t assetId);
 		const char* (*Asset_GetDisplayName)(uint64_t assetId);
+		int         (*Asset_GetKind)(uint64_t assetId);
+		const char* (*Asset_FindAll)(const char* pathPrefix, int kind);
 		int         (*Texture_LoadAsset)(uint64_t assetId);
 		int         (*Texture_GetWidth)(uint64_t assetId);
 		int         (*Texture_GetHeight)(uint64_t assetId);
@@ -200,6 +207,10 @@ namespace Bolt {
 		void    (*InvokeStart)(int32_t handle);
 		void    (*InvokeUpdate)(int32_t handle);
 		void    (*InvokeOnDestroy)(int32_t handle);
+		void    (*InvokeOnEnable)(int32_t handle);
+		void    (*InvokeOnDisable)(int32_t handle);
+		void    (*InvokeCollisionEnter2D)(int32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
+		void    (*InvokeCollisionExit2D)(int32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID);
 		int     (*ClassExists)(const char* className);
 		int     (*LoadUserAssembly)(const char* path);
 		void    (*UnloadUserAssembly)();
@@ -219,6 +230,17 @@ namespace Bolt {
 		void    (*RaiseSceneLoaded)(const char* sceneName);
 		void    (*RaiseBeforeSceneUnloaded)(const char* sceneName);
 		void    (*RaiseSceneUnloaded)(const char* sceneName);
+		int32_t (*CreateGameSystemInstance)(const char* className, const char* sceneName);
+		void    (*DestroyGameSystemInstance)(int32_t handle);
+		void    (*InvokeGameSystemStart)(int32_t handle);
+		void    (*InvokeGameSystemUpdate)(int32_t handle);
+		void    (*InvokeGameSystemDestroy)(int32_t handle);
+		int     (*GameSystemClassExists)(const char* className);
+		int32_t (*CreateGlobalSystemInstance)(const char* className);
+		void    (*DestroyGlobalSystemInstance)(int32_t handle);
+		void    (*InvokeGlobalSystemInitialize)(int32_t handle);
+		void    (*InvokeGlobalSystemUpdate)(int32_t handle);
+		int     (*GlobalSystemClassExists)(const char* className);
 	};
 
 } // namespace Bolt

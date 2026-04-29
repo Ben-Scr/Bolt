@@ -14,7 +14,7 @@ public struct RaycastHit2D
 // Box2D Physics Checks
 public static class Physics2D
 {
-    private const int MaxPolygonVertices = 8;
+    public static int MaxPolygonVertices = 8;
 
     private static Entity? ToEntity(ulong entityID)
     {

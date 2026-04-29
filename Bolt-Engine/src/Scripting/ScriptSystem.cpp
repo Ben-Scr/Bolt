@@ -5,6 +5,7 @@
 #include "Scripting/NativeScript.hpp"
 #include "Scene/Scene.hpp"
 #include "Components/Tags.hpp"
+#include "Physics/Collision2D.hpp"
 #include "Core/Log.hpp"
 #include "Core/Application.hpp"
 #include "Serialization/Path.hpp"
@@ -548,6 +549,27 @@ namespace Bolt {
 			}
 		}
 
+		std::vector<std::string> GetActiveGlobalSystemClassNames()
+		{
+			std::vector<std::string> classNames;
+			BoltProject* project = ProjectManager::GetCurrentProject();
+			if (!project) {
+				return classNames;
+			}
+
+			for (const auto& registration : project->GlobalSystems) {
+				if (registration.Active && !registration.ClassName.empty()) {
+					classNames.push_back(registration.ClassName);
+				}
+			}
+			return classNames;
+		}
+
+		void InitializeRegisteredGlobalSystems()
+		{
+			ScriptEngine::InitializeGlobalSystems(GetActiveGlobalSystemClassNames());
+		}
+
 		struct ScriptSceneScope {
 			explicit ScriptSceneScope(Scene& scene)
 				: Previous(ScriptEngine::GetScene())
@@ -563,6 +585,18 @@ namespace Bolt {
 			Scene* Previous = nullptr;
 		};
 
+		uint64_t ToManagedEntityID(Scene& scene, EntityHandle entity)
+		{
+			uint64_t entityID = static_cast<uint64_t>(static_cast<uint32_t>(entity));
+			if (scene.IsValid(entity)) {
+				const uint64_t runtimeID = scene.GetRuntimeID(entity);
+				if (runtimeID != 0) {
+					entityID = runtimeID;
+				}
+			}
+			return entityID;
+		}
+
 		void TeardownManagedScriptInstance(Scene& scene, ScriptInstance& instance)
 		{
 			if (!instance.HasManagedInstance() || !ScriptEngine::IsInitialized()) {
@@ -570,6 +604,10 @@ namespace Bolt {
 			}
 
 			ScriptSceneScope sceneScope(scene);
+			if (instance.HasEnabled()) {
+				ScriptEngine::InvokeOnDisable(instance.GetGCHandle());
+				instance.MarkDisabled();
+			}
 			ScriptEngine::InvokeOnDestroy(instance.GetGCHandle());
 			ScriptEngine::DestroyScriptInstance(instance.GetGCHandle());
 			instance.Unbind();
@@ -723,7 +761,9 @@ namespace Bolt {
 		auto exeDir = std::filesystem::path(Path::ExecutableDir());
 		BoltProject* project = ProjectManager::GetCurrentProject();
 
-		ScriptEngine::Init();
+		if (!ScriptEngine::IsInitialized()) {
+			ScriptEngine::Init();
+		}
 
 		// Core assembly — check multiple locations
 		if (m_CoreAssemblyPath.empty())
@@ -740,7 +780,7 @@ namespace Bolt {
 			}
 		}
 
-		if (std::filesystem::exists(m_CoreAssemblyPath))
+		if (!ScriptEngine::IsInitialized() && std::filesystem::exists(m_CoreAssemblyPath))
 			ScriptEngine::LoadCoreAssembly(m_CoreAssemblyPath);
 
 		// User assembly — project-aware
@@ -762,8 +802,10 @@ namespace Bolt {
 			}
 		}
 
-		if (!m_UserAssemblyPath.empty() && std::filesystem::exists(m_UserAssemblyPath))
+		if (!ScriptEngine::HasUserAssembly() && !m_UserAssemblyPath.empty() && std::filesystem::exists(m_UserAssemblyPath)) {
 			ScriptEngine::LoadUserAssembly(m_UserAssemblyPath);
+		}
+		InitializeRegisteredGlobalSystems();
 
 		// C# file watcher — project-aware
 		if (project)
@@ -1091,6 +1133,83 @@ namespace Bolt {
 		scriptComp.PendingFieldValues.clear();
 	}
 
+	void ScriptSystem::SetScriptsEnabled(Entity entity, bool enabled)
+	{
+		Scene* scene = entity.GetScene();
+		if (scene == nullptr || !entity.HasComponent<ScriptComponent>() || !ScriptEngine::IsInitialized()) {
+			return;
+		}
+
+		ScriptSceneScope sceneScope(*scene);
+		auto& scriptComp = entity.GetComponent<ScriptComponent>();
+		for (auto& instance : scriptComp.Scripts)
+		{
+			if (!instance.HasManagedInstance()) {
+				continue;
+			}
+
+			if (enabled && !instance.HasEnabled()) {
+				ScriptEngine::InvokeOnEnable(instance.GetGCHandle());
+				instance.MarkEnabled();
+			}
+			else if (!enabled && instance.HasEnabled()) {
+				ScriptEngine::InvokeOnDisable(instance.GetGCHandle());
+				instance.MarkDisabled();
+			}
+		}
+	}
+
+	namespace {
+		void DispatchCollision2D(Scene& scene, const Collision2D& collision, bool isEnter)
+		{
+			if (!ScriptEngine::IsInitialized()) {
+				return;
+			}
+
+			const auto dispatchToEntity = [&](EntityHandle self, EntityHandle other) {
+				if (!scene.IsValid(self) || !scene.HasComponent<ScriptComponent>(self) || scene.HasComponent<DisabledTag>(self)) {
+					return;
+				}
+
+				ScriptSceneScope sceneScope(scene);
+				const uint64_t selfID = ToManagedEntityID(scene, self);
+				const uint64_t otherID = scene.IsValid(other) ? ToManagedEntityID(scene, other) : 0;
+				const uint64_t entityAID = scene.IsValid(collision.entityA) ? ToManagedEntityID(scene, collision.entityA) : 0;
+				const uint64_t entityBID = scene.IsValid(collision.entityB) ? ToManagedEntityID(scene, collision.entityB) : 0;
+
+				auto& scriptComp = scene.GetComponent<ScriptComponent>(self);
+				for (auto& instance : scriptComp.Scripts)
+				{
+					if (!instance.HasManagedInstance() || !instance.HasEnabled()) {
+						continue;
+					}
+
+					if (isEnter) {
+						ScriptEngine::InvokeCollisionEnter2D(instance.GetGCHandle(), selfID, otherID, entityAID, entityBID);
+					}
+					else {
+						ScriptEngine::InvokeCollisionExit2D(instance.GetGCHandle(), selfID, otherID, entityAID, entityBID);
+					}
+				}
+			};
+
+			dispatchToEntity(collision.entityA, collision.entityB);
+			if (collision.entityB != collision.entityA) {
+				dispatchToEntity(collision.entityB, collision.entityA);
+			}
+		}
+	}
+
+	void ScriptSystem::DispatchCollisionEnter2D(Scene& scene, const Collision2D& collision)
+	{
+		DispatchCollision2D(scene, collision, true);
+	}
+
+	void ScriptSystem::DispatchCollisionExit2D(Scene& scene, const Collision2D& collision)
+	{
+		DispatchCollision2D(scene, collision, false);
+	}
+
 	void ScriptSystem::OnGui(Scene& scene)
 	{
 		(void)scene;
@@ -1122,6 +1241,7 @@ namespace Bolt {
 				else {
 					ScriptEngine::ReloadAssemblies();
 				}
+				InitializeRegisteredGlobalSystems();
 				BT_INFO_TAG("ScriptSystem", "C# scripts rebuilt and reloaded");
 			}
 			else
@@ -1292,6 +1412,12 @@ namespace Bolt {
 						continue;
 					}
 
+					if (!instance.HasEnabled())
+					{
+						ScriptEngine::InvokeOnEnable(instance.GetGCHandle());
+						instance.MarkEnabled();
+					}
+
 					if (!instance.HasStarted())
 					{
 						instance.MarkStarted();
@@ -1361,7 +1487,7 @@ namespace Bolt {
 		m_RebuildQueued = false;
 		m_NativeRebuildQueued = false;
 
-		if (ScriptEngine::IsInitialized()) {
+		if (Application::IsShuttingDown() && ScriptEngine::IsInitialized()) {
 			ScriptEngine::Shutdown();
 		}
 

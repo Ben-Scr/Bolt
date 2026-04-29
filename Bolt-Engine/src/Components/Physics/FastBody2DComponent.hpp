@@ -10,7 +10,7 @@ namespace Bolt {
 	/// Physics body component using the Bolt-Physics library (lightweight alternative to Box2D).
 	/// Use this for simple AABB-based collision and movement. For advanced physics (rotation,
 	/// friction, continuous detection), use the standard Rigidbody2DComponent instead.
-	struct BOLT_API BoltBody2DComponent {
+	struct BOLT_API FastBody2DComponent {
 		BoltPhys::BodyType Type = BoltPhys::BodyType::Dynamic;
 		float Mass = 1.0f;
 		bool UseGravity = true;

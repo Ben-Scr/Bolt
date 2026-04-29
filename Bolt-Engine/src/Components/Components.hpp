@@ -4,6 +4,8 @@
 #include "General/RectTransformComponent.hpp"
 #include "General/NameComponent.hpp"
 #include "General/UUIDComponent.hpp"
+#include "General/EntityMetaDataComponent.hpp"
+#include "General/PrefabInstanceComponent.hpp"
 #include "General/RectTransformComponent.hpp"
 
 #include "Graphics/SpriteRendererComponent.hpp"
@@ -14,9 +16,9 @@
 #include "Physics/BoxCollider2DComponent.hpp"
 #include "Physics/Rigidbody2DComponent.hpp"
 
-#include "Physics/BoltBody2DComponent.hpp"
-#include "Physics/BoltBoxCollider2DComponent.hpp"
-#include "Physics/BoltCircleCollider2DComponent.hpp"
+#include "Physics/FastBody2DComponent.hpp"
+#include "Physics/FastBoxCollider2DComponent.hpp"
+#include "Physics/FastCircleCollider2DComponent.hpp"
 
 #include "Audio/AudioSourceComponent.hpp"
 #include "Scripting/ScriptComponent.hpp"

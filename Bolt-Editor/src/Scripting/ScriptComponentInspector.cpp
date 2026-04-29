@@ -13,7 +13,6 @@
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
 #include "Scene/ComponentRegistry.hpp"
-#include "Components/General/UUIDComponent.hpp"
 #include "Components/General/NameComponent.hpp"
 
 #include <imgui.h>
@@ -26,6 +25,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Bolt {
@@ -185,12 +185,12 @@ namespace Bolt {
 
 			const auto* data = static_cast<const HierarchyDragData*>(payload->Data);
 			outHandle = static_cast<EntityHandle>(data->EntityHandle);
-			if (!outScene->IsValid(outHandle) || !outScene->HasComponent<UUIDComponent>(outHandle)) {
+			if (!outScene->IsValid(outHandle)) {
 				return false;
 			}
 
-			outEntityId = static_cast<uint64_t>(outScene->GetComponent<UUIDComponent>(outHandle).Id);
-			return true;
+			outEntityId = outScene->GetRuntimeID(outHandle);
+			return outEntityId != 0;
 		}
 
 		static std::optional<SceneEntityReference> ResolveEntityReference(uint64_t entityId) {
@@ -204,23 +204,28 @@ namespace Bolt {
 					return;
 				}
 
-				auto view = scene.GetRegistry().view<UUIDComponent>();
-				for (EntityHandle entityHandle : view) {
-					const auto& uuidComponent = view.get<UUIDComponent>(entityHandle);
-					if (static_cast<uint64_t>(uuidComponent.Id) != entityId) {
-						continue;
-					}
-
+				EntityHandle entityHandle = entt::null;
+				if (scene.TryResolveRuntimeID(entityId, entityHandle)) {
 					resolved = SceneEntityReference{
 						entityId,
 						GetEntityName(scene, entityHandle, entityId),
 						scene.GetName()
 					};
-					return;
 				}
 			});
 
 			return resolved;
+		}
+
+		static bool TryParsePrefabFieldValue(const std::string& value, uint64_t& outPrefabGuid) {
+			outPrefabGuid = 0;
+			static constexpr std::string_view prefix = "prefab:";
+			if (value.rfind(prefix, 0) != 0) {
+				return false;
+			}
+
+			outPrefabGuid = std::strtoull(value.c_str() + prefix.size(), nullptr, 10);
+			return outPrefabGuid != 0;
 		}
 
 		static std::string GetAssetDisplayName(const std::string& value, AssetKind expectedKind, bool& missing, std::string* secondaryText = nullptr) {
@@ -313,19 +318,36 @@ namespace Bolt {
 			entries.push_back({ "(None)", "", "(none)", "0", "__none__" });
 
 			SceneManager::Get().ForeachLoadedScene([&](const Scene& scene) {
-				auto view = scene.GetRegistry().view<UUIDComponent>();
+				auto view = scene.GetRegistry().view<entt::entity>();
 				for (EntityHandle entityHandle : view) {
-					const auto& uuidComponent = view.get<UUIDComponent>(entityHandle);
-					const uint64_t entityId = static_cast<uint64_t>(uuidComponent.Id);
+					if (!scene.IsValid(entityHandle)) {
+						continue;
+					}
+
+					const uint64_t entityId = scene.GetRuntimeID(entityHandle);
+					if (entityId == 0) {
+						continue;
+					}
 
 					ReferencePickerEntry entry;
 					entry.Label = GetEntityName(scene, entityHandle, entityId);
+					entry.Secondary = scene.GetName();
 					entry.SearchKey = ToLowerCopy(entry.Label);
 					entry.Value = std::to_string(entityId);
 					entry.UniqueId = entry.Value;
 					entries.push_back(std::move(entry));
 				}
 			});
+
+			for (const AssetRegistry::Record& record : AssetRegistry::GetAssetsByKind(AssetKind::Prefab)) {
+				ReferencePickerEntry entry;
+				entry.Label = std::filesystem::path(record.Path).filename().string();
+				entry.Secondary = record.Path;
+				entry.SearchKey = ToLowerCopy(entry.Label + " prefab " + entry.Secondary);
+				entry.Value = "prefab:" + std::to_string(record.Id);
+				entry.UniqueId = entry.Value;
+				entries.push_back(std::move(entry));
+			}
 
 			std::sort(entries.begin(), entries.end(), [](const ReferencePickerEntry& a, const ReferencePickerEntry& b) {
 				if (a.Label == b.Label) {
@@ -346,10 +368,17 @@ namespace Bolt {
 			}
 
 			SceneManager::Get().ForeachLoadedScene([&](const Scene& scene) {
-				auto view = scene.GetRegistry().view<UUIDComponent>();
+				auto view = scene.GetRegistry().view<entt::entity>();
 				for (EntityHandle entityHandle : view) {
-					const auto& uuidComponent = view.get<UUIDComponent>(entityHandle);
-					const uint64_t entityId = static_cast<uint64_t>(uuidComponent.Id);
+					if (!scene.IsValid(entityHandle)) {
+						continue;
+					}
+
+					const uint64_t entityId = scene.GetRuntimeID(entityHandle);
+					if (entityId == 0) {
+						continue;
+					}
+
 					Entity entity = scene.GetEntity(entityHandle);
 					if (!componentInfo->has(entity)) {
 						continue;
@@ -788,15 +817,30 @@ namespace Bolt {
 				hoveredAny |= ImGui::IsItemHovered();
 			}
 			else if (type == "entity") {
-				const uint64_t entityId = std::strtoull(field.value.c_str(), nullptr, 10);
 				bool missing = false;
 				std::string secondaryText;
 				std::string displayName = "(None)";
 
-				if (entityId != 0) {
+				uint64_t prefabGuid = 0;
+				if (TryParsePrefabFieldValue(field.value, prefabGuid)) {
+					if (AssetRegistry::GetKind(prefabGuid) == AssetKind::Prefab) {
+						displayName = AssetRegistry::GetDisplayName(prefabGuid);
+						secondaryText = AssetRegistry::ResolvePath(prefabGuid);
+					}
+					else {
+						missing = true;
+						displayName = "(Missing Prefab)";
+					}
+				}
+				else {
+					const uint64_t entityId = std::strtoull(field.value.c_str(), nullptr, 10);
 					const auto resolved = ResolveEntityReference(entityId);
-					if (resolved.has_value()) {
+					if (entityId == 0) {
+						displayName = "(None)";
+					}
+					else if (resolved.has_value()) {
 						displayName = resolved->EntityName;
+						secondaryText = resolved->SceneName;
 					}
 					else {
 						missing = true;
@@ -815,6 +859,14 @@ namespace Bolt {
 						uint64_t droppedEntityId = 0;
 						if (TryGetHierarchyPayloadEntity(scene, handle, droppedEntityId)) {
 							newValue = std::to_string(droppedEntityId);
+							changed = true;
+						}
+					}
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_BROWSER_ITEM")) {
+						std::string droppedPath(static_cast<const char*>(payload->Data));
+						const uint64_t assetId = AssetRegistry::GetOrCreateAssetUUID(droppedPath);
+						if (assetId != 0 && AssetRegistry::GetKind(assetId) == AssetKind::Prefab) {
+							newValue = "prefab:" + std::to_string(assetId);
 							changed = true;
 						}
 					}

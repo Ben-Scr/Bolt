@@ -1,15 +1,17 @@
 #include "pch.hpp"
 
 #include <Components/Physics/Rigidbody2DComponent.hpp>
-#include <Components/Physics/BoltBody2DComponent.hpp>
+#include <Components/Physics/FastBody2DComponent.hpp>
 #include <Components/General/Transform2DComponent.hpp>
 #include <Components/Tags.hpp>
 
 #include "Physics/PhysicsSystem2D.hpp"
 #include "Physics/Box2DWorld.hpp"
+#include "Physics/Collision2D.hpp"
 
 #include "Scene/SceneManager.hpp"
 #include "Scene/Scene.hpp"
+#include "Scripting/ScriptSystem.hpp"
 
 
 namespace Bolt {
@@ -28,7 +30,22 @@ namespace Bolt {
 
 		// Box2D simulation
 		s_MainWorld->Step(dt);
-		s_MainWorld->GetDispatcher().Process(s_MainWorld->GetWorldID());
+		s_MainWorld->GetDispatcher().Process(
+			s_MainWorld->GetWorldID(),
+			[](const Collision2D& collision) {
+				SceneManager::Get().ForeachLoadedScene([&](Scene& scene) {
+					if (scene.IsValid(collision.entityA) && scene.IsValid(collision.entityB)) {
+						ScriptSystem::DispatchCollisionEnter2D(scene, collision);
+					}
+				});
+			},
+			[](const Collision2D& collision) {
+				SceneManager::Get().ForeachLoadedScene([&](Scene& scene) {
+					if (scene.IsValid(collision.entityA) && scene.IsValid(collision.entityB)) {
+						ScriptSystem::DispatchCollisionExit2D(scene, collision);
+					}
+				});
+			});
 
 		// Box2D transform sync
 		SceneManager::Get().ForeachLoadedScene([](Scene& scene) {
@@ -43,7 +60,7 @@ namespace Bolt {
 
 		// Bolt-Physics transform sync
 		SceneManager::Get().ForeachLoadedScene([](Scene& scene) {
-			for (auto [ent, body, tf] : scene.GetRegistry().view<BoltBody2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
+			for (auto [ent, body, tf] : scene.GetRegistry().view<FastBody2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
 				if (body.m_Body) {
 					auto pos = body.m_Body->GetPosition();
 					tf.Position = { pos.x, pos.y };

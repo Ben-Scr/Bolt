@@ -26,9 +26,9 @@
 #include "Components/Graphics/Camera2DComponent.hpp"
 #include "Components/Physics/Rigidbody2DComponent.hpp"
 #include "Components/Physics/BoxCollider2DComponent.hpp"
-#include "Components/Physics/BoltBody2DComponent.hpp"
-#include "Components/Physics/BoltBoxCollider2DComponent.hpp"
-#include "Components/Physics/BoltCircleCollider2DComponent.hpp"
+#include "Components/Physics/FastBody2DComponent.hpp"
+#include "Components/Physics/FastBoxCollider2DComponent.hpp"
+#include "Components/Physics/FastCircleCollider2DComponent.hpp"
 #include "Components/Audio/AudioSourceComponent.hpp"
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 #include "Components/Tags.hpp"
@@ -201,7 +201,7 @@ namespace Bolt {
 	{
 		Scene* scene = GetScene();
 		if (!scene) return 0;
-		Entity entity = scene->CreateEntity(name ? name : "Entity");
+		Entity entity = scene->CreateRuntimeEntity(name ? name : "Entity");
 		return GetEntityScriptId(*scene, entity.GetHandle());
 	}
 

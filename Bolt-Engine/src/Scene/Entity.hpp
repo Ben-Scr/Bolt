@@ -1,6 +1,7 @@
 #pragma once
 #include "Scene/EntityHandle.hpp"
 #include "Components/ComponentUtils.hpp"
+#include "Components/General/EntityMetaDataComponent.hpp"
 #include "Core/Export.hpp"
 
 namespace Bolt {
@@ -62,6 +63,14 @@ namespace Bolt {
 		}
 
 		std::string GetName() const;
+		const EntityMetaData* GetMetaData() const;
+		EntityOrigin GetOrigin() const;
+		EntityID GetRuntimeID() const;
+		AssetGUID GetSceneGUID() const;
+		AssetGUID GetPrefabGUID() const;
+		bool IsSceneEntity() const;
+		bool IsPrefabInstance() const;
+		bool IsRuntime() const;
 
 		EntityHandle GetHandle() const;
 		Scene* GetScene() { return m_Scene; }

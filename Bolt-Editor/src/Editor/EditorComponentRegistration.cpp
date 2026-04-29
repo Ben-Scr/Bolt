@@ -32,9 +32,9 @@ namespace Bolt {
 
 		RegisterComponent<BoxCollider2DComponent>(sceneManager, "Box Collider 2D", DrawBoxCollider2DInspector, ComponentCategory::Component, "Physics");
 		RegisterComponent<Rigidbody2DComponent>(sceneManager, "Rigidbody 2D", DrawRigidbody2DInspector, ComponentCategory::Component, "Physics");
-		RegisterComponent<BoltBody2DComponent>(sceneManager, "Bolt Body 2D", DrawBoltBody2DInspector, ComponentCategory::Component, "Physics");
-		RegisterComponent<BoltBoxCollider2DComponent>(sceneManager, "Bolt Box Collider 2D", DrawBoltBoxCollider2DInspector, ComponentCategory::Component, "Physics");
-		RegisterComponent<BoltCircleCollider2DComponent>(sceneManager, "Bolt Circle Collider 2D", DrawBoltCircleCollider2DInspector, ComponentCategory::Component, "Physics");
+		RegisterComponent<FastBody2DComponent>(sceneManager, "Fast Body 2D", DrawFastBody2DInspector, ComponentCategory::Component, "Physics");
+		RegisterComponent<FastBoxCollider2DComponent>(sceneManager, "Fast Box Collider 2D", DrawFastBoxCollider2DInspector, ComponentCategory::Component, "Physics");
+		RegisterComponent<FastCircleCollider2DComponent>(sceneManager, "Fast Circle Collider 2D", DrawFastCircleCollider2DInspector, ComponentCategory::Component, "Physics");
 
 		RegisterComponent<AudioSourceComponent>(sceneManager, "Audio Source", DrawAudioSourceInspector, ComponentCategory::Component, "Audio");
 		RegisterComponent<ScriptComponent>(sceneManager, "Scripts", DrawScriptComponentInspector, ComponentCategory::Component, "Scripting");

@@ -64,6 +64,10 @@
   <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Dist|x64' ">
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Remove="Source\Bolt\Editor\**" />
+    <None Remove="Source\Bolt\Editor\**" />
+  </ItemGroup>
+  <ItemGroup>
     <Compile Include="Source\Bolt\Attributes\ClampValueAttribute.cs" />
     <Compile Include="Source\Bolt\Attributes\HeaderAttribute.cs" />
     <Compile Include="Source\Bolt\Attributes\HideFromEditorAttribute.cs" />
@@ -72,6 +76,8 @@
     <Compile Include="Source\Bolt\Audio\Audio.cs" />
     <Compile Include="Source\Bolt\Collections\Range.cs" />
     <Compile Include="Source\Bolt\Core\Application.cs" />
+    <Compile Include="Source\Bolt\Core\AssetManager.cs" />
+    <Compile Include="Source\Bolt\Core\GlobalUsings.cs" />
     <Compile Include="Source\Bolt\Core\Input.cs" />
     <Compile Include="Source\Bolt\Core\InternalCalls.cs" />
     <Compile Include="Source\Bolt\Core\KeyCodes.cs" />
@@ -100,12 +106,16 @@
     <Compile Include="Source\Bolt\Math\Vector3Int.cs" />
     <Compile Include="Source\Bolt\Math\Vector4.cs" />
     <Compile Include="Source\Bolt\Math\Vector4Int.cs" />
-    <Compile Include="Source\Bolt\Physics2D\Physics2D.cs" />
+    <Compile Include="Source\Bolt\Physics\Collision2D.cs" />
+    <Compile Include="Source\Bolt\Physics\FastPhysics2D.cs" />
+    <Compile Include="Source\Bolt\Physics\Physics2D.cs" />
     <Compile Include="Source\Bolt\Scene\AssetRef.cs" />
     <Compile Include="Source\Bolt\Scene\EntityScript.cs" />
     <Compile Include="Source\Bolt\Scene\Component.cs" />
     <Compile Include="Source\Bolt\Scene\Components.cs" />
     <Compile Include="Source\Bolt\Scene\Entity.cs" />
+    <Compile Include="Source\Bolt\Scene\GameSystem.cs" />
+    <Compile Include="Source\Bolt\Scene\GlobalSystem.cs" />
     <Compile Include="Source\Bolt\Scene\SceneManager.cs" />
     <Compile Include="Source\Bolt\Scene\SceneQuery.cs" />
     <Compile Include="Source\Bolt\Serialization\Json.cs" />
@@ -114,8 +124,5 @@
     <Compile Include="Source\Bolt\Utility\CameraUtility.cs" />
     <Compile Include="Source\Bolt\Utility\TextUtility.cs" />
     <Compile Include="Source\Bolt\Utility\TransformUtility.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Source\Bolt\Editor\" />
   </ItemGroup>
 </Project>

@@ -10,6 +10,11 @@ namespace Bolt {
 	struct BOLT_API BoltProject {
 		using CreateProgressCallback = std::function<void(float progress, std::string_view stage)>;
 
+		struct GlobalSystemRegistration {
+			std::string ClassName;
+			bool Active = true;
+		};
+
 		std::string Name;
 		std::string RootDirectory;
 		std::string AssetsDirectory;
@@ -37,6 +42,7 @@ namespace Bolt {
 		bool BuildResizable = true;
 		std::string AppIconPath;
 		std::vector<std::string> BuildSceneList;
+		std::vector<GlobalSystemRegistration> GlobalSystems;
 
 		std::string GetUserAssemblyOutputPath(std::string_view configuration = {}) const;
 		std::string GetNativeDllPath() const;

@@ -79,9 +79,13 @@ namespace Bolt {
 		if (m_PendingScriptType != PendingScriptType::None) {
 			std::string className = newName;
 			const bool isCSharp = m_PendingScriptType == PendingScriptType::CSharp
-				|| m_PendingScriptType == PendingScriptType::CSharpComponent;
+				|| m_PendingScriptType == PendingScriptType::CSharpComponent
+				|| m_PendingScriptType == PendingScriptType::CSharpGameSystem
+				|| m_PendingScriptType == PendingScriptType::CSharpGlobalSystem;
 			const bool isComponent = m_PendingScriptType == PendingScriptType::CSharpComponent
 				|| m_PendingScriptType == PendingScriptType::NativeComponent;
+			const bool isGameSystem = m_PendingScriptType == PendingScriptType::CSharpGameSystem;
+			const bool isGlobalSystem = m_PendingScriptType == PendingScriptType::CSharpGlobalSystem;
 			std::string ext = isCSharp ? ".cs" : (isComponent ? ".hpp" : ".cpp");
 
 			if (!className.empty() && className.find('.') == std::string::npos) {
@@ -93,7 +97,9 @@ namespace Bolt {
 					className = className.substr(0, className.size() - ext.size());
 			}
 
-			if (className.empty()) className = isComponent ? "NewComponent" : "NewScript";
+			if (className.empty()) {
+				className = isComponent ? "NewComponent" : (isGameSystem ? "NewGameSystem" : (isGlobalSystem ? "NewGlobalSystem" : "NewScript"));
+			}
 
 			std::string finalFileName = className + ext;
 			std::string finalPath = (std::filesystem::path(m_PendingScriptDir) / finalFileName).string();
@@ -104,26 +110,69 @@ namespace Bolt {
 			}
 
 			if (isCSharp) {
-				std::string boilerplate = isComponent
-					? "using Bolt;\n"
-					  "\n"
-					  "public class " + className + " : Component\n"
-					  "{\n"
-					  "    [ShowInEditor]\n"
-					  "    public float Value = 0.0f;\n"
-					  "}\n"
-					: "using Bolt;\n"
-					  "\n"
-					  "public class " + className + " : BoltScript\n"
-					  "{\n"
-					  "    public void Start()\n"
-					  "    {\n"
-					  "    }\n"
-					  "\n"
-					  "    public void Update()\n"
-					  "    {\n"
-					  "    }\n"
-					  "}\n";
+				std::string boilerplate;
+				if (isComponent) {
+					boilerplate =
+						"using Bolt;\n"
+						"\n"
+						"public class " + className + " : Component\n"
+						"{\n"
+						"    [ShowInEditor]\n"
+						"    public float Value = 0.0f;\n"
+						"}\n";
+				}
+				else if (isGameSystem) {
+					boilerplate =
+						"using Bolt;\n"
+						"\n"
+						"public class " + className + " : GameSystem\n"
+						"{\n"
+						"    public override void OnStart()\n"
+						"    {\n"
+						"    }\n"
+						"\n"
+						"    public override void OnUpdate()\n"
+						"    {\n"
+						"    }\n"
+						"\n"
+						"    public override void OnDestroy()\n"
+						"    {\n"
+						"    }\n"
+						"}\n";
+				}
+				else if (isGlobalSystem) {
+					boilerplate =
+						"using Bolt;\n"
+						"\n"
+						"public class " + className + " : GlobalSystem\n"
+						"{\n"
+						"    public static " + className + " Instance { get; private set; } = null!;\n"
+						"\n"
+						"    public override void OnInitialize()\n"
+						"    {\n"
+						"        Instance = this;\n"
+						"    }\n"
+						"\n"
+						"    public override void OnUpdate()\n"
+						"    {\n"
+						"    }\n"
+						"}\n";
+				}
+				else {
+					boilerplate =
+						"using Bolt;\n"
+						"\n"
+						"public class " + className + " : EntityScript\n"
+						"{\n"
+						"    public override void OnStart()\n"
+						"    {\n"
+						"    }\n"
+						"\n"
+						"    public override void OnUpdate()\n"
+						"    {\n"
+						"    }\n"
+						"}\n";
+				}
 
 				std::ofstream file(finalPath);
 				if (file.is_open()) { file << boilerplate; file.close(); }
@@ -357,7 +406,7 @@ namespace Bolt {
 	}
 
 	void AssetBrowser::CreateScript(const std::string& parentDir) {
-		std::string baseName = "NewScript";
+		std::string baseName = "NewEntityScript";
 		std::string ext = ".cs";
 		std::string scriptPath = (std::filesystem::path(parentDir) / (baseName + ext)).string();
 		int counter = 1;
@@ -419,6 +468,48 @@ namespace Bolt {
 		BeginRename(componentPath, name);
 	}
 
+	void AssetBrowser::CreateGameSystem(const std::string& parentDir) {
+		std::string baseName = "NewGameSystem";
+		std::string ext = ".cs";
+		std::string systemPath = (std::filesystem::path(parentDir) / (baseName + ext)).string();
+		int counter = 1;
+		while (std::filesystem::exists(systemPath)) {
+			systemPath = (std::filesystem::path(parentDir) / (baseName + std::to_string(counter) + ext)).string();
+			counter++;
+		}
+
+		m_PendingScriptType = PendingScriptType::CSharpGameSystem;
+		m_PendingScriptDir = parentDir;
+
+		m_NeedsRefresh = true;
+		Refresh();
+
+		m_SelectedPath = systemPath;
+		std::string name = std::filesystem::path(systemPath).stem().string();
+		BeginRename(systemPath, name);
+	}
+
+	void AssetBrowser::CreateGlobalSystem(const std::string& parentDir) {
+		std::string baseName = "NewGlobalSystem";
+		std::string ext = ".cs";
+		std::string systemPath = (std::filesystem::path(parentDir) / (baseName + ext)).string();
+		int counter = 1;
+		while (std::filesystem::exists(systemPath)) {
+			systemPath = (std::filesystem::path(parentDir) / (baseName + std::to_string(counter) + ext)).string();
+			counter++;
+		}
+
+		m_PendingScriptType = PendingScriptType::CSharpGlobalSystem;
+		m_PendingScriptDir = parentDir;
+
+		m_NeedsRefresh = true;
+		Refresh();
+
+		m_SelectedPath = systemPath;
+		std::string name = std::filesystem::path(systemPath).stem().string();
+		BeginRename(systemPath, name);
+	}
+
 	void AssetBrowser::CreateNativeComponent(const std::string& parentDir) {
 		std::string baseName = "NewComponent";
 		std::string ext = ".hpp";
@@ -468,6 +559,7 @@ namespace Bolt {
 		std::string content =
 			"{\n"
 			"  \"name\": \"" + sceneName + "\",\n"
+			"  \"systems\": [],\n"
 			"  \"entities\": [\n"
 			"    {\n"
 			"      \"name\": \"Camera\",\n"

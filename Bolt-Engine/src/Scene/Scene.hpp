@@ -1,11 +1,15 @@
 #pragma once
 #include "Scene/Entity.hpp"
 #include "Scene/ISystem.hpp"
+#include "Collections/Ids.hpp"
+#include "Components/General/EntityMetaDataComponent.hpp"
 #include "Core/Export.hpp"
 #include "Core/UUID.hpp"
 #include <functional>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace Bolt {
 	class SceneDefinition;
@@ -22,8 +26,15 @@ namespace Bolt {
 		Entity CreateEntity();
 		// Info: Creates an entity with a Transform2D and Name component
 		Entity CreateEntity(const std::string& name);
+		Entity CreateRuntimeEntity();
+		Entity CreateRuntimeEntity(const std::string& name);
+		Entity CreatePrefabInstance(AssetGUID prefabGuid, const std::string& name = "Entity");
 		// Info: Creates an entity handle and applies scene invariants such as UUID + dirty tracking
-		EntityHandle CreateEntityHandle();
+		EntityHandle CreateEntityHandle(
+			EntityOrigin origin = EntityOrigin::Scene,
+			AssetGUID prefabGuid = AssetGUID(0),
+			AssetGUID sceneGuid = AssetGUID(0),
+			EntityID runtimeId = 0);
 
 		Entity GetEntity(EntityHandle nativeEntity) { return Entity(nativeEntity, *this); }
 		Entity GetEntity(EntityHandle nativeEntity) const { return Entity(nativeEntity, const_cast<Scene&>(*this)); }
@@ -181,6 +192,28 @@ namespace Bolt {
 		void MarkDirty();
 		void ClearDirty() { m_Dirty = false; }
 
+		const std::vector<std::string>& GetGameSystemClassNames() const { return m_GameSystemClassNames; }
+		bool HasGameSystem(const std::string& className) const;
+		bool AddGameSystem(const std::string& className);
+		bool RemoveGameSystem(size_t index);
+		bool MoveGameSystem(size_t fromIndex, size_t toIndex);
+		void ClearGameSystems();
+
+		void SetEntityMetaData(
+			EntityHandle entity,
+			EntityOrigin origin,
+			AssetGUID prefabGuid = AssetGUID(0),
+			AssetGUID sceneGuid = AssetGUID(0),
+			EntityID runtimeId = 0);
+		EntityMetaData* GetEntityMetaData(EntityHandle entity);
+		const EntityMetaData* GetEntityMetaData(EntityHandle entity) const;
+		EntityOrigin GetEntityOrigin(EntityHandle entity) const;
+		EntityID GetRuntimeID(EntityHandle entity) const;
+		AssetGUID GetSceneEntityGUID(EntityHandle entity) const;
+		AssetGUID GetPrefabGUID(EntityHandle entity) const;
+		bool TryResolveRuntimeID(EntityID runtimeId, EntityHandle& outHandle) const;
+		bool TryResolveSceneGUID(AssetGUID sceneGuid, EntityHandle& outHandle) const;
+
 		UUID GetSceneId() const { return m_SceneId; }
 		void SetSceneId(UUID id) { m_SceneId = id; }
 
@@ -203,13 +236,16 @@ namespace Bolt {
 		void OnParticleSystem2DComponentConstruct(entt::registry& registry, EntityHandle entity);
 		void OnParticleSystem2DComponentDestruct(entt::registry& registry, EntityHandle entity);
 
-		void OnBoltBody2DConstruct(entt::registry& registry, EntityHandle entity);
-		void OnBoltBody2DDestroy(entt::registry& registry, EntityHandle entity);
-		void OnBoltBoxCollider2DConstruct(entt::registry& registry, EntityHandle entity);
-		void OnBoltBoxCollider2DDestroy(entt::registry& registry, EntityHandle entity);
-		void OnBoltCircleCollider2DConstruct(entt::registry& registry, EntityHandle entity);
-		void OnBoltCircleCollider2DDestroy(entt::registry& registry, EntityHandle entity);
+		void OnFastBody2DConstruct(entt::registry& registry, EntityHandle entity);
+		void OnFastBody2DDestroy(entt::registry& registry, EntityHandle entity);
+		void OnFastBoxCollider2DConstruct(entt::registry& registry, EntityHandle entity);
+		void OnFastBoxCollider2DDestroy(entt::registry& registry, EntityHandle entity);
+		void OnFastCircleCollider2DConstruct(entt::registry& registry, EntityHandle entity);
+		void OnFastCircleCollider2DDestroy(entt::registry& registry, EntityHandle entity);
 		void DestroyEntityInternal(EntityHandle nativeEntity, bool markDirty);
+		EntityID AllocateRuntimeEntityID();
+		void RegisterEntityIdentity(EntityHandle entity);
+		void UnregisterEntityIdentity(EntityHandle entity);
 		void TrackEntityDestruction(EntityHandle entity);
 		void UntrackEntityDestruction(EntityHandle entity);
 		bool IsEntityBeingDestroyed(EntityHandle entity) const;
@@ -228,6 +264,7 @@ namespace Bolt {
 
 		entt::registry m_Registry;
 		std::vector<std::unique_ptr<ISystem>> m_Systems;
+		std::vector<std::string> m_GameSystemClassNames;
 
 
 		std::string m_Name;
@@ -238,6 +275,9 @@ namespace Bolt {
 		bool m_IsLoaded = false;
 		bool m_Persistent = false;
 		bool m_Dirty = false;
+		EntityID m_NextRuntimeEntityID = 1;
+		std::unordered_map<EntityID, EntityHandle> m_RuntimeIdToEntity;
+		std::unordered_map<uint64_t, EntityHandle> m_SceneGuidToEntity;
 		std::unordered_set<uint32_t> m_EntitiesBeingDestroyed;
 	};
 }

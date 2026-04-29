@@ -72,6 +72,7 @@ namespace Bolt {
 		void RenderProjectPanel();
 		void RenderBuildPanel();
 		void RenderPlayerSettingsPanel();
+		void RenderSceneSystemsInspector(Scene& scene);
 		void ExecuteBuild();
 		void RenderPackageManagerPanel();
 		void RenderAssetInspector();
@@ -155,6 +156,8 @@ namespace Bolt {
 		bool m_ShowSaveConfirmDialog = false;
 		bool m_InspectorItemWasActive = false;
 		char m_ComponentSearchBuffer[128]{};
+		char m_SystemSearchBuffer[128]{};
+		char m_GlobalSystemSearchBuffer[128]{};
 		std::string m_SelectedAssetPath;
 
 		std::string m_PlayModeScenePath;

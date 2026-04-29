@@ -23,6 +23,8 @@ namespace Bolt {
 		RegisterComponent<RectTransformComponent>(sceneManager, "Rect Transform", ComponentCategory::Component, "General");
 		RegisterComponent<NameComponent>(sceneManager, "Name", ComponentCategory::Component, "General");
 		RegisterComponent<UUIDComponent>(sceneManager, "UUID", ComponentCategory::Tag);
+		RegisterComponent<EntityMetaDataComponent>(sceneManager, "Entity Metadata", ComponentCategory::Tag);
+		RegisterComponent<PrefabInstanceComponent>(sceneManager, "Prefab Instance", ComponentCategory::Tag);
 
 		// Rendering
 		RegisterComponent<SpriteRendererComponent>(sceneManager, "Sprite Renderer", ComponentCategory::Component, "Rendering");
@@ -35,9 +37,9 @@ namespace Bolt {
 		RegisterComponent<Rigidbody2DComponent>(sceneManager, "Rigidbody 2D", ComponentCategory::Component, "Physics");
 
 		// Bolt-Physics components (lightweight AABB physics)
-		RegisterComponent<BoltBody2DComponent>(sceneManager, "Bolt Body 2D", ComponentCategory::Component, "Physics");
-		RegisterComponent<BoltBoxCollider2DComponent>(sceneManager, "Bolt Box Collider 2D", ComponentCategory::Component, "Physics");
-		RegisterComponent<BoltCircleCollider2DComponent>(sceneManager, "Bolt Circle Collider 2D", ComponentCategory::Component, "Physics");
+		RegisterComponent<FastBody2DComponent>(sceneManager, "Fast Body 2D", ComponentCategory::Component, "Physics");
+		RegisterComponent<FastBoxCollider2DComponent>(sceneManager, "Fast Box Collider 2D", ComponentCategory::Component, "Physics");
+		RegisterComponent<FastCircleCollider2DComponent>(sceneManager, "Fast Circle Collider 2D", ComponentCategory::Component, "Physics");
 
 		// Audio
 		RegisterComponent<AudioSourceComponent>(sceneManager, "Audio Source", ComponentCategory::Component, "Audio");

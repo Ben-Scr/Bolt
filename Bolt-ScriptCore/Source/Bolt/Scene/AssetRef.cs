@@ -3,7 +3,7 @@ using Bolt.Interop;
 
 namespace Bolt;
 
-public struct TextureRef
+internal struct TextureRef
 {
     public ulong UUID;
 
@@ -54,7 +54,7 @@ public struct TextureRef
     }
 }
 
-public struct AudioRef
+internal struct AudioRef
 {
     public ulong UUID;
 

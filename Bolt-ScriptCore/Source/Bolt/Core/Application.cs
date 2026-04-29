@@ -12,6 +12,7 @@ public static class Application
     public static event Action<bool>? FocusChanged;
     public static event Action? ApplicationPaused;
     public static event Action? ApplicationStart;
+    public static event Action? ApplicationQuit;
 
     internal static void RaiseFocusChanged(bool focused) => FocusChanged?.Invoke(focused);
     internal static void RaiseApplicationPaused() => ApplicationPaused?.Invoke();

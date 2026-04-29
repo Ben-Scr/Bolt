@@ -9,7 +9,7 @@ namespace Bolt {
 	/// Box collider component using the Bolt-Physics library.
 	/// Provides simple AABB-based collision detection. For polygon-based collision
 	/// with friction and restitution, use the standard BoxCollider2DComponent instead.
-	struct BOLT_API BoltBoxCollider2DComponent {
+	struct BOLT_API FastBoxCollider2DComponent {
 		Vec2 HalfExtents{ 0.5f, 0.5f };
 
 		// Runtime pointer — set by scene hooks, not serialized

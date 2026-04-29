@@ -1,5 +1,6 @@
 #include "pch.hpp"
 #include "Project/ProjectManager.hpp"
+#include "Assets/AssetRegistry.hpp"
 
 namespace Bolt {
 
@@ -7,6 +8,8 @@ namespace Bolt {
 
 	void ProjectManager::SetCurrentProject(std::unique_ptr<BoltProject> project) {
 		s_CurrentProject = std::move(project);
+		AssetRegistry::MarkDirty();
+		AssetRegistry::Sync();
 	}
 
 	BoltProject* ProjectManager::GetCurrentProject() {

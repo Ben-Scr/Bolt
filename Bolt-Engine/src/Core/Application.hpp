@@ -101,6 +101,7 @@ namespace Bolt {
 		static void Pause(bool paused) { if (s_Instance) s_Instance->m_IsPaused = paused; }
 		static void Reload() { if (s_Instance) { s_Instance->m_ShouldQuit = true; s_Instance->m_CanReload = true; } };
 		static bool IsPaused() { return s_Instance ? s_Instance->IsEnginePaused() : false; }
+		static bool IsShuttingDown() { return s_Instance ? s_Instance->m_IsShuttingDown : false; }
 
 		/// Pauses only gameplay (scene updates, physics, audio) while keeping the editor responsive.
 		static void SetPlaymodePaused(bool paused) { if (s_Instance) s_Instance->m_IsPlaymodePaused = paused; }
@@ -178,6 +179,7 @@ namespace Bolt {
 		bool m_WasEnginePaused = false;
 		bool m_IsRenderingFrame = false;
 		bool m_IsRenderingRefresh = false;
+		bool m_IsShuttingDown = false;
 		bool m_QuitRequested = false;
 		int m_QuitRequestFrame = -1;
 

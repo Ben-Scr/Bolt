@@ -854,9 +854,9 @@ namespace Bolt {
 
 	// ── Bolt-Physics Inspectors ─────────────────────────────────────
 
-	void DrawBoltBody2DInspector(Entity entity)
+	void DrawFastBody2DInspector(Entity entity)
 	{
-		auto& body = entity.GetComponent<BoltBody2DComponent>();
+		auto& body = entity.GetComponent<FastBody2DComponent>();
 
 		const char* bodyTypeNames[] = { "Static", "Dynamic", "Kinematic" };
 		int currentType = static_cast<int>(body.Type);
@@ -895,9 +895,9 @@ namespace Bolt {
 		}
 	}
 
-	void DrawBoltBoxCollider2DInspector(Entity entity)
+	void DrawFastBoxCollider2DInspector(Entity entity)
 	{
-		auto& collider = entity.GetComponent<BoltBoxCollider2DComponent>();
+		auto& collider = entity.GetComponent<FastBoxCollider2DComponent>();
 
 		if (ImGuiUtils::DrawInspectorControl("Half Extents", [&collider](const char* id) {
 			return ImGui::DragFloat2(id, &collider.HalfExtents.x, 0.05f, 0.01f, 100.0f);
@@ -908,9 +908,9 @@ namespace Bolt {
 		}
 	}
 
-	void DrawBoltCircleCollider2DInspector(Entity entity)
+	void DrawFastCircleCollider2DInspector(Entity entity)
 	{
-		auto& collider = entity.GetComponent<BoltCircleCollider2DComponent>();
+		auto& collider = entity.GetComponent<FastCircleCollider2DComponent>();
 
 		if (ImGuiUtils::DrawInspectorControl("Radius", [&collider](const char* id) {
 			return ImGui::DragFloat(id, &collider.Radius, 0.05f, 0.01f, 100.0f);

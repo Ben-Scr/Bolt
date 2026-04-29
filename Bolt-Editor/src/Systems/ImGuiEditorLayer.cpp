@@ -301,6 +301,9 @@ namespace Bolt {
 					}
 				}
 			}
+			if (ImGui::MenuItem("Project Settings", nullptr, false, hasProject)) {
+				m_ShowPlayerSettings = true;
+			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Package Manager", nullptr, false, hasProject)) {
 				m_ShowPackageManager = true;
@@ -981,11 +984,85 @@ namespace Bolt {
 		ImGui::End();
 	}
 
+	void ImGuiEditorLayer::RenderSceneSystemsInspector(Scene& scene) {
+		ImGui::Text("Scene: %s", scene.GetName().c_str());
+		ImGui::SeparatorText("Systems");
+
+		const auto& systems = scene.GetGameSystemClassNames();
+		for (size_t i = 0; i < systems.size(); ++i) {
+			ImGui::PushID(static_cast<int>(i));
+			ImGui::TextUnformatted(systems[i].c_str());
+
+			ImGui::SameLine();
+			if (ImGui::SmallButton("^") && i > 0) {
+				scene.MoveGameSystem(i, i - 1);
+			}
+
+			ImGui::SameLine();
+			if (ImGui::SmallButton("v") && i + 1 < systems.size()) {
+				scene.MoveGameSystem(i, i + 1);
+			}
+
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Remove")) {
+				scene.RemoveGameSystem(i);
+				ImGui::PopID();
+				break;
+			}
+			ImGui::PopID();
+		}
+
+		float buttonWidth = ImGui::GetContentRegionAvail().x;
+		if (ImGui::Button("+ Add System", ImVec2(buttonWidth, 0))) {
+			ImGui::OpenPopup("AddSystemPopup");
+			m_SystemSearchBuffer[0] = '\0';
+		}
+
+		if (ImGui::BeginPopup("AddSystemPopup")) {
+			ImGui::SetNextItemWidth(-1);
+			ImGui::InputTextWithHint("##SystemSearch", "Search systems...",
+				m_SystemSearchBuffer, sizeof(m_SystemSearchBuffer));
+			ImGui::Separator();
+
+			std::string filter(m_SystemSearchBuffer);
+			std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
+
+			std::vector<EditorScriptDiscovery::ScriptEntry> scriptEntries;
+			EditorScriptDiscovery::CollectProjectScriptEntries(scriptEntries);
+			for (const auto& scriptEntry : scriptEntries) {
+				if (!scriptEntry.IsGameSystem || scene.HasGameSystem(scriptEntry.ClassName)) {
+					continue;
+				}
+
+				if (!filter.empty()) {
+					std::string lowerClassName = EditorScriptDiscovery::ToLowerCopy(scriptEntry.ClassName);
+					std::string lowerPath = EditorScriptDiscovery::ToLowerCopy(scriptEntry.Path.string());
+					if (lowerClassName.find(filter) == std::string::npos
+						&& lowerPath.find(filter) == std::string::npos) {
+						continue;
+					}
+				}
+
+				const std::string label = BuildScriptMenuLabel(scriptEntry);
+				const std::string path = scriptEntry.Path.string();
+				if (ImGuiUtils::MenuItemEllipsis(label, path.c_str(), nullptr, false, true, 260.0f)) {
+					scene.AddGameSystem(scriptEntry.ClassName);
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			ImGui::EndPopup();
+		}
+	}
+
 	void ImGuiEditorLayer::RenderInspectorPanel(Scene& scene) {
 		ImGui::Begin("Inspector");
 
 		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
 			m_SelectedEntity = entt::null;
+			RenderSceneSystemsInspector(scene);
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::Spacing();
 			RenderAssetInspector();
 			m_IsInspectorPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 			ImGui::End();
@@ -1036,17 +1113,44 @@ namespace Bolt {
 			}
 		}
 
-		// UUID display (read-only, small gray text)
-		if (entity.HasComponent<UUIDComponent>()) {
-			uint64_t uuid = static_cast<uint64_t>(entity.GetComponent<UUIDComponent>().Id);
-			ImGui::TextDisabled("UUID: %llu", uuid);
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Click to copy");
+		/* INFO(Ben-Scr): MetaData Doesn't need to be displayed
+		if (const EntityMetaData* metaData = entity.GetMetaData()) {
+			const char* originText = "Runtime";
+			if (metaData->Origin == EntityOrigin::Scene) originText = "Scene";
+			if (metaData->Origin == EntityOrigin::Prefab) originText = "Prefab";
+			ImGui::TextDisabled("Origin: %s", originText);
+
+			const uint64_t runtimeId = metaData->RuntimeID;
+			ImGui::TextDisabled("RuntimeID: %llu", runtimeId);
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to copy");
+			if (ImGui::IsItemClicked()) ImGui::SetClipboardText(std::to_string(runtimeId).c_str());
+
+			if (metaData->Origin == EntityOrigin::Scene && static_cast<uint64_t>(metaData->SceneGUID) != 0) {
+				const uint64_t sceneGuid = static_cast<uint64_t>(metaData->SceneGUID);
+				ImGui::TextDisabled("SceneGUID: %llu", sceneGuid);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to copy");
+				if (ImGui::IsItemClicked()) ImGui::SetClipboardText(std::to_string(sceneGuid).c_str());
 			}
-			if (ImGui::IsItemClicked()) {
-				ImGui::SetClipboardText(std::to_string(uuid).c_str());
+			if (metaData->Origin == EntityOrigin::Prefab && static_cast<uint64_t>(metaData->PrefabGUID) != 0) {
+				const uint64_t prefabGuid = static_cast<uint64_t>(metaData->PrefabGUID);
+				ImGui::TextDisabled("PrefabGUID: %llu", prefabGuid);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to copy");
+				if (ImGui::IsItemClicked()) ImGui::SetClipboardText(std::to_string(prefabGuid).c_str());
+
+				if (ImGui::Button("Apply to Prefab")) {
+					SceneSerializer::ApplyPrefabInstanceOverrides(scene, m_SelectedEntity);
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Revert All")) {
+					EntityHandle replacement = SceneSerializer::RevertPrefabInstanceOverride(scene, m_SelectedEntity, {});
+					if (replacement != entt::null) {
+						SelectEntity(replacement);
+						m_EntityOrder.clear();
+					}
+				}
 			}
 		}
+		*/
 
 		m_IsInspectorPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
@@ -1072,10 +1176,8 @@ namespace Bolt {
 
 			// Component drag source on the header (attaches to the CollapsingHeader item)
 			if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-				uint64_t entityUUID = 0;
-				if (entity.HasComponent<UUIDComponent>())
-					entityUUID = static_cast<uint64_t>(entity.GetComponent<UUIDComponent>().Id);
-				std::string refStr = std::to_string(entityUUID) + ":" + info.displayName;
+				const uint64_t entityRuntimeId = entity.GetRuntimeID();
+				std::string refStr = std::to_string(entityRuntimeId) + ":" + info.displayName;
 				ImGui::SetDragDropPayload("COMPONENT_REF", refStr.c_str(), refStr.size() + 1);
 				ImGui::Text("Ref: %s.%s", entity.GetName().c_str(), info.displayName.c_str());
 				ImGui::EndDragDropSource();
@@ -1144,6 +1246,9 @@ namespace Bolt {
 
 				// Also search C# components and scripts by name.
 				for (const auto& scriptEntry : scriptEntries) {
+					if (scriptEntry.IsGameSystem || scriptEntry.IsGlobalSystem) {
+						continue;
+					}
 					std::string lowerClassName = EditorScriptDiscovery::ToLowerCopy(scriptEntry.ClassName);
 					std::string lowerPath = EditorScriptDiscovery::ToLowerCopy(scriptEntry.Path.string());
 					if (lowerClassName.find(filter) == std::string::npos
@@ -1209,7 +1314,7 @@ namespace Bolt {
 				// Managed components subcategory.
 				bool hasManagedComponents = false;
 				for (const auto& scriptEntry : scriptEntries) {
-					if (scriptEntry.IsManagedComponent) {
+					if (scriptEntry.IsManagedComponent && !scriptEntry.IsGameSystem && !scriptEntry.IsGlobalSystem) {
 						hasManagedComponents = true;
 						break;
 					}
@@ -1217,7 +1322,7 @@ namespace Bolt {
 				if (hasManagedComponents) {
 					if (ImGui::TreeNode("Components (C#)")) {
 						for (const auto& scriptEntry : scriptEntries) {
-							if (!scriptEntry.IsManagedComponent) {
+							if (!scriptEntry.IsManagedComponent || scriptEntry.IsGameSystem || scriptEntry.IsGlobalSystem) {
 								continue;
 							}
 							if (entity.HasComponent<ScriptComponent>()
@@ -1238,7 +1343,7 @@ namespace Bolt {
 				if (!scriptEntries.empty()) {
 					if (ImGui::TreeNode("Scripts")) {
 						for (const auto& scriptEntry : scriptEntries) {
-							if (scriptEntry.IsManagedComponent) {
+							if (scriptEntry.IsManagedComponent || scriptEntry.IsGameSystem || scriptEntry.IsGlobalSystem) {
 								continue;
 							}
 							const std::string label = BuildScriptMenuLabel(scriptEntry);
@@ -1262,6 +1367,9 @@ namespace Bolt {
 				std::vector<EditorScriptDiscovery::ScriptEntry> droppedScripts;
 				EditorScriptDiscovery::CollectScriptFile(std::filesystem::path(droppedPath), droppedScripts);
 				for (const auto& scriptEntry : droppedScripts) {
+					if (scriptEntry.IsGameSystem || scriptEntry.IsGlobalSystem) {
+						continue;
+					}
 					if (scriptEntry.IsManagedComponent) {
 						AttachManagedComponentToEntity(entity, scene, scriptEntry);
 					}

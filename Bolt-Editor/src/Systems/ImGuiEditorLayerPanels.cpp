@@ -14,6 +14,8 @@
 #include "Project/ProjectManager.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
+#include "Scripting/ScriptDiscovery.hpp"
+#include "Scripting/ScriptEngine.hpp"
 #include "Scripting/ScriptSystem.hpp"
 #include "Serialization/Directory.hpp"
 #include "Serialization/File.hpp"
@@ -24,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <unordered_set>
 
 namespace Bolt {
 	namespace {
@@ -545,7 +548,7 @@ namespace Bolt {
 	void ImGuiEditorLayer::RenderPlayerSettingsPanel() {
 		if (!m_ShowPlayerSettings) return;
 
-		ImGui::Begin("Player Settings", &m_ShowPlayerSettings);
+		ImGui::Begin("Project Settings", &m_ShowPlayerSettings);
 		BoltProject* project = ProjectManager::GetCurrentProject();
 		if (!project) {
 			ImGui::TextDisabled("No project loaded");
@@ -632,8 +635,75 @@ namespace Bolt {
 			ImGui::Unindent(8);
 		}
 
+		if (ImGui::CollapsingHeader("Global Systems", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Indent(8);
+			ImGui::SetNextItemWidth(-1);
+			ImGui::InputTextWithHint("##GlobalSystemSearch", "Search global systems...",
+				m_GlobalSystemSearchBuffer, sizeof(m_GlobalSystemSearchBuffer));
+
+			std::string filter(m_GlobalSystemSearchBuffer);
+			std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
+
+			std::vector<EditorScriptDiscovery::ScriptEntry> scriptEntries;
+			EditorScriptDiscovery::CollectProjectScriptEntries(scriptEntries);
+
+			std::unordered_set<std::string> discoveredGlobalSystems;
+			for (const auto& scriptEntry : scriptEntries) {
+				if (!scriptEntry.IsGlobalSystem) {
+					continue;
+				}
+
+				discoveredGlobalSystems.insert(scriptEntry.ClassName);
+				if (!filter.empty()) {
+					std::string lowerClassName = EditorScriptDiscovery::ToLowerCopy(scriptEntry.ClassName);
+					std::string lowerPath = EditorScriptDiscovery::ToLowerCopy(scriptEntry.Path.string());
+					if (lowerClassName.find(filter) == std::string::npos
+						&& lowerPath.find(filter) == std::string::npos) {
+						continue;
+					}
+				}
+
+				auto it = std::find_if(project->GlobalSystems.begin(), project->GlobalSystems.end(),
+					[&](const BoltProject::GlobalSystemRegistration& registration) {
+						return registration.ClassName == scriptEntry.ClassName;
+					});
+				bool active = it != project->GlobalSystems.end() ? it->Active : false;
+				if (ImGui::Checkbox(scriptEntry.ClassName.c_str(), &active)) {
+					if (it == project->GlobalSystems.end()) {
+						project->GlobalSystems.push_back({ scriptEntry.ClassName, active });
+					}
+					else {
+						it->Active = active;
+					}
+					changed = true;
+				}
+			}
+
+			for (auto& registration : project->GlobalSystems) {
+				if (discoveredGlobalSystems.contains(registration.ClassName)) {
+					continue;
+				}
+				bool active = registration.Active;
+				std::string label = registration.ClassName + " (missing)";
+				if (ImGui::Checkbox(label.c_str(), &active)) {
+					registration.Active = active;
+					changed = true;
+				}
+			}
+
+			ImGui::Unindent(8);
+		}
+
 		if (changed) {
 			project->Save();
+			std::vector<std::string> activeGlobalSystems;
+			for (const auto& registration : project->GlobalSystems) {
+				if (registration.Active && !registration.ClassName.empty()) {
+					activeGlobalSystems.push_back(registration.ClassName);
+				}
+			}
+			ScriptEngine::ShutdownGlobalSystems();
+			ScriptEngine::InitializeGlobalSystems(activeGlobalSystems);
 		}
 
 		ImGui::End();

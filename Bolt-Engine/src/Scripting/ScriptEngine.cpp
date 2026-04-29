@@ -2,9 +2,9 @@
 #include "Scripting/ScriptEngine.hpp"
 #include "Scripting/ScriptBindings.hpp"
 #include "Scene/Scene.hpp"
-#include "Components/General/UUIDComponent.hpp"
 #include "Core/Log.hpp"
 
+#include <algorithm>
 #include <filesystem>
 
 // From coreclr_delegates.h — signals [UnmanagedCallersOnly] to hostfxr
@@ -19,6 +19,7 @@ namespace Bolt {
 	std::string ScriptEngine::s_CoreAssemblyPath;
 	std::string ScriptEngine::s_UserAssemblyPath;
 	bool        ScriptEngine::s_HasUserAssembly = false;
+	std::vector<ScriptEngine::GlobalSystemInstance> ScriptEngine::s_GlobalSystems;
 
 	DotNetHost       ScriptEngine::s_Host;
 	ManagedCallbacks ScriptEngine::s_Callbacks{};
@@ -34,6 +35,8 @@ namespace Bolt {
 
 	void ScriptEngine::Shutdown()
 	{
+		ShutdownGlobalSystems();
+
 		// Do NOT close the host — CoreCLR can only be initialized once per process.
 		// Just unload user assemblies and reset state.
 		if (s_Callbacks.UnloadUserAssembly)
@@ -132,6 +135,7 @@ namespace Bolt {
 
 		if (s_Callbacks.LoadUserAssembly)
 		{
+			ShutdownGlobalSystems();
 			int ok = s_Callbacks.LoadUserAssembly(s_UserAssemblyPath.c_str());
 			BT_CORE_INFO_TAG("ScriptEngine", "LoadUserAssembly callback returned: {}", ok);
 			s_HasUserAssembly = (ok != 0);
@@ -151,6 +155,8 @@ namespace Bolt {
 	void ScriptEngine::ReloadAssemblies()
 	{
 		BT_CORE_INFO_TAG("ScriptEngine", "Reloading assemblies...");
+
+		ShutdownGlobalSystems();
 
 		if (s_Callbacks.UnloadUserAssembly)
 			s_Callbacks.UnloadUserAssembly();
@@ -180,8 +186,11 @@ namespace Bolt {
 		}
 
 		uint64_t entityID = static_cast<uint64_t>(static_cast<uint32_t>(entity));
-		if (s_CurrentScene && s_CurrentScene->IsValid(entity) && s_CurrentScene->HasComponent<UUIDComponent>(entity)) {
-			entityID = static_cast<uint64_t>(s_CurrentScene->GetComponent<UUIDComponent>(entity).Id);
+		if (s_CurrentScene && s_CurrentScene->IsValid(entity)) {
+			const uint64_t runtimeId = s_CurrentScene->GetRuntimeID(entity);
+			if (runtimeId != 0) {
+				entityID = runtimeId;
+			}
 		}
 
 		return static_cast<uint32_t>(s_Callbacks.CreateScriptInstance(className.c_str(), entityID));
@@ -209,6 +218,30 @@ namespace Bolt {
 	{
 		if (handle == 0 || !s_Callbacks.InvokeOnDestroy) return;
 		s_Callbacks.InvokeOnDestroy(static_cast<int32_t>(handle));
+	}
+
+	void ScriptEngine::InvokeOnEnable(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeOnEnable) return;
+		s_Callbacks.InvokeOnEnable(static_cast<int32_t>(handle));
+	}
+
+	void ScriptEngine::InvokeOnDisable(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeOnDisable) return;
+		s_Callbacks.InvokeOnDisable(static_cast<int32_t>(handle));
+	}
+
+	void ScriptEngine::InvokeCollisionEnter2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeCollisionEnter2D) return;
+		s_Callbacks.InvokeCollisionEnter2D(static_cast<int32_t>(handle), selfEntityID, otherEntityID, entityAID, entityBID);
+	}
+
+	void ScriptEngine::InvokeCollisionExit2D(uint32_t handle, uint64_t selfEntityID, uint64_t otherEntityID, uint64_t entityAID, uint64_t entityBID)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeCollisionExit2D) return;
+		s_Callbacks.InvokeCollisionExit2D(static_cast<int32_t>(handle), selfEntityID, otherEntityID, entityAID, entityBID);
 	}
 
 	bool ScriptEngine::ClassExists(const std::string& className)
@@ -280,6 +313,106 @@ namespace Bolt {
 	void ScriptEngine::RaiseSceneUnloaded(const std::string& sceneName)
 	{
 		if (s_Initialized && s_Callbacks.RaiseSceneUnloaded) s_Callbacks.RaiseSceneUnloaded(sceneName.c_str());
+	}
+
+	uint32_t ScriptEngine::CreateGameSystemInstance(const std::string& className, const std::string& sceneName)
+	{
+		if (!s_Initialized || !s_Callbacks.CreateGameSystemInstance) return 0;
+		return static_cast<uint32_t>(s_Callbacks.CreateGameSystemInstance(className.c_str(), sceneName.c_str()));
+	}
+
+	void ScriptEngine::DestroyGameSystemInstance(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.DestroyGameSystemInstance) return;
+		s_Callbacks.DestroyGameSystemInstance(static_cast<int32_t>(handle));
+	}
+
+	void ScriptEngine::InvokeGameSystemStart(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeGameSystemStart) return;
+		s_Callbacks.InvokeGameSystemStart(static_cast<int32_t>(handle));
+	}
+
+	void ScriptEngine::InvokeGameSystemUpdate(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeGameSystemUpdate) return;
+		s_Callbacks.InvokeGameSystemUpdate(static_cast<int32_t>(handle));
+	}
+
+	void ScriptEngine::InvokeGameSystemDestroy(uint32_t handle)
+	{
+		if (handle == 0 || !s_Callbacks.InvokeGameSystemDestroy) return;
+		s_Callbacks.InvokeGameSystemDestroy(static_cast<int32_t>(handle));
+	}
+
+	bool ScriptEngine::GameSystemClassExists(const std::string& className)
+	{
+		if (!s_Initialized || !s_Callbacks.GameSystemClassExists) return false;
+		return s_Callbacks.GameSystemClassExists(className.c_str()) != 0;
+	}
+
+	void ScriptEngine::InitializeGlobalSystems(const std::vector<std::string>& classNames)
+	{
+		if (!s_Initialized || !s_HasUserAssembly || !s_Callbacks.CreateGlobalSystemInstance) return;
+
+		for (const std::string& className : classNames)
+		{
+			if (className.empty()) {
+				continue;
+			}
+
+			const auto existing = std::find_if(s_GlobalSystems.begin(), s_GlobalSystems.end(),
+				[&className](const GlobalSystemInstance& instance) { return instance.ClassName == className; });
+			if (existing != s_GlobalSystems.end()) {
+				continue;
+			}
+
+			if (!GlobalSystemClassExists(className)) {
+				BT_CORE_WARN_TAG("ScriptEngine", "GlobalSystem '{}' was registered but no matching class was found", className);
+				continue;
+			}
+
+			uint32_t handle = static_cast<uint32_t>(s_Callbacks.CreateGlobalSystemInstance(className.c_str()));
+			if (handle == 0) {
+				BT_CORE_ERROR_TAG("ScriptEngine", "Failed to create GlobalSystem '{}'", className);
+				continue;
+			}
+
+			s_GlobalSystems.push_back({ className, handle });
+			if (s_Callbacks.InvokeGlobalSystemInitialize) {
+				s_Callbacks.InvokeGlobalSystemInitialize(static_cast<int32_t>(handle));
+			}
+		}
+	}
+
+	void ScriptEngine::UpdateGlobalSystems()
+	{
+		if (!s_Initialized || !s_Callbacks.InvokeGlobalSystemUpdate) return;
+		for (const auto& instance : s_GlobalSystems)
+		{
+			if (instance.Handle != 0) {
+				s_Callbacks.InvokeGlobalSystemUpdate(static_cast<int32_t>(instance.Handle));
+			}
+		}
+	}
+
+	void ScriptEngine::ShutdownGlobalSystems()
+	{
+		if (s_Callbacks.DestroyGlobalSystemInstance) {
+			for (auto& instance : s_GlobalSystems)
+			{
+				if (instance.Handle != 0) {
+					s_Callbacks.DestroyGlobalSystemInstance(static_cast<int32_t>(instance.Handle));
+				}
+			}
+		}
+		s_GlobalSystems.clear();
+	}
+
+	bool ScriptEngine::GlobalSystemClassExists(const std::string& className)
+	{
+		if (!s_Initialized || !s_Callbacks.GlobalSystemClassExists) return false;
+		return s_Callbacks.GlobalSystemClassExists(className.c_str()) != 0;
 	}
 
 } // namespace Bolt

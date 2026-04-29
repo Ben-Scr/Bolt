@@ -20,12 +20,15 @@ namespace Bolt {
 		void SetClassName(const std::string& name) { m_ClassName = name; }
 
 		void Bind(EntityHandle entity) { m_Entity = entity; m_IsBound = true; }
-		void Unbind() { m_Entity = entt::null; m_IsBound = false; m_HasStarted = false; m_GCHandle = 0; m_NativePtr = nullptr; }
+		void Unbind() { m_Entity = entt::null; m_IsBound = false; m_HasStarted = false; m_HasEnabled = false; m_GCHandle = 0; m_NativePtr = nullptr; }
 		bool IsBound() const { return m_IsBound; }
 		EntityHandle GetEntity() const { return m_Entity; }
 
 		bool HasStarted() const { return m_HasStarted; }
 		void MarkStarted() { m_HasStarted = true; }
+		bool HasEnabled() const { return m_HasEnabled; }
+		void MarkEnabled() { m_HasEnabled = true; }
+		void MarkDisabled() { m_HasEnabled = false; }
 
 		// Managed (C#) instance
 		uint32_t GetGCHandle() const { return m_GCHandle; }
@@ -46,6 +49,7 @@ namespace Bolt {
 		EntityHandle m_Entity = entt::null;
 		bool m_IsBound = false;
 		bool m_HasStarted = false;
+		bool m_HasEnabled = false;
 		ScriptType m_Type = ScriptType::Unknown;
 		uint32_t m_GCHandle = 0;
 		NativeScript* m_NativePtr = nullptr;
