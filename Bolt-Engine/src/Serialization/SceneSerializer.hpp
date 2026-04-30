@@ -25,6 +25,11 @@ namespace Bolt {
 
 		// Prefab support: save/load single entities
 		static Json::Value SerializeEntityFull(Scene& scene, EntityHandle entity);
+		static Json::Value SerializeEntityForClipboard(Scene& scene, EntityHandle entity);
+		static EntityHandle DeserializeEntityFromValue(Scene& scene, const Json::Value& entityValue);
+		static Json::Value SerializeComponent(Scene& scene, EntityHandle entity, std::string_view componentName);
+		static bool DeserializeComponent(Scene& scene, EntityHandle entity, std::string_view componentName, const Json::Value& componentValue);
+		static bool ResetComponent(Scene& scene, EntityHandle entity, std::string_view componentName);
 		static bool SaveEntityToFile(Scene& scene, EntityHandle entity, const std::string& path);
 		static EntityHandle LoadEntityFromFile(Scene& scene, const std::string& path);
 		static EntityHandle InstantiatePrefab(Scene& scene, uint64_t prefabGuid);

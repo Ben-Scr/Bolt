@@ -4,6 +4,7 @@
 #include "Collections/Vec2.hpp"
 #include <magic_enum/magic_enum.hpp>
 #include <algorithm>
+#include <functional>
 #include <string>
 #include <type_traits>
 
@@ -137,7 +138,7 @@ namespace Bolt::ImGuiUtils {
 	bool MenuItemEllipsis(const std::string& text, const char* id,
 		const char* shortcut = nullptr, bool selected = false, bool enabled = true, float maxWidth = -1.0f);
 
-	bool BeginComponentSection(const char* label, bool& removeRequested);
+	bool BeginComponentSection(const char* label, bool& removeRequested, const std::function<void()>& contextMenu = {});
 
 	void EndComponentSection();
 

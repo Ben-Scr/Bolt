@@ -1,5 +1,6 @@
 #pragma once
 #include "Gui/ThumbnailCache.hpp"
+#include "Scene/EntityHandle.hpp"
 #include "Serialization/Directory.hpp"
 #include <string>
 #include <vector>
@@ -76,6 +77,7 @@ namespace Bolt {
 		void CreateGlobalSystem(const std::string& parentDir);
 		void CreateNativeComponent(const std::string& parentDir);
 		void CreateScene(const std::string& parentDir);
+		void CreateEntityPrefab(const std::string& parentDir, EntityHandle sourceEntity = entt::null);
 
 		void BeginRename(const std::string& path, const std::string& currentName);
 		void CommitRename();
@@ -107,9 +109,10 @@ namespace Bolt {
 		bool m_AssetClipboardCut = false;
 
 		// Deferred script creation - boilerplate/project script is written after rename is committed.
-		enum class PendingScriptType { None, CSharp, Native, CSharpComponent, CSharpGameSystem, CSharpGlobalSystem, NativeComponent };
+		enum class PendingScriptType { None, CSharp, Native, CSharpComponent, CSharpGameSystem, CSharpGlobalSystem, NativeComponent, EntityPrefab };
 		PendingScriptType m_PendingScriptType = PendingScriptType::None;
 		std::string m_PendingScriptDir;  // parent directory for the new script
+		EntityHandle m_PendingPrefabSourceEntity = entt::null;
 
 		ThumbnailCache m_Thumbnails;
 

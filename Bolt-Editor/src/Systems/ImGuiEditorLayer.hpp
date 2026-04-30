@@ -83,6 +83,11 @@ namespace Bolt {
 		void SelectSceneNode();
 		void SelectEntity(EntityHandle entity);
 		void ClearEntitySelection();
+		bool IsEntitySelected(EntityHandle entity) const;
+		std::vector<EntityHandle> GetSelectedEntities(const Scene& scene) const;
+		void SetSingleEntitySelection(EntityHandle entity, int index);
+		void ToggleEntitySelection(EntityHandle entity, int index);
+		void SelectEntityRange(int index);
 		void DrainPendingLogEntries();
 		void AppendLogEntry(LogEntry entry);
 		void ClearLogEntries();
@@ -90,6 +95,8 @@ namespace Bolt {
 		void DuplicateSelectedEntity(Scene& scene);
 		void DeleteSelectedEntity(Scene& scene);
 		void BeginRenameSelectedEntity(Scene& scene);
+		void CopySelectedEntities(Scene& scene);
+		void PasteEntities(Scene& scene);
 		bool HasEntityShortcutFocus() const;
 		void DrawEditorComponentGizmos(Scene& scene);
 		const Texture2D* GetPreviewTexture(const std::filesystem::path& path);
@@ -103,6 +110,8 @@ namespace Bolt {
 
 		EntityHandle m_SelectedEntity = entt::null;
 		EntityHandle m_PressedEntity = entt::null;
+		std::vector<EntityHandle> m_SelectedEntities;
+		int m_LastEntitySelectionIndex = -1;
 		bool m_IsSceneNodeSelected = false;
 		EventId m_LogSubscriptionId{};
 		std::vector<LogEntry> m_LogEntries;
@@ -161,6 +170,8 @@ namespace Bolt {
 		char m_SystemSearchBuffer[128]{};
 		char m_GlobalSystemSearchBuffer[128]{};
 		std::string m_SelectedAssetPath;
+		std::string m_ComponentClipboardJson;
+		std::string m_EntityClipboardJson;
 
 		std::string m_PlayModeScenePath;
 		bool m_PlayModeRecompilePending = false;

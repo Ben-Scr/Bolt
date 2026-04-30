@@ -23,6 +23,7 @@
 #include "Serialization/Path.hpp"
 #include "Project/ProjectManager.hpp"
 #include "Serialization/SceneSerializer.hpp"
+#include "Serialization/Json.hpp"
 #include "Serialization/File.hpp"
 #include "Utils/Process.hpp"
 #include "Packages/NuGetSource.hpp"
@@ -107,6 +108,45 @@ namespace Bolt {
 				io.MousePos.y - io.MouseClickedPos[ImGuiMouseButton_Left].y);
 			return (delta.x * delta.x + delta.y * delta.y) > (io.MouseDragThreshold * io.MouseDragThreshold);
 		}
+
+		struct ComponentClipboardPayload {
+			std::string SerializedName;
+			Json::Value Data;
+		};
+
+		bool TryReadComponentClipboard(const std::string& clipboardJson, ComponentClipboardPayload& outPayload)
+		{
+			if (clipboardJson.empty()) {
+				return false;
+			}
+
+			Json::Value root;
+			std::string parseError;
+			if (!Json::TryParse(clipboardJson, root, &parseError) || !root.IsObject()) {
+				return false;
+			}
+
+			const Json::Value* componentValue = root.FindMember("component");
+			const Json::Value* dataValue = root.FindMember("data");
+			if (!componentValue || !componentValue->IsString() || !dataValue || dataValue->IsNull()) {
+				return false;
+			}
+
+			outPayload.SerializedName = componentValue->AsStringOr();
+			outPayload.Data = *dataValue;
+			return !outPayload.SerializedName.empty();
+		}
+
+		const ComponentInfo* FindComponentInfoBySerializedName(const ComponentRegistry& registry, const std::string& serializedName)
+		{
+			const ComponentInfo* found = nullptr;
+			registry.ForEachComponentInfo([&](const std::type_index&, const ComponentInfo& info) {
+				if (!found && info.category == ComponentCategory::Component && info.serializedName == serializedName) {
+					found = &info;
+				}
+			});
+			return found;
+		}
 	}
 
 
@@ -173,13 +213,13 @@ namespace Bolt {
 
 		Scene& scene = *activeScene;
 		const bool hasShortcutFocus = HasEntityShortcutFocus();
-		const bool hasEntitySelection = m_SelectedEntity != entt::null && scene.IsValid(m_SelectedEntity);
+		const bool hasEntitySelection = !GetSelectedEntities(scene).empty();
 
 		if (input.GetKeyDown(KeyCode::F) && hasShortcutFocus && hasEntitySelection) {
 			FocusSelectedEntity(scene);
 		}
 
-		if (Application::GetIsPlaying() || !hasShortcutFocus || !hasEntitySelection) {
+		if (Application::GetIsPlaying() || !hasShortcutFocus) {
 			return;
 		}
 
@@ -187,6 +227,15 @@ namespace Bolt {
 			return;
 		}
 
+		if (input.GetKey(KeyCode::LeftControl) && input.GetKeyDown(KeyCode::C) && hasEntitySelection) {
+			CopySelectedEntities(scene);
+		}
+		if (input.GetKey(KeyCode::LeftControl) && input.GetKeyDown(KeyCode::V)) {
+			PasteEntities(scene);
+		}
+		if (!hasEntitySelection) {
+			return;
+		}
 		if (input.GetKey(KeyCode::LeftControl) && input.GetKeyDown(KeyCode::D)) {
 			DuplicateSelectedEntity(scene);
 		}
@@ -534,6 +583,8 @@ namespace Bolt {
 	void ImGuiEditorLayer::SelectSceneNode() {
 		m_SelectedEntity = entt::null;
 		m_PressedEntity = entt::null;
+		m_SelectedEntities.clear();
+		m_LastEntitySelectionIndex = -1;
 		m_RenamingEntity = entt::null;
 		m_EntityRenameFrameCounter = 0;
 		m_IsSceneNodeSelected = true;
@@ -542,6 +593,11 @@ namespace Bolt {
 
 	void ImGuiEditorLayer::SelectEntity(EntityHandle entity) {
 		m_SelectedEntity = entity;
+		m_SelectedEntities.clear();
+		if (entity != entt::null) {
+			m_SelectedEntities.push_back(entity);
+		}
+		m_LastEntitySelectionIndex = -1;
 		m_IsSceneNodeSelected = false;
 		if (entity != entt::null) {
 			m_AssetBrowser.ClearSelection();
@@ -551,9 +607,85 @@ namespace Bolt {
 	void ImGuiEditorLayer::ClearEntitySelection() {
 		m_SelectedEntity = entt::null;
 		m_PressedEntity = entt::null;
+		m_SelectedEntities.clear();
+		m_LastEntitySelectionIndex = -1;
 		m_RenamingEntity = entt::null;
 		m_EntityRenameFrameCounter = 0;
 		m_IsSceneNodeSelected = false;
+	}
+
+	bool ImGuiEditorLayer::IsEntitySelected(EntityHandle entity) const {
+		return std::find(m_SelectedEntities.begin(), m_SelectedEntities.end(), entity) != m_SelectedEntities.end();
+	}
+
+	std::vector<EntityHandle> ImGuiEditorLayer::GetSelectedEntities(const Scene& scene) const {
+		std::vector<EntityHandle> entities;
+		for (EntityHandle entity : m_SelectedEntities) {
+			if (entity != entt::null && scene.IsValid(entity)
+				&& std::find(entities.begin(), entities.end(), entity) == entities.end()) {
+				entities.push_back(entity);
+			}
+		}
+
+		if (entities.empty() && m_SelectedEntity != entt::null && scene.IsValid(m_SelectedEntity)) {
+			entities.push_back(m_SelectedEntity);
+		}
+
+		return entities;
+	}
+
+	void ImGuiEditorLayer::SetSingleEntitySelection(EntityHandle entity, int index) {
+		m_SelectedEntity = entity;
+		m_SelectedEntities.clear();
+		if (entity != entt::null) {
+			m_SelectedEntities.push_back(entity);
+			m_AssetBrowser.ClearSelection();
+		}
+		m_LastEntitySelectionIndex = index;
+		m_IsSceneNodeSelected = false;
+	}
+
+	void ImGuiEditorLayer::ToggleEntitySelection(EntityHandle entity, int index) {
+		auto it = std::find(m_SelectedEntities.begin(), m_SelectedEntities.end(), entity);
+		if (it != m_SelectedEntities.end()) {
+			m_SelectedEntities.erase(it);
+			if (m_SelectedEntity == entity) {
+				m_SelectedEntity = m_SelectedEntities.empty() ? entt::null : m_SelectedEntities.back();
+			}
+		}
+		else if (entity != entt::null) {
+			m_SelectedEntities.push_back(entity);
+			m_SelectedEntity = entity;
+			m_AssetBrowser.ClearSelection();
+		}
+
+		m_LastEntitySelectionIndex = index;
+		m_IsSceneNodeSelected = false;
+	}
+
+	void ImGuiEditorLayer::SelectEntityRange(int index) {
+		if (m_EntityOrder.empty()) {
+			return;
+		}
+
+		if (index < 0 || index >= static_cast<int>(m_EntityOrder.size())) {
+			return;
+		}
+
+		if (m_LastEntitySelectionIndex < 0 || m_LastEntitySelectionIndex >= static_cast<int>(m_EntityOrder.size())) {
+			SetSingleEntitySelection(m_EntityOrder[static_cast<std::size_t>(index)], index);
+			return;
+		}
+
+		const int first = std::min(m_LastEntitySelectionIndex, index);
+		const int last = std::max(m_LastEntitySelectionIndex, index);
+		m_SelectedEntities.clear();
+		for (int i = first; i <= last; ++i) {
+			m_SelectedEntities.push_back(m_EntityOrder[static_cast<std::size_t>(i)]);
+		}
+		m_SelectedEntity = m_EntityOrder[static_cast<std::size_t>(index)];
+		m_IsSceneNodeSelected = false;
+		m_AssetBrowser.ClearSelection();
 	}
 
 	void ImGuiEditorLayer::FocusSelectedEntity(Scene& scene) {
@@ -568,33 +700,50 @@ namespace Bolt {
 	}
 
 	void ImGuiEditorLayer::DuplicateSelectedEntity(Scene& scene) {
-		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
+		const std::vector<EntityHandle> selectedEntities = GetSelectedEntities(scene);
+		if (selectedEntities.empty()) {
 			return;
 		}
 
-		Entity source = scene.GetEntity(m_SelectedEntity);
-		Entity clone = scene.CreateEntity(source.GetName() + " (Clone)");
-
-		const auto& componentRegistry = SceneManager::Get().GetComponentRegistry();
-		componentRegistry.ForEachComponentInfo([&](const std::type_index&, const ComponentInfo& info) {
-			if (info.category != ComponentCategory::Component) return;
-			if (!info.has(source)) return;
-			if (info.copyTo) {
-				info.copyTo(source, clone);
+		std::vector<EntityHandle> createdEntities;
+		for (EntityHandle sourceEntity : selectedEntities) {
+			Json::Value entityValue = SceneSerializer::SerializeEntityForClipboard(scene, sourceEntity);
+			if (!entityValue.IsObject()) {
+				continue;
 			}
-		});
 
-		SelectEntity(clone.GetHandle());
-		scene.MarkDirty();
-		m_EntityOrder.clear();
+			if (Json::Value* nameValue = entityValue.FindMember("name")) {
+				const std::string sourceName = nameValue->AsStringOr("Entity");
+				*nameValue = Json::Value(sourceName + " (Clone)");
+			}
+
+			EntityHandle clone = SceneSerializer::DeserializeEntityFromValue(scene, entityValue);
+			if (clone != entt::null) {
+				createdEntities.push_back(clone);
+			}
+		}
+
+		if (!createdEntities.empty()) {
+			m_SelectedEntities = createdEntities;
+			m_SelectedEntity = createdEntities.back();
+			m_LastEntitySelectionIndex = -1;
+			m_IsSceneNodeSelected = false;
+			scene.MarkDirty();
+			m_EntityOrder.clear();
+		}
 	}
 
 	void ImGuiEditorLayer::DeleteSelectedEntity(Scene& scene) {
-		if (m_SelectedEntity == entt::null || !scene.IsValid(m_SelectedEntity)) {
+		const std::vector<EntityHandle> selectedEntities = GetSelectedEntities(scene);
+		if (selectedEntities.empty()) {
 			return;
 		}
 
-		scene.DestroyEntity(m_SelectedEntity);
+		for (EntityHandle entity : selectedEntities) {
+			if (scene.IsValid(entity)) {
+				scene.DestroyEntity(entity);
+			}
+		}
 		ClearEntitySelection();
 		m_EntityOrder.clear();
 	}
@@ -608,6 +757,66 @@ namespace Bolt {
 		m_RenamingEntity = m_SelectedEntity;
 		m_EntityRenameFrameCounter = 0;
 		std::snprintf(m_EntityRenameBuffer, sizeof(m_EntityRenameBuffer), "%s", entity.GetName().c_str());
+	}
+
+	void ImGuiEditorLayer::CopySelectedEntities(Scene& scene) {
+		const std::vector<EntityHandle> selectedEntities = GetSelectedEntities(scene);
+		if (selectedEntities.empty()) {
+			return;
+		}
+
+		Json::Value root = Json::Value::MakeObject();
+		root.AddMember("type", Json::Value("EntityClipboard"));
+
+		Json::Value entities = Json::Value::MakeArray();
+		for (EntityHandle entity : selectedEntities) {
+			Json::Value entityValue = SceneSerializer::SerializeEntityForClipboard(scene, entity);
+			if (entityValue.IsObject()) {
+				entities.Append(std::move(entityValue));
+			}
+		}
+
+		if (entities.GetArray().empty()) {
+			return;
+		}
+
+		root.AddMember("entities", std::move(entities));
+		m_EntityClipboardJson = Json::Stringify(root, false);
+	}
+
+	void ImGuiEditorLayer::PasteEntities(Scene& scene) {
+		if (m_EntityClipboardJson.empty()) {
+			return;
+		}
+
+		Json::Value root;
+		std::string parseError;
+		if (!Json::TryParse(m_EntityClipboardJson, root, &parseError) || !root.IsObject()) {
+			return;
+		}
+
+		const Json::Value* typeValue = root.FindMember("type");
+		const Json::Value* entitiesValue = root.FindMember("entities");
+		if (!typeValue || typeValue->AsStringOr() != "EntityClipboard" || !entitiesValue || !entitiesValue->IsArray()) {
+			return;
+		}
+
+		std::vector<EntityHandle> createdEntities;
+		for (const Json::Value& entityValue : entitiesValue->GetArray()) {
+			EntityHandle entity = SceneSerializer::DeserializeEntityFromValue(scene, entityValue);
+			if (entity != entt::null) {
+				createdEntities.push_back(entity);
+			}
+		}
+
+		if (!createdEntities.empty()) {
+			m_SelectedEntities = createdEntities;
+			m_SelectedEntity = createdEntities.back();
+			m_LastEntitySelectionIndex = -1;
+			m_IsSceneNodeSelected = false;
+			scene.MarkDirty();
+			m_EntityOrder.clear();
+		}
 	}
 
 	bool ImGuiEditorLayer::HasEntityShortcutFocus() const {
@@ -794,7 +1003,7 @@ namespace Bolt {
 					const EntityHandle entityHandle = m_EntityOrder[entityIdx];
 					if (!scene.IsValid(entityHandle)) continue;
 					Entity entity = scene.GetEntity(entityHandle);
-					const bool selected = m_SelectedEntity == entityHandle;
+					const bool selected = IsEntitySelected(entityHandle);
 
 					ImGui::PushID(static_cast<int>(static_cast<uint32_t>(entityHandle)));
 
@@ -850,7 +1059,16 @@ namespace Bolt {
 						}
 						if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
 							if (ImGui::IsItemHovered() && m_PressedEntity == entityHandle && !IsLeftMouseDragPastClickThreshold()) {
-								SelectEntity(entityHandle);
+								const ImGuiIO& io = ImGui::GetIO();
+								if (io.KeyShift) {
+									SelectEntityRange(entityIdx);
+								}
+								else if (io.KeyCtrl) {
+									ToggleEntitySelection(entityHandle, entityIdx);
+								}
+								else {
+									SetSingleEntitySelection(entityHandle, entityIdx);
+								}
 							}
 							if (m_PressedEntity == entityHandle) {
 								m_PressedEntity = entt::null;
@@ -900,16 +1118,13 @@ namespace Bolt {
 
 					if (ImGui::BeginPopupContextItem())
 					{
-						SelectEntity(entityHandle);
+						if (!IsEntitySelected(entityHandle)) {
+							SetSingleEntitySelection(entityHandle, entityIdx);
+						}
 
 						if (ImGui::MenuItem("Delete Entity"))
 						{
-							scene.DestroyEntity(entity);
-							if (m_SelectedEntity == entityHandle)
-								ClearEntitySelection();
-							if (m_RenamingEntity == entityHandle)
-								m_RenamingEntity = entt::null;
-							m_EntityOrder.clear();
+							DeleteSelectedEntity(scene);
 						}
 
 						if (ImGui::MenuItem("Duplicate"))
@@ -1188,7 +1403,32 @@ namespace Bolt {
 			}
 
 			bool removeRequested = false;
-			bool open = ImGuiUtils::BeginComponentSection(info.displayName.c_str(), removeRequested);
+			bool copyRequested = false;
+			bool pasteRequested = false;
+			bool resetRequested = false;
+			ComponentClipboardPayload clipboardPayload;
+			const bool hasComponentClipboard = TryReadComponentClipboard(m_ComponentClipboardJson, clipboardPayload);
+			const ComponentInfo* pastedComponentInfo = hasComponentClipboard
+				? FindComponentInfoBySerializedName(registry, clipboardPayload.SerializedName)
+				: nullptr;
+			const bool canPasteComponent = hasComponentClipboard
+				&& pastedComponentInfo
+				&& pastedComponentInfo->add
+				&& pastedComponentInfo->has
+				&& clipboardPayload.Data.IsObject();
+			const bool canSerializeComponent = !info.serializedName.empty();
+
+			bool open = ImGuiUtils::BeginComponentSection(info.displayName.c_str(), removeRequested, [&]() {
+				if (ImGui::MenuItem("Copy Component", nullptr, false, canSerializeComponent)) {
+					copyRequested = true;
+				}
+				if (ImGui::MenuItem("Paste Component", nullptr, false, canPasteComponent)) {
+					pasteRequested = true;
+				}
+				if (ImGui::MenuItem("Reset Component", nullptr, false, canSerializeComponent)) {
+					resetRequested = true;
+				}
+			});
 
 			// Component drag source on the header (attaches to the CollapsingHeader item)
 			if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
@@ -1201,6 +1441,30 @@ namespace Bolt {
 
 			if (removeRequested) {
 				pendingRemoval = typeId;
+			}
+			if (copyRequested && canSerializeComponent) {
+				Json::Value componentValue = SceneSerializer::SerializeComponent(scene, m_SelectedEntity, info.serializedName);
+				if (!componentValue.IsNull()) {
+					Json::Value root = Json::Value::MakeObject();
+					root.AddMember("type", Json::Value("ComponentClipboard"));
+					root.AddMember("component", Json::Value(info.serializedName));
+					root.AddMember("displayName", Json::Value(info.displayName));
+					root.AddMember("data", std::move(componentValue));
+					m_ComponentClipboardJson = Json::Stringify(root, false);
+				}
+			}
+			if (pasteRequested && canPasteComponent) {
+				if (!pastedComponentInfo->has(entity)) {
+					pastedComponentInfo->add(entity);
+				}
+				if (SceneSerializer::DeserializeComponent(scene, m_SelectedEntity, clipboardPayload.SerializedName, clipboardPayload.Data)) {
+					scene.MarkDirty();
+				}
+			}
+			if (resetRequested && canSerializeComponent) {
+				if (SceneSerializer::ResetComponent(scene, m_SelectedEntity, info.serializedName)) {
+					scene.MarkDirty();
+				}
 			}
 
 			if (open) {

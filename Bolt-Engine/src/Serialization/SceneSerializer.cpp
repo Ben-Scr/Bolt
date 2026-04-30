@@ -649,6 +649,29 @@ namespace Bolt {
 		return SerializeEntity(scene, entity);
 	}
 
+	Json::Value SceneSerializer::SerializeEntityForClipboard(Scene& scene, EntityHandle entity) {
+		if (entity == entt::null || !scene.IsValid(entity)) {
+			return Value::MakeObject();
+		}
+
+		Value entityValue = SerializeEntity(scene, entity);
+		RemoveEntityIdentityMembers(entityValue);
+		return entityValue;
+	}
+
+	Json::Value SceneSerializer::SerializeComponent(Scene& scene, EntityHandle entity, std::string_view componentName) {
+		if (entity == entt::null || !scene.IsValid(entity) || componentName.empty()) {
+			return Value();
+		}
+
+		Value entityValue = SerializeEntity(scene, entity);
+		if (const Value* componentValue = entityValue.FindMember(componentName)) {
+			return *componentValue;
+		}
+
+		return Value();
+	}
+
 	bool SceneSerializer::SaveEntityToFile(Scene& scene, EntityHandle entity, const std::string& path) {
 		try {
 			const std::filesystem::path parentDir = std::filesystem::path(path).parent_path();

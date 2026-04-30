@@ -1153,6 +1153,275 @@ namespace Bolt {
 		return entity;
 	}
 
+	EntityHandle SceneSerializer::DeserializeEntityFromValue(Scene& scene, const Json::Value& entityValue) {
+		if (!entityValue.IsObject()) {
+			return entt::null;
+		}
+
+		Value entityCopy = entityValue;
+		RemoveEntityIdentityMembers(entityCopy);
+		return DeserializeFullEntity(scene, entityCopy, EntityOrigin::Scene);
+	}
+
+	bool SceneSerializer::DeserializeComponent(Scene& scene, EntityHandle entity, std::string_view componentName, const Json::Value& componentValue) {
+		if (entity == entt::null || !scene.IsValid(entity) || componentName.empty() || !componentValue.IsObject()) {
+			return false;
+		}
+
+		const std::string component(componentName);
+
+		if (component == "Transform2D") {
+			auto& transform = scene.HasComponent<Transform2DComponent>(entity)
+				? scene.GetComponent<Transform2DComponent>(entity)
+				: scene.AddComponent<Transform2DComponent>(entity);
+			transform.Position.x = GetFloatMember(componentValue, "posX", 0.0f);
+			transform.Position.y = GetFloatMember(componentValue, "posY", 0.0f);
+			transform.Rotation = GetFloatMember(componentValue, "rotation", 0.0f);
+			transform.Scale.x = GetFloatMember(componentValue, "scaleX", 1.0f);
+			transform.Scale.y = GetFloatMember(componentValue, "scaleY", 1.0f);
+			transform.MarkDirty();
+			return true;
+		}
+
+		if (component == "SpriteRenderer") {
+			auto& spriteRenderer = scene.HasComponent<SpriteRendererComponent>(entity)
+				? scene.GetComponent<SpriteRendererComponent>(entity)
+				: scene.AddComponent<SpriteRendererComponent>(entity);
+			spriteRenderer.Color.r = GetFloatMember(componentValue, "r", 1.0f);
+			spriteRenderer.Color.g = GetFloatMember(componentValue, "g", 1.0f);
+			spriteRenderer.Color.b = GetFloatMember(componentValue, "b", 1.0f);
+			spriteRenderer.Color.a = GetFloatMember(componentValue, "a", 1.0f);
+			spriteRenderer.SortingOrder = static_cast<short>(GetIntMember(componentValue, "sortOrder", 0));
+			spriteRenderer.SortingLayer = static_cast<uint8_t>(GetIntMember(componentValue, "sortLayer", 0));
+			const Filter filter = static_cast<Filter>(GetIntMember(componentValue, "filter", static_cast<int>(Filter::Point)));
+			const Wrap wrapU = static_cast<Wrap>(GetIntMember(componentValue, "wrapU", static_cast<int>(Wrap::Clamp)));
+			const Wrap wrapV = static_cast<Wrap>(GetIntMember(componentValue, "wrapV", static_cast<int>(Wrap::Clamp)));
+			spriteRenderer.TextureHandle = LoadTextureFromValue(
+				componentValue,
+				"textureAsset",
+				"texture",
+				filter,
+				wrapU,
+				wrapV,
+				&spriteRenderer.TextureAssetId);
+			return true;
+		}
+
+		if (component == "Rigidbody2D") {
+			auto& rigidbody = scene.HasComponent<Rigidbody2DComponent>(entity)
+				? scene.GetComponent<Rigidbody2DComponent>(entity)
+				: scene.AddComponent<Rigidbody2DComponent>(entity);
+			rigidbody.SetBodyType(static_cast<BodyType>(GetIntMember(componentValue, "bodyType", static_cast<int>(BodyType::Dynamic))));
+			rigidbody.SetGravityScale(GetFloatMember(componentValue, "gravityScale", 1.0f));
+			rigidbody.SetMass(GetFloatMember(componentValue, "mass", 1.0f));
+			return true;
+		}
+
+		if (component == "BoxCollider2D") {
+			auto& boxCollider = scene.HasComponent<BoxCollider2DComponent>(entity)
+				? scene.GetComponent<BoxCollider2DComponent>(entity)
+				: scene.AddComponent<BoxCollider2DComponent>(entity);
+			const Vec2 savedCenter{
+				GetFloatMember(componentValue, "centerX", 0.0f),
+				GetFloatMember(componentValue, "centerY", 0.0f)
+			};
+			boxCollider.SetCenter(savedCenter, scene);
+
+			const auto& transform = scene.GetComponent<Transform2DComponent>(entity);
+			const Vec2 savedScale{
+				GetFloatMember(componentValue, "scaleX", transform.Scale.x),
+				GetFloatMember(componentValue, "scaleY", transform.Scale.y)
+			};
+			Vec2 localScale{ 1.0f, 1.0f };
+			if (std::fabs(transform.Scale.x) > k_MinScaleAxis) {
+				localScale.x = savedScale.x / transform.Scale.x;
+			}
+			if (std::fabs(transform.Scale.y) > k_MinScaleAxis) {
+				localScale.y = savedScale.y / transform.Scale.y;
+			}
+			boxCollider.SetScale(localScale, scene);
+			boxCollider.SetSensor(GetBoolMember(componentValue, "sensor", false), scene);
+			boxCollider.SetFriction(GetFloatMember(componentValue, "friction", boxCollider.GetFriction()));
+			boxCollider.SetBounciness(GetFloatMember(componentValue, "bounciness", boxCollider.GetBounciness()));
+			boxCollider.SetLayer(GetUInt64Member(componentValue, "layer", boxCollider.GetLayer()));
+			boxCollider.SetRegisterContacts(GetBoolMember(componentValue, "registerContacts", boxCollider.CanRegisterContacts()));
+			return true;
+		}
+
+		if (component == "AudioSource") {
+			auto& audioSource = scene.HasComponent<AudioSourceComponent>(entity)
+				? scene.GetComponent<AudioSourceComponent>(entity)
+				: scene.AddComponent<AudioSourceComponent>(entity);
+			audioSource.SetVolume(GetFloatMember(componentValue, "volume", 1.0f));
+			audioSource.SetPitch(GetFloatMember(componentValue, "pitch", 1.0f));
+			audioSource.SetLoop(GetBoolMember(componentValue, "loop", false));
+			audioSource.SetPlayOnAwake(GetBoolMember(componentValue, "playOnAwake", false));
+
+			UUID audioAssetId = UUID(0);
+			const AudioHandle handle = LoadAudioFromValue(componentValue, "clipAsset", "clip", &audioAssetId);
+			audioSource.SetAudioHandle(handle, audioAssetId);
+			return true;
+		}
+
+		if (component == "Camera2D") {
+			auto& camera = scene.HasComponent<Camera2DComponent>(entity)
+				? scene.GetComponent<Camera2DComponent>(entity)
+				: scene.AddComponent<Camera2DComponent>(entity);
+			camera.SetOrthographicSize(GetFloatMember(componentValue, "orthoSize", 5.0f));
+			camera.SetZoom(GetFloatMember(componentValue, "zoom", 1.0f));
+			camera.SetClearColor(Color(
+				GetFloatMember(componentValue, "clearR", 0.1f),
+				GetFloatMember(componentValue, "clearG", 0.1f),
+				GetFloatMember(componentValue, "clearB", 0.1f),
+				GetFloatMember(componentValue, "clearA", 1.0f)));
+			return true;
+		}
+
+		if (component == "FastBody2D") {
+			auto& body = scene.HasComponent<FastBody2DComponent>(entity)
+				? scene.GetComponent<FastBody2DComponent>(entity)
+				: scene.AddComponent<FastBody2DComponent>(entity);
+			body.Type = static_cast<BoltPhys::BodyType>(GetIntMember(componentValue, "type", 1));
+			body.Mass = GetFloatMember(componentValue, "mass", 1.0f);
+			body.UseGravity = GetBoolMember(componentValue, "useGravity", true);
+			body.BoundaryCheck = GetBoolMember(componentValue, "boundaryCheck", false);
+
+			if (body.m_Body) {
+				body.m_Body->SetBodyType(body.Type);
+				body.m_Body->SetMass(body.Mass);
+				body.m_Body->SetGravityEnabled(body.UseGravity);
+				body.m_Body->SetBoundaryCheckEnabled(body.BoundaryCheck);
+			}
+			return true;
+		}
+
+		if (component == "FastBoxCollider2D") {
+			auto& collider = scene.HasComponent<FastBoxCollider2DComponent>(entity)
+				? scene.GetComponent<FastBoxCollider2DComponent>(entity)
+				: scene.AddComponent<FastBoxCollider2DComponent>(entity);
+			collider.HalfExtents = {
+				GetFloatMember(componentValue, "halfX", 0.5f),
+				GetFloatMember(componentValue, "halfY", 0.5f)
+			};
+			if (collider.m_Collider) {
+				collider.m_Collider->SetHalfExtents({ collider.HalfExtents.x, collider.HalfExtents.y });
+			}
+			return true;
+		}
+
+		if (component == "FastCircleCollider2D") {
+			auto& collider = scene.HasComponent<FastCircleCollider2DComponent>(entity)
+				? scene.GetComponent<FastCircleCollider2DComponent>(entity)
+				: scene.AddComponent<FastCircleCollider2DComponent>(entity);
+			collider.Radius = GetFloatMember(componentValue, "radius", 0.5f);
+			if (collider.m_Collider) {
+				collider.m_Collider->SetRadius(collider.Radius);
+			}
+			return true;
+		}
+
+		if (component == "ParticleSystem2D") {
+			auto& particleSystem = scene.HasComponent<ParticleSystem2DComponent>(entity)
+				? scene.GetComponent<ParticleSystem2DComponent>(entity)
+				: scene.AddComponent<ParticleSystem2DComponent>(entity);
+			particleSystem.PlayOnAwake = GetBoolMember(componentValue, "playOnAwake", true);
+			particleSystem.ParticleSettings.LifeTime = GetFloatMember(componentValue, "lifetime", 1.0f);
+			particleSystem.ParticleSettings.Speed = GetFloatMember(componentValue, "speed", 5.0f);
+			particleSystem.ParticleSettings.Scale = GetFloatMember(componentValue, "scale", 1.0f);
+			particleSystem.ParticleSettings.Gravity.x = GetFloatMember(componentValue, "gravityX", 0.0f);
+			particleSystem.ParticleSettings.Gravity.y = GetFloatMember(componentValue, "gravityY", 0.0f);
+			particleSystem.ParticleSettings.UseGravity = GetBoolMember(componentValue, "useGravity", false);
+			particleSystem.ParticleSettings.UseRandomColors = GetBoolMember(componentValue, "useRandomColors", false);
+			particleSystem.ParticleSettings.MoveDirection.x = GetFloatMember(componentValue, "moveDirectionX", 0.0f);
+			particleSystem.ParticleSettings.MoveDirection.y = GetFloatMember(componentValue, "moveDirectionY", 0.0f);
+			particleSystem.EmissionSettings.EmitOverTime =
+				static_cast<uint16_t>(GetIntMember(componentValue, "emitOverTime", 10));
+			particleSystem.EmissionSettings.RateOverDistance =
+				static_cast<uint16_t>(GetIntMember(componentValue, "rateOverDistance", 0));
+			particleSystem.EmissionSettings.EmissionSpace = static_cast<ParticleSystem2DComponent::Space>(
+				GetIntMember(componentValue, "emissionSpace", static_cast<int>(ParticleSystem2DComponent::Space::World)));
+
+			if (GetIntMember(componentValue, "shapeType", 0) == 0) {
+				ParticleSystem2DComponent::CircleParams circle;
+				circle.Radius = GetFloatMember(componentValue, "radius", 1.0f);
+				circle.IsOnCircle = GetBoolMember(componentValue, "isOnCircle", false);
+				particleSystem.Shape = circle;
+			}
+			else {
+				ParticleSystem2DComponent::SquareParams square;
+				square.HalfExtends.x = GetFloatMember(componentValue, "halfExtendsX", 1.0f);
+				square.HalfExtends.y = GetFloatMember(componentValue, "halfExtendsY", 1.0f);
+				particleSystem.Shape = square;
+			}
+
+			particleSystem.RenderingSettings.MaxParticles =
+				static_cast<uint32_t>(GetUInt64Member(componentValue, "maxParticles", 1000));
+			particleSystem.RenderingSettings.Color.r = GetFloatMember(componentValue, "colorR", 1.0f);
+			particleSystem.RenderingSettings.Color.g = GetFloatMember(componentValue, "colorG", 1.0f);
+			particleSystem.RenderingSettings.Color.b = GetFloatMember(componentValue, "colorB", 1.0f);
+			particleSystem.RenderingSettings.Color.a = GetFloatMember(componentValue, "colorA", 1.0f);
+			particleSystem.RenderingSettings.SortingOrder =
+				static_cast<short>(GetIntMember(componentValue, "sortOrder", 0));
+			particleSystem.RenderingSettings.SortingLayer =
+				static_cast<uint8_t>(GetIntMember(componentValue, "sortLayer", 0));
+
+			UUID textureAssetId = UUID(0);
+			const TextureHandle textureHandle = LoadTextureFromValue(
+				componentValue,
+				"textureAsset",
+				"texture",
+				Filter::Point,
+				Wrap::Clamp,
+				Wrap::Clamp,
+				&textureAssetId);
+			particleSystem.SetTexture(textureHandle, textureAssetId);
+			return true;
+		}
+
+		if (component == "RectTransform") {
+			auto& rectTransform = scene.HasComponent<RectTransformComponent>(entity)
+				? scene.GetComponent<RectTransformComponent>(entity)
+				: scene.AddComponent<RectTransformComponent>(entity);
+			rectTransform.Position.x = GetFloatMember(componentValue, "posX", 0.0f);
+			rectTransform.Position.y = GetFloatMember(componentValue, "posY", 0.0f);
+			rectTransform.Pivot.x = GetFloatMember(componentValue, "pivotX", 0.0f);
+			rectTransform.Pivot.y = GetFloatMember(componentValue, "pivotY", 0.0f);
+			rectTransform.Width = GetFloatMember(componentValue, "width", 100.0f);
+			rectTransform.Height = GetFloatMember(componentValue, "height", 100.0f);
+			rectTransform.Rotation = GetFloatMember(componentValue, "rotation", 0.0f);
+			rectTransform.Scale.x = GetFloatMember(componentValue, "scaleX", 1.0f);
+			rectTransform.Scale.y = GetFloatMember(componentValue, "scaleY", 1.0f);
+			return true;
+		}
+
+		if (component == "Image") {
+			auto& image = scene.HasComponent<ImageComponent>(entity)
+				? scene.GetComponent<ImageComponent>(entity)
+				: scene.AddComponent<ImageComponent>(entity);
+			image.Color.r = GetFloatMember(componentValue, "r", 1.0f);
+			image.Color.g = GetFloatMember(componentValue, "g", 1.0f);
+			image.Color.b = GetFloatMember(componentValue, "b", 1.0f);
+			image.Color.a = GetFloatMember(componentValue, "a", 1.0f);
+
+			image.TextureHandle = LoadTextureFromValue(
+				componentValue,
+				"textureAsset",
+				"texture",
+				Filter::Point,
+				Wrap::Clamp,
+				Wrap::Clamp,
+				&image.TextureAssetId);
+			return true;
+		}
+
+		return false;
+	}
+
+	bool SceneSerializer::ResetComponent(Scene& scene, EntityHandle entity, std::string_view componentName) {
+		Value defaults = Value::MakeObject();
+		return DeserializeComponent(scene, entity, componentName, defaults);
+	}
+
 	EntityHandle SceneSerializer::DeserializePrefabInstance(Scene& scene, const Json::Value& entityValue) {
 		const uint64_t prefabGuid = ResolvePrefabGuid(entityValue);
 		if (prefabGuid == 0) {

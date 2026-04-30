@@ -195,7 +195,7 @@ namespace Bolt::ImGuiUtils {
 		ImGui::Dummy(ImVec2(previewSize, previewSize));
 	}
 
-	bool BeginComponentSection(const char* label, bool& removeRequested)
+	bool BeginComponentSection(const char* label, bool& removeRequested, const std::function<void()>& contextMenu)
 	{
 		removeRequested = false;
 
@@ -211,6 +211,10 @@ namespace Bolt::ImGuiUtils {
 		}
 
 		if (ImGui::BeginPopupContextItem("ComponentContext")) {
+			if (contextMenu) {
+				contextMenu();
+				ImGui::Separator();
+			}
 			if (ImGui::MenuItem("Remove Component")) {
 				removeRequested = true;
 			}

@@ -9,6 +9,7 @@ namespace Bolt {
 
 	struct ComponentInfo {
 		std::string displayName;
+		std::string serializedName;
 		std::string subcategory;
 		ComponentCategory category;
 

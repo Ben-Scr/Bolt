@@ -12,6 +12,11 @@ namespace Bolt {
         template<typename T>
         void Register(ComponentInfo info) {
             const std::type_index id = typeid(T);
+            const auto existing = m_map.find(id);
+            if (existing != m_map.end()) {
+                if (info.serializedName.empty()) info.serializedName = existing->second.serializedName;
+                if (!info.drawInspector) info.drawInspector = existing->second.drawInspector;
+            }
 
             info.has = [](Entity e) { return e.HasComponent<T>(); };
             info.add = [](Entity e) { e.AddComponent<T>(); };
