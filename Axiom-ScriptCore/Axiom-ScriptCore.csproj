@@ -115,9 +115,6 @@
     <Compile Include="Source\Axiom\Scene\GlobalSystem.cs" />
     <Compile Include="Source\Axiom\Scene\SceneManager.cs" />
     <Compile Include="Source\Axiom\Scene\SceneQuery.cs" />
-    <Compile Include="Source\Axiom\Serialization\Json.cs" />
-    <Compile Include="Source\Axiom\Serialization\JsonSecure.cs" />
-    <Compile Include="Source\Axiom\Serialization\ZipUtility.cs" />
     <Compile Include="Source\Axiom\Utility\CameraUtility.cs" />
     <Compile Include="Source\Axiom\Utility\TextUtility.cs" />
     <Compile Include="Source\Axiom\Utility\TransformUtility.cs" />

@@ -217,6 +217,9 @@ namespace Axiom {
 	void LauncherLayer::OnDetach(Application& app) {
 		(void)app;
 		ResetCreateProjectTask();
+		if (m_OpenTask.Worker.joinable()) {
+			m_OpenTask.Worker.join();
+		}
 		m_ProjectSizeTasks.clear();
 	}
 
@@ -273,6 +276,18 @@ namespace Axiom {
 
 				updateProgress(0.05f, "Creating project...");
 				AxiomProject project = AxiomProject::Create(name, location, updateProgress);
+
+				updateProgress(0.55f, "Regenerating engine solution...");
+				AxiomProject::RegenerateResult regen = AxiomProject::RegenerateSolutionForProject(project.RootDirectory);
+				if (!regen.Succeeded && regen.ExitCode != -1) {
+					AIM_WARN_TAG("Launcher", "Solution regeneration returned non-zero ({}); continuing anyway.", regen.ExitCode);
+				}
+
+				updateProgress(0.65f, "Building engine solution (this may take a moment)...");
+				AxiomProject::BuildResult engineBuild = AxiomProject::BuildSolution();
+				if (!engineBuild.Succeeded) {
+					AIM_WARN_TAG("Launcher", "Engine solution build failed (exit code {}); continuing anyway. Build manually via Visual Studio for full functionality.", engineBuild.ExitCode);
+				}
 
 				updateProgress(0.90f, "Compiling starter scripts...");
 				const std::string buildConfiguration = AxiomProject::GetActiveBuildConfiguration();
@@ -365,6 +380,9 @@ namespace Axiom {
 	// ── Main Panel ──────────────────────────────────────────────────
 
 	void LauncherLayer::RenderLauncherPanel() {
+		// Pull async open-task results before we draw anything.
+		PollOpenProjectTask();
+
 		const ImGuiViewport* viewport = ImGui::GetMainViewport();
 		ImGui::SetNextWindowPos(viewport->Pos);
 		ImGui::SetNextWindowSize(viewport->Size);
@@ -380,32 +398,61 @@ namespace Axiom {
 		ImGui::Separator();
 		ImGui::Spacing();
 
-		// While opening a project, show a fullscreen loading overlay and block all interaction
-		if (m_IsOpening) {
+		// Snapshot async open-task state for overlay rendering. Reading under lock so
+		// the worker thread's writes are observed coherently.
+		bool taskRunning = false;
+		std::string taskStage;
+		float taskProgress = 0.0f;
+		{
+			std::scoped_lock lock(m_OpenTask.Mutex);
+			taskRunning = m_OpenTask.Running;
+			taskStage = m_OpenTask.Stage;
+			taskProgress = m_OpenTask.Progress;
+		}
+
+		// Block all launcher interaction while the open pipeline runs OR during the
+		// post-launch 1.5 s grace period.
+		if (m_IsOpening || taskRunning) {
 			float w = ImGui::GetContentRegionAvail().x;
 			float h = ImGui::GetContentRegionAvail().y;
 			ImVec2 center(ImGui::GetCursorScreenPos().x + w * 0.5f,
 				ImGui::GetCursorScreenPos().y + h * 0.4f);
 
 			ImGui::SetCursorScreenPos(ImVec2(center.x - 120, center.y - 20));
-			ImGui::TextUnformatted("Opening project...");
+			if (taskRunning) {
+				ImGui::TextUnformatted(taskStage.empty() ? "Opening project..." : taskStage.c_str());
+			}
+			else {
+				ImGui::TextUnformatted("Opening project...");
+			}
 
 			ImGui::SetCursorScreenPos(ImVec2(center.x - 120, center.y + 5));
-			float elapsed = std::chrono::duration<float>(
-				std::chrono::steady_clock::now() - m_OpenStartTime).count();
-			ImGui::ProgressBar(fmodf(elapsed * 0.3f, 1.0f), ImVec2(240, 0), "");
+			if (taskRunning) {
+				// Real stage-driven progress while the worker is busy.
+				ImGui::ProgressBar(taskProgress, ImVec2(240, 0), "");
+			}
+			else {
+				// Post-launch indeterminate animation while the editor process spins up.
+				float elapsed = std::chrono::duration<float>(
+					std::chrono::steady_clock::now() - m_OpenStartTime).count();
+				ImGui::ProgressBar(fmodf(elapsed * 0.3f, 1.0f), ImVec2(240, 0), "");
+			}
 
 			ImGui::SetCursorScreenPos(ImVec2(center.x - 120, center.y + 30));
 			ImGui::TextDisabled("%s", m_OpeningProjectName.c_str());
 
-			// L1: Dismiss after cooldown, then perform deferred re-sort
-			if (elapsed >= 1.5f) {
-				m_IsOpening = false;
-
-				if (!m_DeferredUpdatePath.empty()) {
-					m_Registry.UpdateLastOpened(m_DeferredUpdatePath);
-					m_Registry.Save();
-					m_DeferredUpdatePath.clear();
+			// Dismiss the post-launch overlay 1.5 s after the worker reports success.
+			// While the worker is still running we never dismiss — the user has to wait.
+			if (!taskRunning) {
+				float elapsed = std::chrono::duration<float>(
+					std::chrono::steady_clock::now() - m_OpenStartTime).count();
+				if (elapsed >= 1.5f) {
+					m_IsOpening = false;
+					if (!m_DeferredUpdatePath.empty()) {
+						m_Registry.UpdateLastOpened(m_DeferredUpdatePath);
+						m_Registry.Save();
+						m_DeferredUpdatePath.clear();
+					}
 				}
 			}
 
@@ -797,12 +844,16 @@ namespace Axiom {
 	// Launches the editor process but keeps the launcher open.
 
 	void LauncherLayer::OpenProject(const LauncherProjectEntry& entry) {
-		if (m_IsOpening) return; // Already opening a project -- ignore
+		if (m_IsOpening) return; // Already in post-launch grace overlay
+		{
+			std::scoped_lock lock(m_OpenTask.Mutex);
+			if (m_OpenTask.Running) return; // Worker already busy
+		}
 
 		m_OpenError.clear();
 
 #ifdef AIM_PLATFORM_WINDOWS
-		// L3: Check if this project is already open in another editor instance
+		// Refuse to spawn a duplicate editor for the same project.
 		{
 			auto it = m_RunningProjects.find(entry.path);
 			if (it != m_RunningProjects.end()) {
@@ -816,11 +867,74 @@ namespace Axiom {
 					}
 					CloseHandle(hProc);
 				}
-				// Process is no longer running -- remove stale entry
 				m_RunningProjects.erase(it);
 			}
 		}
 #endif
+
+		// Initialize task state and spawn the worker. The render thread shows progress
+		// from the task state each frame; PollOpenProjectTask collects results.
+		{
+			std::scoped_lock lock(m_OpenTask.Mutex);
+			m_OpenTask.Entry = entry;
+			m_OpenTask.Stage = "Preparing...";
+			m_OpenTask.Progress = 0.02f;
+			m_OpenTask.Error.clear();
+			m_OpenTask.Running = true;
+			m_OpenTask.Finished = false;
+			m_OpenTask.Success = false;
+#ifdef AIM_PLATFORM_WINDOWS
+			m_OpenTask.SpawnedProcessId = 0;
+#endif
+		}
+
+		if (m_OpenTask.Worker.joinable()) {
+			m_OpenTask.Worker.join();
+		}
+
+		// Show the in-progress overlay immediately by setting m_IsOpening — the overlay
+		// reads stage/progress from m_OpenTask and dismisses 1.5 s after the worker
+		// reports success. m_OpeningProjectName is what the overlay shows underneath.
+		m_IsOpening = true;
+		m_OpeningProjectName = entry.name;
+
+		m_OpenTask.Worker = std::thread([this, entry]() {
+			OpenProjectWorkerBody(entry);
+		});
+	}
+
+	void LauncherLayer::OpenProjectWorkerBody(const LauncherProjectEntry& entry) {
+		auto setStage = [this](const std::string& stage, float progress) {
+			std::scoped_lock lock(m_OpenTask.Mutex);
+			m_OpenTask.Stage = stage;
+			m_OpenTask.Progress = progress;
+		};
+
+		auto fail = [this](const std::string& error) {
+			std::scoped_lock lock(m_OpenTask.Mutex);
+			m_OpenTask.Stage = "Failed";
+			m_OpenTask.Progress = 1.0f;
+			m_OpenTask.Error = error;
+			m_OpenTask.Finished = true;
+			m_OpenTask.Running = false;
+			m_OpenTask.Success = false;
+		};
+
+		setStage("Regenerating engine solution...", 0.10f);
+		AxiomProject::RegenerateResult regen = AxiomProject::RegenerateSolutionForProject(entry.path);
+		if (!regen.Succeeded && regen.ExitCode != -1) {
+			fail("Solution regen failed (premake exit code " + std::to_string(regen.ExitCode) + ").");
+			return;
+		}
+
+		setStage("Building engine solution (incremental MSBuild)...", 0.40f);
+		AxiomProject::BuildResult build = AxiomProject::BuildSolution();
+		if (!build.Succeeded) {
+			fail("Engine build failed (MSBuild exit code " + std::to_string(build.ExitCode) + ").");
+			return;
+		}
+
+		setStage("Launching editor...", 0.90f);
 
 #ifdef AIM_PLATFORM_WINDOWS
 		auto exeDir = std::filesystem::path(Path::ExecutableDir());
@@ -828,60 +942,103 @@ namespace Axiom {
 		if (!std::filesystem::exists(editorExe)) {
 			editorExe = exeDir / ".." / "Axiom-Editor" / "Axiom-Editor.exe";
 		}
+		if (!std::filesystem::exists(editorExe)) {
+			fail("Axiom-Editor.exe not found.");
+			return;
+		}
 
-		if (std::filesystem::exists(editorExe)) {
-			std::error_code canonicalError;
-			std::filesystem::path resolvedEditorExe = std::filesystem::weakly_canonical(editorExe, canonicalError);
-			if (canonicalError) {
-				resolvedEditorExe = editorExe.lexically_normal();
-			}
+		std::error_code canonicalError;
+		std::filesystem::path resolvedEditorExe = std::filesystem::weakly_canonical(editorExe, canonicalError);
+		if (canonicalError) {
+			resolvedEditorExe = editorExe.lexically_normal();
+		}
 
-			const std::wstring projectPath = Utf8ToWide(entry.path);
-			if (projectPath.empty() && !entry.path.empty()) {
-				m_OpenError = "Project path is not valid UTF-8";
-				AIM_ERROR_TAG("Launcher", "Failed to open project '{}': invalid UTF-8 path", entry.path);
-				return;
-			}
+		const std::wstring projectPath = Utf8ToWide(entry.path);
+		if (projectPath.empty() && !entry.path.empty()) {
+			fail("Project path is not valid UTF-8.");
+			return;
+		}
 
-			const std::wstring commandLine =
-				L"\"" + resolvedEditorExe.native() + L"\" --project=\"" + projectPath + L"\"";
-			std::vector<wchar_t> buf(commandLine.begin(), commandLine.end());
-			buf.push_back(L'\0');
+		const std::wstring commandLine =
+			L"\"" + resolvedEditorExe.native() + L"\" --project=\"" + projectPath + L"\"";
+		std::vector<wchar_t> buf(commandLine.begin(), commandLine.end());
+		buf.push_back(L'\0');
 
-			const std::wstring workingDirectory = resolvedEditorExe.parent_path().native();
+		const std::wstring workingDirectory = resolvedEditorExe.parent_path().native();
 
-			STARTUPINFOW si{};
-			si.cb = sizeof(si);
-			PROCESS_INFORMATION pi{};
+		STARTUPINFOW si{};
+		si.cb = sizeof(si);
+		PROCESS_INFORMATION pi{};
 
-			if (CreateProcessW(resolvedEditorExe.c_str(), buf.data(), nullptr, nullptr,
-				FALSE, CREATE_NEW_PROCESS_GROUP, nullptr,
-				workingDirectory.empty() ? nullptr : workingDirectory.c_str(), &si, &pi))
-			{
-				m_IsOpening = true;
-				m_OpenStartTime = std::chrono::steady_clock::now();
-				m_OpeningProjectName = entry.name;
-				m_DeferredUpdatePath = entry.path;
+		if (!CreateProcessW(resolvedEditorExe.c_str(), buf.data(), nullptr, nullptr,
+			FALSE, CREATE_NEW_PROCESS_GROUP, nullptr,
+			workingDirectory.empty() ? nullptr : workingDirectory.c_str(), &si, &pi))
+		{
+			const DWORD errorCode = GetLastError();
+			fail("Failed to launch editor: " + FormatWindowsError(errorCode));
+			return;
+		}
 
-				// L3: Store PID for duplicate-open detection
-				m_RunningProjects[entry.path] = pi.dwProcessId;
-				CloseHandle(pi.hProcess);
-				CloseHandle(pi.hThread);
+		const DWORD spawnedPid = pi.dwProcessId;
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
 
-				AIM_INFO_TAG("Launcher", "Opened project: {} at {}", entry.name, entry.path);
-			}
-			else {
-				const DWORD errorCode = GetLastError();
-				m_OpenError = "Failed to open project: " + FormatWindowsError(errorCode);
-				AIM_ERROR_TAG("Launcher", "CreateProcessW failed for '{}' with error {} ({})",
-					entry.path, errorCode, m_OpenError);
-			}
+		AIM_INFO_TAG("Launcher", "Opened project: {} at {}", entry.name, entry.path);
+
+		std::scoped_lock lock(m_OpenTask.Mutex);
+		m_OpenTask.Stage = "Editor launched";
+		m_OpenTask.Progress = 1.0f;
+		m_OpenTask.SpawnedProcessId = spawnedPid;
+		m_OpenTask.Success = true;
+		m_OpenTask.Finished = true;
+		m_OpenTask.Running = false;
+#else
+		fail("Project open is only implemented on Windows.");
+#endif
+	}
+
+	void LauncherLayer::PollOpenProjectTask() {
+		bool finished = false;
+		bool success = false;
+		std::string error;
+		LauncherProjectEntry entry;
+#ifdef AIM_PLATFORM_WINDOWS
+		DWORD pid = 0;
+#endif
+
+		{
+			std::scoped_lock lock(m_OpenTask.Mutex);
+			if (!m_OpenTask.Finished) return;
+			finished = true;
+			success = m_OpenTask.Success;
+			error = m_OpenTask.Error;
+			entry = m_OpenTask.Entry;
+#ifdef AIM_PLATFORM_WINDOWS
+			pid = m_OpenTask.SpawnedProcessId;
+#endif
+			m_OpenTask.Finished = false;
+		}
+
+		if (m_OpenTask.Worker.joinable()) {
+			m_OpenTask.Worker.join();
+		}
+
+		if (success) {
+			// Editor process spawned; transition to the post-launch grace overlay so
+			// the user sees the launch confirmation for a beat before the launcher
+			// becomes interactive again.
+			m_OpenStartTime = std::chrono::steady_clock::now();
+			m_OpeningProjectName = entry.name;
+			m_DeferredUpdatePath = entry.path;
+#ifdef AIM_PLATFORM_WINDOWS
+			m_RunningProjects[entry.path] = pid;
+#endif
 		}
 		else {
-			m_OpenError = "Axiom-Editor.exe not found";
-			AIM_ERROR_TAG("Launcher", "Axiom-Editor.exe not found");
+			m_OpenError = error.empty() ? "Failed to open project." : error;
+			m_IsOpening = false;
+			AIM_ERROR_TAG("Launcher", "Open project failed: {}", m_OpenError);
 		}
-#endif
 	}
 
 	void LauncherLayer::OpenProjectInExplorer(const LauncherProjectEntry& entry) {

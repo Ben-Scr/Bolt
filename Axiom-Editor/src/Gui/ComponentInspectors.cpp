@@ -591,7 +591,14 @@ namespace Axiom {
 				return ImGui::InputInt(id, (int*)&ps.RenderingSettings.SortingLayer);
 			});
 
-			if (Texture2D* texture = TextureManager::GetTexture(ps.GetTextureHandle())) {
+			// Fall back to the engine's default Square texture when the particle system
+			// has no texture assigned yet (otherwise GetTexture() with an invalid handle
+			// spams "[OutOfRange] TextureHandle index 65535" every frame).
+			TextureHandle previewHandle = ps.GetTextureHandle();
+			if (!previewHandle.IsValid()) {
+				previewHandle = TextureManager::GetDefaultTexture(DefaultTexture::Square);
+			}
+			if (Texture2D* texture = TextureManager::GetTexture(previewHandle)) {
 				ImGuiUtils::DrawTexturePreview(texture->GetHandle(), texture->GetWidth(), texture->GetHeight());
 			}
 			ImGui::PopID();

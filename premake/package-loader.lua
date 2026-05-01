@@ -253,8 +253,22 @@ local function RegisterCSharpProject(manifest)
         language "C#"
         dotnetframework "net9.0"
 
+        if layer.allow_unsafe then
+            clr "Unsafe"
+        end
+
         targetdir(path.join(ROOT_DIR, "bin/" .. outputdir .. "/%{prj.name}"))
         objdir(path.join(ROOT_DIR, "bin-int/" .. outputdir .. "/%{prj.name}"))
+
+        -- Sensible defaults for Axiom packages: nullable annotations enabled, dynamic
+        -- loading allowed (so the runtime can Assembly.LoadFrom them), output sits
+        -- directly under bin/<config>/<Pkg.Name>/ without a net9.0/ sub-folder.
+        vsprops {
+            AppendTargetFrameworkToOutputPath = "false",
+            Nullable = "enable",
+            EnableDynamicLoading = "true",
+            AllowUnsafeBlocks = layer.allow_unsafe and "true" or "false",
+        }
 
         files(ResolvePaths(manifest.PackageDir, layer.sources))
 
@@ -268,13 +282,105 @@ local function RegisterCSharpProject(manifest)
 
         filter "configurations:Debug"
             symbols "On"
+            optimize "Off"
+            defines { "AIM_DEBUG" }
         filter "configurations:Release"
             optimize "On"
             symbols "On"
+            defines { "AIM_RELEASE" }
         filter "configurations:Dist"
             optimize "Full"
             symbols "Off"
+            defines { "AIM_DIST" }
         filter {}
+end
+
+-- Reads <project>/axiom-project.json and extracts the top-level "packages" array.
+-- Returns:
+--   nil               — no project given (engine-developer mode, legacy scan-all)
+--   {}                — project loaded, no packages installed (fresh/empty project)
+--   { "A", "B", ... } — explicit allow-list
+--
+-- Uses pattern matching rather than a full JSON parser because the schema we generate
+-- is well-formed and the field shape is trivial (top-level array of strings).
+local function ReadProjectPackagesAllowList(projectRootDir)
+    if not projectRootDir or projectRootDir == "" then
+        return nil
+    end
+
+    local manifestPath = path.join(projectRootDir, "axiom-project.json")
+    if not os.isfile(manifestPath) then
+        -- A project path was specified but axiom-project.json is missing — fail closed
+        -- (treat as no packages installed) rather than scanning everything.
+        return {}
+    end
+
+    local file = io.open(manifestPath, "rb")
+    if not file then
+        return {}
+    end
+    local jsonText = file:read("*all")
+    file:close()
+    if not jsonText then
+        return {}
+    end
+
+    -- Strip line comments and block comments (defensive — JSON doesn't have them but
+    -- some users add them). Cheap to do.
+    jsonText = jsonText:gsub("//[^\n]*", ""):gsub("/%*.-%*/", "")
+
+    -- Locate "packages" : [ ... ]. The string up to the first matching ] is the array.
+    local arrayBody = jsonText:match('"packages"%s*:%s*%[(.-)%]')
+    if not arrayBody then
+        -- Field absent in axiom-project.json = no packages installed.
+        return {}
+    end
+
+    local packages = {}
+    -- Pull every double-quoted string out of the array body. Package names contain only
+    -- A-Z, a-z, 0-9, '.', '_', '-' so no escape handling needed.
+    for name in arrayBody:gmatch('"([^"]*)"') do
+        if name ~= "" then
+            table.insert(packages, name)
+        end
+    end
+
+    return packages
+end
+
+local function FilterManifestsByAllowList(manifests, byName, allowList)
+    local allowed = {}
+    for _, name in ipairs(allowList) do
+        allowed[name] = true
+    end
+
+    local filtered = {}
+    local filteredByName = {}
+    local skipped = {}
+
+    for _, manifest in ipairs(manifests) do
+        if allowed[manifest.name] then
+            table.insert(filtered, manifest)
+            filteredByName[manifest.name] = manifest
+        else
+            table.insert(skipped, manifest.name)
+        end
+    end
+
+    -- Detect missing dependencies — the user listed a package that isn't on disk anywhere.
+    for _, name in ipairs(allowList) do
+        if not filteredByName[name] then
+            print("[Axiom Packages] WARNING: project lists package '" .. name ..
+                "' but no manifest with that name was found under packages/ or <project>/Packages/.")
+        end
+    end
+
+    if #skipped > 0 then
+        print("[Axiom Packages] Skipped " .. tostring(#skipped) ..
+            " package(s) not in the project's allow-list: " .. table.concat(skipped, ", "))
+    end
+
+    return filtered, filteredByName
 end
 
 function PackageSystem.LoadAll()
@@ -294,6 +400,21 @@ function PackageSystem.LoadAll()
             LoadManifestsFromRoot(projectPackagesRoot, manifests, byName)
         else
             print("[Axiom Packages] --axiom-project set but no Packages/ folder at: " .. projectPackagesRoot)
+        end
+    end
+
+    -- If a project is loaded, the project's `packages` allow-list is the source of
+    -- truth: only packages explicitly listed there are registered for build. Empty
+    -- list / missing field means "no packages installed" (fresh project state).
+    -- Without --axiom-project, we fall back to scan-everything for engine-developer
+    -- workflows where there's no project context.
+    if projectPath and projectPath ~= "" then
+        local allowList = ReadProjectPackagesAllowList(projectPath)
+        if allowList then
+            print("[Axiom Packages] Project-declared package allow-list (" ..
+                tostring(#allowList) .. " entries): " ..
+                (#allowList > 0 and table.concat(allowList, ", ") or "<empty>"))
+            manifests, byName = FilterManifestsByAllowList(manifests, byName, allowList)
         end
     end
 

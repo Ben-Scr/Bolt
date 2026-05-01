@@ -96,6 +96,17 @@ public class Entity : IEquatable<Entity>
 
             return GetComponent<NameComponent>()?.Name ?? "";
         }
+        set
+        {
+            // Renaming prefab *assets* is out of scope — the asset's display name lives
+            // outside the entity world. Only live scene/runtime entities are mutable here.
+            if (IsPrefabAsset)
+                return;
+
+            NameComponent? nameComp = GetComponent<NameComponent>() ?? AddComponent<NameComponent>();
+            if (nameComp != null)
+                nameComp.Name = value ?? "";
+        }
     }
 
     private static readonly Dictionary<Type, string> s_NativeComponentNames = new()

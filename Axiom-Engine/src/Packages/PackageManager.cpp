@@ -359,10 +359,21 @@ namespace Axiom {
 		return std::async(std::launch::async, [source = std::move(source), query, take, installed = std::move(installed)]() mutable -> std::vector<PackageInfo> {
 			auto results = source->Search(query, take);
 
-			// Cross-reference with installed packages
+			// Cross-reference with installed packages. NuGet IDs are case-insensitive
+			// per the package-spec; `dotnet add` may write a different case into the
+			// .csproj than what the search API returns, so compare case-folded.
+			auto equalsIgnoreCase = [](const std::string& a, const std::string& b) {
+				if (a.size() != b.size()) return false;
+				for (size_t i = 0; i < a.size(); ++i) {
+					const unsigned char ca = static_cast<unsigned char>(a[i]);
+					const unsigned char cb = static_cast<unsigned char>(b[i]);
+					if (std::tolower(ca) != std::tolower(cb)) return false;
+				}
+				return true;
+			};
 			for (auto& pkg : results) {
 				for (const auto& inst : installed) {
-					if (pkg.Id == inst.Id) {
+					if (equalsIgnoreCase(pkg.Id, inst.Id)) {
 						pkg.IsInstalled = true;
 						pkg.InstalledVersion = inst.Version;
 						break;

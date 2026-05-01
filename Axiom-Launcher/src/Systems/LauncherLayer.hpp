@@ -52,6 +52,24 @@ namespace Axiom {
 			std::string Error;
 		};
 
+		// Async pipeline run when the user clicks "Open" on a project: regen → build →
+		// spawn the editor. Stage/progress are read by the overlay each frame so the UI
+		// doesn't freeze during the (potentially seconds-long) MSBuild step.
+		struct OpenProjectTaskState {
+			std::mutex Mutex;
+			std::thread Worker;
+			LauncherProjectEntry Entry;
+			std::string Stage = "Idle";
+			float Progress = 0.0f;
+			std::string Error;
+			bool Running = false;
+			bool Finished = false;
+			bool Success = false;
+#ifdef AIM_PLATFORM_WINDOWS
+			DWORD SpawnedProcessId = 0;
+#endif
+		};
+
 		void RenderLauncherPanel();
 		void RenderProjectList();
 		void RenderCreateProjectPopup();
@@ -64,6 +82,8 @@ namespace Axiom {
 		void StartCreateProjectAsync(const std::string& name, const std::string& location);
 		void PollCreateProjectTask();
 		void ResetCreateProjectTask(bool clearWorker = true);
+		void OpenProjectWorkerBody(const LauncherProjectEntry& entry);
+		void PollOpenProjectTask();
 		std::shared_ptr<ProjectSizeTaskState> GetOrStartProjectSizeTask(const LauncherProjectEntry& entry);
 		std::string GetProjectSizeDisplayText(const LauncherProjectEntry& entry);
 
@@ -86,6 +106,7 @@ namespace Axiom {
 		bool m_IsOpening = false;
 		std::chrono::steady_clock::time_point m_OpenStartTime;
 		std::string m_OpeningProjectName;
+		OpenProjectTaskState m_OpenTask;
 
 		std::optional<LauncherProjectEntry> m_PendingDeleteProject;
 		bool m_OpenDeleteConfirmPopup = false;
