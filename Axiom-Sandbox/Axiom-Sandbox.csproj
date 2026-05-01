@@ -1,0 +1,72 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <TargetFramework>net9.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Configurations>Debug;Release;Dist</Configurations>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>false</Optimize>
+    <OutputPath>..\bin\Debug-windows-x86_64\Axiom-Sandbox\</OutputPath>
+    <IntermediateOutputPath>..\bin-int\Debug-windows-x86_64\Axiom-Sandbox\</IntermediateOutputPath>
+    <DefineConstants>AIM_DEBUG</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>true</Optimize>
+    <OutputPath>..\bin\Release-windows-x86_64\Axiom-Sandbox\</OutputPath>
+    <IntermediateOutputPath>..\bin-int\Release-windows-x86_64\Axiom-Sandbox\</IntermediateOutputPath>
+    <DefineConstants>AIM_RELEASE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Dist|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Optimize>true</Optimize>
+    <OutputPath>..\bin\Dist-windows-x86_64\Axiom-Sandbox\</OutputPath>
+    <IntermediateOutputPath>..\bin-int\Dist-windows-x86_64\Axiom-Sandbox\</IntermediateOutputPath>
+    <DefineConstants>AIM_DIST</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+  </ItemGroup>
+  <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+  </ItemGroup>
+  <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Dist|x64' ">
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Source\PlayerController.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Axiom-ScriptCore\Axiom-ScriptCore.csproj">
+      <Project>{C1A72EAF-2D33-9C73-3644-1F68A24EF873}</Project>
+      <Name>Axiom-ScriptCore</Name>
+    </ProjectReference>
+  </ItemGroup>
+</Project>

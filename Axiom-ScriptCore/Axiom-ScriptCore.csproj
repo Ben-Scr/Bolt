@@ -1,0 +1,125 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <TargetFramework>net9.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Configurations>Debug;Release;Dist</Configurations>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>false</Optimize>
+    <OutputPath>..\bin\Debug-windows-x86_64\Axiom-ScriptCore\</OutputPath>
+    <IntermediateOutputPath>..\bin-int\Debug-windows-x86_64\Axiom-ScriptCore\</IntermediateOutputPath>
+    <DefineConstants>AIM_DEBUG</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>true</Optimize>
+    <OutputPath>..\bin\Release-windows-x86_64\Axiom-ScriptCore\</OutputPath>
+    <IntermediateOutputPath>..\bin-int\Release-windows-x86_64\Axiom-ScriptCore\</IntermediateOutputPath>
+    <DefineConstants>AIM_RELEASE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Dist|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Optimize>true</Optimize>
+    <OutputPath>..\bin\Dist-windows-x86_64\Axiom-ScriptCore\</OutputPath>
+    <IntermediateOutputPath>..\bin-int\Dist-windows-x86_64\Axiom-ScriptCore\</IntermediateOutputPath>
+    <DefineConstants>AIM_DIST</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+  </ItemGroup>
+  <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+  </ItemGroup>
+  <ItemGroup Condition=" '$(Configuration)|$(Platform)' == 'Dist|x64' ">
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Source\Axiom\Attributes\ClampValueAttribute.cs" />
+    <Compile Include="Source\Axiom\Attributes\HeaderAttribute.cs" />
+    <Compile Include="Source\Axiom\Attributes\HideFromEditorAttribute.cs" />
+    <Compile Include="Source\Axiom\Attributes\ShowInEditorAttribute.cs" />
+    <Compile Include="Source\Axiom\Attributes\ToolTipAttribute.cs" />
+    <Compile Include="Source\Axiom\Audio\Audio.cs" />
+    <Compile Include="Source\Axiom\Collections\Range.cs" />
+    <Compile Include="Source\Axiom\Core\Application.cs" />
+    <Compile Include="Source\Axiom\Core\AssetManager.cs" />
+    <Compile Include="Source\Axiom\Core\GlobalUsings.cs" />
+    <Compile Include="Source\Axiom\Core\Input.cs" />
+    <Compile Include="Source\Axiom\Core\InternalCalls.cs" />
+    <Compile Include="Source\Axiom\Core\KeyCodes.cs" />
+    <Compile Include="Source\Axiom\Core\Log.cs" />
+    <Compile Include="Source\Axiom\Core\Time.cs" />
+    <Compile Include="Source\Axiom\Cryptography\AesEncryptor.cs" />
+    <Compile Include="Source\Axiom\Cryptography\AesHelper.cs" />
+    <Compile Include="Source\Axiom\Cryptography\AesKey.cs" />
+    <Compile Include="Source\Axiom\Cryptography\Encryptor.cs" />
+    <Compile Include="Source\Axiom\Cryptography\RandomSecure.cs" />
+    <Compile Include="Source\Axiom\Graphics\Gizmo.cs" />
+    <Compile Include="Source\Axiom\Graphics\Renderer2D.cs" />
+    <Compile Include="Source\Axiom\Graphics\Texture.cs" />
+    <Compile Include="Source\Axiom\Interop\NativeCallbacks.cs" />
+    <Compile Include="Source\Axiom\Interop\NativeInterop.cs" />
+    <Compile Include="Source\Axiom\Interop\ScriptHostBridge.cs" />
+    <Compile Include="Source\Axiom\Interop\ScriptInstanceManager.cs" />
+    <Compile Include="Source\Axiom\Math\Color.cs" />
+    <Compile Include="Source\Axiom\Math\Mathf.cs" />
+    <Compile Include="Source\Axiom\Math\Quaternion.cs" />
+    <Compile Include="Source\Axiom\Math\Random.cs" />
+    <Compile Include="Source\Axiom\Math\RandomHandler.cs" />
+    <Compile Include="Source\Axiom\Math\Vector2.cs" />
+    <Compile Include="Source\Axiom\Math\Vector2Int.cs" />
+    <Compile Include="Source\Axiom\Math\Vector3.cs" />
+    <Compile Include="Source\Axiom\Math\Vector3Int.cs" />
+    <Compile Include="Source\Axiom\Math\Vector4.cs" />
+    <Compile Include="Source\Axiom\Math\Vector4Int.cs" />
+    <Compile Include="Source\Axiom\Physics\Collision2D.cs" />
+    <Compile Include="Source\Axiom\Physics\FastPhysics2D.cs" />
+    <Compile Include="Source\Axiom\Physics\Physics2D.cs" />
+    <Compile Include="Source\Axiom\Physics\Physics2DShared.cs" />
+    <Compile Include="Source\Axiom\Scene\AssetRef.cs" />
+    <Compile Include="Source\Axiom\Scene\Component.cs" />
+    <Compile Include="Source\Axiom\Scene\Components.cs" />
+    <Compile Include="Source\Axiom\Scene\Entity.cs" />
+    <Compile Include="Source\Axiom\Scene\EntityScript.cs" />
+    <Compile Include="Source\Axiom\Scene\GameSystem.cs" />
+    <Compile Include="Source\Axiom\Scene\GlobalSystem.cs" />
+    <Compile Include="Source\Axiom\Scene\SceneManager.cs" />
+    <Compile Include="Source\Axiom\Scene\SceneQuery.cs" />
+    <Compile Include="Source\Axiom\Serialization\Json.cs" />
+    <Compile Include="Source\Axiom\Serialization\JsonSecure.cs" />
+    <Compile Include="Source\Axiom\Serialization\ZipUtility.cs" />
+    <Compile Include="Source\Axiom\Utility\CameraUtility.cs" />
+    <Compile Include="Source\Axiom\Utility\TextUtility.cs" />
+    <Compile Include="Source\Axiom\Utility\TransformUtility.cs" />
+  </ItemGroup>
+</Project>

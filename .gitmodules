@@ -1,0 +1,34 @@
+[submodule "External/spdlog"]
+	path = External/spdlog
+	url = https://github.com/gabime/spdlog.git
+[submodule "External/glfw"]
+	path = External/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "External/box2d"]
+	path = External/box2d
+	url = https://github.com/erincatto/box2d.git
+[submodule "External/glm"]
+	path = External/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "External/entt"]
+	path = External/entt
+	url = https://github.com/skypjack/entt.git
+[submodule "External/stb"]
+	path = External/stb
+	url = https://github.com/nothings/stb.git
+[submodule "External/magic_enum"]
+	path = External/magic_enum
+	url = https://github.com/Neargye/magic_enum.git
+[submodule "External/miniaudio"]
+	path = External/miniaudio
+	url = https://github.com/mackron/miniaudio.git
+[submodule "External/imgui"]
+	path = External/imgui
+	url = https://github.com/ocornut/imgui.git
+	branch = docking
+[submodule "External/Axiom-Physics"]
+	path = External/Axiom-Physics
+	url = https://github.com/Ben-Scr/Axiom-Physics.git
+[submodule "External/cereal"]
+	path = External/cereal
+	url = https://github.com/USCiLab/cereal.git
