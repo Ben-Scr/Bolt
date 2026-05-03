@@ -32,3 +32,9 @@
 [submodule "External/cereal"]
 	path = External/cereal
 	url = https://github.com/USCiLab/cereal.git
+[submodule "External/doctest"]
+	path = External/doctest
+	url = https://github.com/doctest/doctest
+[submodule "External/tracy"]
+	path = External/tracy
+	url = https://github.com/wolfpld/tracy
