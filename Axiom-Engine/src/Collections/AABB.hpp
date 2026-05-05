@@ -1,11 +1,12 @@
 #pragma once
 #include "Vec2.hpp"
 #include "Mat2.hpp"
-#include "Components/General/Transform2DComponent.hpp"
 #include "Core/Export.hpp"
 #include <ostream>
 
 namespace Axiom {
+	class Transform2DComponent;
+
 	struct AXIOM_API AABB {
 		Vec2 Min;
 		Vec2 Max;
@@ -52,29 +53,8 @@ namespace Axiom {
 			return { minVec, maxVec };
 		}
 
-		static AABB FromTransform(const Transform2DComponent& transform) {
-			// E15: fast-path the rotation == 0 case (overwhelmingly common for
-			// sprites/particles). The exact-zero check skips IsAxisAligned's
-			// fmod + 5-element abs loop entirely; AABB collapses to
-			// Position +/- Scale*0.5.
-			if (transform.Rotation == 0.0f) {
-				const Vec2 halfExtents{ transform.Scale.x * 0.5f, transform.Scale.y * 0.5f };
-				return { transform.Position - halfExtents, transform.Position + halfExtents };
-			}
-			if (IsAxisAligned(transform.Rotation)) {
-				return AABB::Create(
-					Vec2(transform.Position.x, transform.Position.y),
-					Vec2(transform.Scale.x * 0.5f, transform.Scale.y * 0.5f)
-				);
-			}
-			else {
-				return AABB::Create(
-					transform.Position,
-					transform.Scale * 0.5f,
-					transform.GetRotationDegrees()
-				);
-			}
-		}
+		// Defined in AABB.cpp so the header doesn't need the full Transform2DComponent type.
+		static AABB FromTransform(const Transform2DComponent& transform);
 
 		static bool Intersects(const AABB& a, const AABB& b) {
 			return (a.Min.x <= b.Max.x && a.Max.x >= b.Min.x) &&

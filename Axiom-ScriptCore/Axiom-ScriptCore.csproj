@@ -65,11 +65,27 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Source\Axiom\Attributes\ClampValueAttribute.cs" />
+    <Compile Include="Source\Axiom\Attributes\EditorIgnoreAttribute.cs" />
+    <Compile Include="Source\Axiom\Attributes\EditorReadOnlyAttribute.cs" />
     <Compile Include="Source\Axiom\Attributes\HeaderAttribute.cs" />
     <Compile Include="Source\Axiom\Attributes\HideFromEditorAttribute.cs" />
     <Compile Include="Source\Axiom\Attributes\ShowInEditorAttribute.cs" />
     <Compile Include="Source\Axiom\Attributes\ToolTipAttribute.cs" />
     <Compile Include="Source\Axiom\Audio\Audio.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeArray.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeBitArray.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeBool.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeBuffer.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeCollectionUtility.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeDeque.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeDictionary.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeHashset.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeList.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeMemoryPool.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativePriorityQueue.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeQueue.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeStack.cs" />
+    <Compile Include="Source\Axiom\Collections\Native\NativeString.cs" />
     <Compile Include="Source\Axiom\Collections\Range.cs" />
     <Compile Include="Source\Axiom\Core\Application.cs" />
     <Compile Include="Source\Axiom\Core\AssetManager.cs" />
@@ -119,5 +135,6 @@
     <Compile Include="Source\Axiom\Utility\CameraUtility.cs" />
     <Compile Include="Source\Axiom\Utility\TextUtility.cs" />
     <Compile Include="Source\Axiom\Utility\TransformUtility.cs" />
+    <Compile Include="Source\GlobalUsings.cs" />
   </ItemGroup>
 </Project>

@@ -41,8 +41,7 @@ namespace Axiom {
 	unsigned int GizmoRenderer2D::m_VAO = 0;
 	unsigned int GizmoRenderer2D::m_VBO = 0;
 	unsigned int GizmoRenderer2D::m_EBO = 0;
-	// E18: persistent buffer capacities. Grow-only via glBufferData; per-frame
-	// uploads are glBufferSubData (no orphan/realloc on the steady state).
+	// Grow-only via glBufferData; per-frame uploads use glBufferSubData (no realloc on steady state).
 	std::size_t GizmoRenderer2D::m_VBOCapacityBytes = 0;
 	std::size_t GizmoRenderer2D::m_EBOCapacityBytes = 0;
 	int GizmoRenderer2D::m_uMVP = -1;
@@ -50,7 +49,7 @@ namespace Axiom {
 	static std::vector<UploadVertex> s_UploadBuffer;
 
 	namespace {
-		// E18: power-of-two grow helper, mirrors QuadMesh::NextInstanceCapacity.
+		// Power-of-two grow helper; mirrors QuadMesh::NextInstanceCapacity.
 		std::size_t NextBufferCapacityBytes(std::size_t requiredBytes, std::size_t initialBytes) {
 			std::size_t capacity = initialBytes;
 			while (capacity < requiredBytes) {
@@ -81,8 +80,7 @@ namespace Axiom {
 
 		glBindVertexArray(m_VAO);
 		glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
-		// E18: seed VBO/EBO with healthy initial capacity so glBufferSubData
-		// can run on first frame without an immediate realloc.
+		// Initial capacity sized so first frame's glBufferSubData runs without a realloc.
 		m_VBOCapacityBytes = 4096 * sizeof(UploadVertex);
 		glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(m_VBOCapacityBytes), nullptr, GL_DYNAMIC_DRAW);
 
@@ -123,7 +121,7 @@ namespace Axiom {
 			glDeleteVertexArrays(1, &m_VAO);
 			m_VAO = 0;
 		}
-		// E18: reset capacities so a future Initialize re-seeds correctly.
+		// Reset so a future Initialize re-seeds correctly.
 		m_VBOCapacityBytes = 0;
 		m_EBOCapacityBytes = 0;
 
@@ -226,7 +224,7 @@ namespace Axiom {
 			return;
 
 		BuildGeometry(layerMask);
-		// E18: nullptr -> use Camera2DComponent::Main() VP (legacy behavior).
+		// nullptr = use Camera2DComponent::Main() VP.
 		FlushGizmosImpl(nullptr);
 	}
 
@@ -238,10 +236,7 @@ namespace Axiom {
 		FlushGizmosImpl(&vp);
 	}
 
-	// E18: factored helper. Replaces FlushGizmos / FlushGizmosWithVP. Uses
-	// glBufferSubData against a grow-only persistent buffer instead of
-	// glBufferData every frame (the previous code orphan-reallocated the VBO
-	// and EBO each frame even when sizes were stable).
+	// glBufferSubData against grow-only persistent buffer; previously orphan-realloced every frame.
 	void GizmoRenderer2D::FlushGizmosImpl(const glm::mat4* vpOverride) {
 		if (!m_IsInitialized || m_GizmoVertices.empty() || !m_GizmoShader || !m_GizmoShader->IsValid())
 			return;

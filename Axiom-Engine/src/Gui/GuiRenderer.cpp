@@ -57,37 +57,44 @@ namespace Axiom {
 		AIM_ASSERT(m_SpriteShader.IsValid(), AxiomErrorCode::InvalidHandle, "Invalid Sprite 2D Shader");
 		m_SpriteShader.Bind();
 
-		Camera2DComponent* camera2D = const_cast<Camera2DComponent*>(scene.GetMainCamera());
-		if (!camera2D) {
+		const Camera2DComponent* camera2DConst = scene.GetMainCamera();
+		if (!camera2DConst) {
 			AIM_WARN_TAG("GuiRenderer", "Skipping GUI render for scene '{}' because it has no enabled main camera.", scene.GetName());
 			m_SpriteShader.Unbind();
 			return;
 		}
+		// Mutation of the camera's viewport state is unavoidable today (UpdateViewport
+		// recomputes matrices). When the renderer is moved to a Camera-update-system
+		// (TODO), this const_cast disappears.
+		Camera2DComponent* camera2D = const_cast<Camera2DComponent*>(camera2DConst);
 
 		camera2D->UpdateViewport();
 		Viewport* vp = camera2D->GetViewport();
+		if (!vp) {
+			// Camera owns the viewport via Window::GetMainViewport(); a missing
+			// viewport here means the window was already torn down. Skip silently
+			// rather than null-deref.
+			m_SpriteShader.Unbind();
+			return;
+		}
 
-
-		int w = vp->GetWidth();
-		int h = vp->GetHeight();
-
-		float halfW = 0.5f * w;
-		float halfH = 0.5f * h;
-
-		float zNear = -1.0f;
-		float zFar = 1.0f;
+		const int w = vp->GetWidth();
+		const int h = vp->GetHeight();
+		const float halfW = 0.5f * w;
+		const float halfH = 0.5f * h;
+		const float zNear = -1.0f;
+		const float zFar = 1.0f;
 
 		m_SpriteShader.SetMVP(glm::ortho(-halfW, +halfW, -halfH, +halfH, zNear, zFar));
-		std::vector<Instance44> instances;
 
-
+		m_InstancesScratch.clear();
 		auto guiImageView = scene.GetRegistry().view<RectTransformComponent, ImageComponent>(entt::exclude<DisabledTag>);
-		instances.reserve(guiImageView.size_hint());
+		m_InstancesScratch.reserve(guiImageView.size_hint());
 
 		for (const auto& [ent, rt, guiImage] : guiImageView.each()) {
 			Vec2 bl = rt.GetBottomLeft();
 
-			instances.emplace_back(
+			m_InstancesScratch.emplace_back(
 				bl,
 				rt.GetSize(),
 				rt.Rotation,
@@ -98,7 +105,7 @@ namespace Axiom {
 			);
 		}
 
-		std::sort(instances.begin(), instances.end(),
+		std::sort(m_InstancesScratch.begin(), m_InstancesScratch.end(),
 			[](const Instance44& a, const Instance44& b) {
 				if (a.SortingLayer != b.SortingLayer)
 					return a.SortingLayer < b.SortingLayer;
@@ -110,8 +117,13 @@ namespace Axiom {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		// (Ben-Scr) Final Rendering
-		for (const Instance44& instance : instances) {
+		// Bind once outside the loop — the previous code rebound the same QuadMesh
+		// for each instance. Per-element bind/draw violates the engine's single-quad-
+		// instanced design intent and ate a measurable chunk of GPU time at scale.
+		// (Real instancing of GUI quads is a TODO; this just stops the per-call thrash.)
+		m_QuadMesh.Bind();
+
+		for (const Instance44& instance : m_InstancesScratch) {
 			m_SpriteShader.SetSpritePosition(instance.Position);
 			m_SpriteShader.SetScale(instance.Scale);
 			m_SpriteShader.SetRotation(instance.Rotation);
@@ -126,13 +138,11 @@ namespace Axiom {
 			if (texture && texture->IsValid())
 				texture->Submit(0);
 
-
-			m_QuadMesh.Bind();
 			m_SpriteShader.SetVertexColor(instance.Color);
 			m_QuadMesh.Draw();
-			m_QuadMesh.Unbind();
 		}
 
+		m_QuadMesh.Unbind();
 		m_SpriteShader.Unbind();
 	}
 }

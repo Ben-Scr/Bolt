@@ -10,6 +10,7 @@
 #include "Components/General/NameComponent.hpp"
 #include "Core/Log.hpp"
 #include "Editor/ExternalEditor.hpp"
+#include "Gui/HierarchyDragData.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -183,6 +184,7 @@ namespace Axiom {
 	}
 
 	void AssetBrowser::Refresh() {
+		AssetRegistry::MarkDirty();
 		AssetRegistry::Sync();
 		m_Entries = Directory::GetEntries(m_CurrentDirectory);
 		m_NeedsRefresh = false;
@@ -214,8 +216,7 @@ namespace Axiom {
 			return false;
 		}
 
-		// Hierarchy panel drag payload — must match ImGuiEditorLayer.cpp.
-		struct HierarchyDragData { int Index; uint32_t EntityHandle; };
+		// Hierarchy panel drag payload — see Gui/HierarchyDragData.hpp.
 		const auto* dragData = static_cast<const HierarchyDragData*>(payload->Data);
 		const entt::entity entityHandle = static_cast<entt::entity>(dragData->EntityHandle);
 

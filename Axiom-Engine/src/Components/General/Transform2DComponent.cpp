@@ -51,6 +51,9 @@ namespace Axiom {
 	}
 
 	b2Rot Transform2DComponent::GetB2Rotation() const {
-		return  b2Rot(Cos(Rotation), Sin(Rotation));
+		// Axiom Rotation is opposite-handed to Box2D's; negate at the
+		// boundary so the round-trip with Rigidbody2D::GetRotation
+		// (which also negates) preserves the value.
+		return b2Rot(Cos(Rotation), -Sin(Rotation));
 	}
 }

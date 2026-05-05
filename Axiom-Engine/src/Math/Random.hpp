@@ -14,7 +14,6 @@ namespace Axiom {
         static bool NextBool();
         static Color NextColor();
 
-        static std::uint8_t NextByte();
         static std::uint8_t NextByte(std::uint8_t min, std::uint8_t max);
         static std::uint8_t NextByte(std::uint8_t max);
 

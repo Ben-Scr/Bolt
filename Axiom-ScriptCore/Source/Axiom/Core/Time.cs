@@ -9,4 +9,10 @@ public static class Time
     public static float FixedUnscaledDeltaTime => InternalCalls.Application_GetFixedUnscaledDeltaTime();
 
     public static float ElapsedTime => InternalCalls.Application_GetElapsedTime();
+
+    public static float TimeScale
+    {
+        get => InternalCalls.Application_GetTimeScale();
+        set => InternalCalls.Application_SetTimeScale(value);
+    }
 }

@@ -1,6 +1,7 @@
 #include <pch.hpp>
 #include "Gui/AssetBrowser.hpp"
 
+#include "Assets/AssetRegistry.hpp"
 #include "Core/Log.hpp"
 #include "Editor/ExternalEditor.hpp"
 #include "Project/AxiomProject.hpp"
@@ -14,6 +15,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -65,6 +67,43 @@ namespace Axiom {
 
 			return mirrorPath;
 		}
+
+		void RegisterImportedAssetPath(const std::filesystem::path& path) {
+			std::error_code ec;
+			if (std::filesystem::is_regular_file(path, ec) && !ec) {
+				if (!AssetRegistry::IsMetaFilePath(path.string())) {
+					AssetRegistry::GetOrCreateAssetUUID(path.string());
+				}
+				return;
+			}
+
+			ec.clear();
+			if (!std::filesystem::is_directory(path, ec) || ec) {
+				return;
+			}
+
+			for (std::filesystem::recursive_directory_iterator it(
+				 path,
+				 std::filesystem::directory_options::skip_permission_denied,
+				 ec), end;
+				 it != end;
+				 it.increment(ec)) {
+				if (ec) {
+					ec.clear();
+					continue;
+				}
+
+				std::error_code fileEc;
+				if (!it->is_regular_file(fileEc) || fileEc) {
+					continue;
+				}
+
+				const std::string assetPath = it->path().string();
+				if (!AssetRegistry::IsMetaFilePath(assetPath)) {
+					AssetRegistry::GetOrCreateAssetUUID(assetPath);
+				}
+			}
+		}
 	}
 
 	void AssetBrowser::BeginRename(const std::string& path, const std::string& currentName) {
@@ -103,12 +142,21 @@ namespace Axiom {
 			}
 
 			const std::string finalPath = targetPath.string();
+			bool renameSucceeded = true;
 			if (finalPath != m_RenamePath) {
 				std::error_code renameEc;
 				std::filesystem::rename(m_RenamePath, finalPath, renameEc);
+				if (renameEc) {
+					renameSucceeded = false;
+					AIM_WARN_TAG("AssetBrowser",
+						"Failed to rename '{}' to '{}': {}",
+						m_RenamePath, finalPath, renameEc.message());
+				}
 			}
 
-			m_SelectedPath = finalPath;
+			if (renameSucceeded) {
+				m_SelectedPath = finalPath;
+			}
 			m_PendingScriptType = PendingScriptType::None;
 			m_PendingScriptDir.clear();
 			m_PendingPrefabSourceEntity = entt::null;
@@ -733,11 +781,26 @@ namespace Axiom {
 			}
 
 #ifdef AIM_PLATFORM_WINDOWS
+			// TODO: switch to Process::Run with proper lifecycle.
+			// For now, cap the number of in-flight detached ShellExecute
+			// helper threads so a stuck shell handler can't be amplified
+			// by a user double-clicking many assets in rapid succession.
+			static constexpr int k_MaxConcurrentOpens = 8;
+			static std::atomic<int> s_ActiveOpens{ 0 };
+			if (s_ActiveOpens.load(std::memory_order_acquire) >= k_MaxConcurrentOpens) {
+				AIM_WARN_TAG("AssetBrowser",
+					"Skipping external open for '{}' — too many concurrent shell launches.",
+					entry.Path);
+				return;
+			}
+			s_ActiveOpens.fetch_add(1, std::memory_order_acq_rel);
+
 			std::wstring wpath = std::filesystem::absolute(entry.Path).wstring();
 			std::thread([wpath]() {
 				CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 				ShellExecuteW(nullptr, L"open", wpath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 				CoUninitialize();
+				s_ActiveOpens.fetch_sub(1, std::memory_order_acq_rel);
 			}).detach();
 #endif
 		}
@@ -754,11 +817,13 @@ namespace Axiom {
 				if (!std::filesystem::exists(src)) continue;
 
 				std::filesystem::path destDir(m_CurrentDirectory);
+				std::filesystem::path importedPath;
 
 				if (std::filesystem::is_directory(src)) {
 					std::filesystem::path dest = destDir / src.filename();
 					std::filesystem::copy(src, dest,
 						std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing);
+					importedPath = dest;
 					imported++;
 				}
 				else {
@@ -775,7 +840,13 @@ namespace Axiom {
 					}
 
 					std::filesystem::copy_file(src, dest);
+					importedPath = dest;
 					imported++;
+				}
+
+				if (!importedPath.empty()) {
+					RegisterImportedAssetPath(importedPath);
+					m_Thumbnails.Invalidate(importedPath.string());
 				}
 			}
 			catch (const std::exception& e) {
@@ -784,6 +855,7 @@ namespace Axiom {
 		}
 
 		if (imported > 0) {
+			AssetRegistry::MarkDirty();
 			m_NeedsRefresh = true;
 			AIM_CORE_INFO_TAG("AssetBrowser", "Imported {} file(s) into {}", imported, m_CurrentDirectory);
 		}

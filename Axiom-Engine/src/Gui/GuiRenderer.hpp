@@ -1,6 +1,9 @@
 #pragma once
 #include "Graphics/SpriteShaderProgram.hpp"
 #include "Graphics/QuadMesh.hpp"
+#include "Graphics/Instance44.hpp"
+
+#include <vector>
 
 namespace Axiom {
 	class Scene;
@@ -20,6 +23,8 @@ namespace Axiom {
 	private:
 		SpriteShaderProgram m_SpriteShader;
 		QuadMesh m_QuadMesh;
+		// Reused across frames so RenderScene doesn't heap-allocate per frame.
+		std::vector<Instance44> m_InstancesScratch;
 		bool m_IsInitialized = false;
 	};
 }

@@ -64,39 +64,7 @@ namespace Axiom {
             return !(*this == other);
         }
 
-        // Wrong code, will be fixed.
-        Transform2DComponent operator+(const Transform2DComponent& other) const {
-            return Transform2DComponent(Position + other.Position);
-        }
-        Transform2DComponent operator-(const Transform2DComponent& other) const {
-            return Transform2DComponent(Position - other.Position);
-        }
-        Transform2DComponent& operator+=(const Transform2DComponent& other) {
-            Position += other.Position;
-            Rotation += other.Rotation;
-            Scale += other.Scale;
-            MarkDirty();
-            return *this;
-        }
-        Transform2DComponent& operator-=(const Transform2DComponent& other) {
-            Position -= other.Position;
-            Rotation -= other.Rotation;
-            Scale -= other.Scale;
-            MarkDirty();
-            return *this;
-        }
-
-
-        Transform2DComponent operator*(float scalar) const {
-            return Transform2DComponent(Position * scalar, Scale * scalar, Rotation * scalar);
-        }
-        Transform2DComponent& operator*=(float scalar) {
-            Position *= scalar;
-            Rotation *= scalar;
-            Scale *= scalar;
-            MarkDirty();
-            return *this;
-        }
+        // No arithmetic operators — composing whole transforms has no well-defined semantics.
     private:
         bool m_Dirty = true;
 	};

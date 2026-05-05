@@ -18,6 +18,8 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<float> Application_GetFixedDeltaTime;
     public delegate* unmanaged<float> Application_GetUnscaledDeltaTime;
     public delegate* unmanaged<float> Application_GetFixedUnscaledDeltaTime;
+    public delegate* unmanaged<float> Application_GetTimeScale;
+    public delegate* unmanaged<float, void> Application_SetTimeScale;
     public delegate* unmanaged<int> Application_IsEditor; // 1 = host is editor, 0 = standalone runtime
 
     // ── Log ──────────────────────────────────────────────────────

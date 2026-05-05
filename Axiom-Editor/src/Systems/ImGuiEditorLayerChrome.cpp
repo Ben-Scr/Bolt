@@ -121,11 +121,18 @@ namespace Axiom {
 						buf.push_back(L'\0');
 						STARTUPINFOW si{}; si.cb = sizeof(si);
 						PROCESS_INFORMATION pi{};
-						CreateProcessW(nullptr, buf.data(), nullptr, nullptr,
-							FALSE, CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
-						CloseHandle(pi.hProcess);
-						CloseHandle(pi.hThread);
-						AIM_INFO_TAG("Build", "Launched: {}", exePath.string());
+						if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr,
+							FALSE, CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi)) {
+							const DWORD errorCode = GetLastError();
+							AIM_ERROR_TAG("Editor",
+								"Failed to launch built game '{}': error {}",
+								exePath.string(), errorCode);
+						}
+						else {
+							CloseHandle(pi.hProcess);
+							CloseHandle(pi.hThread);
+							AIM_INFO_TAG("Build", "Launched: {}", exePath.string());
+						}
 					} else {
 						AIM_CORE_ERROR_TAG("Build", "Built executable not found: {}", exePath.string());
 					}
@@ -194,9 +201,7 @@ namespace Axiom {
 			}
 		}
 
-		// Ctrl+S keyboard shortcut. Routes to the prefab inspector when a prefab
-		// is the active inspector target; otherwise saves the active scene.
-		// Blocked during Play Mode either way.
+		// Ctrl+S: routes to prefab inspector if open, else saves active scene. Blocked in playmode.
 		if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && !Application::GetIsPlaying()) {
 			if (m_PrefabInspector.IsOpen() && m_PrefabInspector.HasUnsavedChanges()) {
 				m_PrefabInspector.Save();
@@ -369,9 +374,7 @@ namespace Axiom {
 		RenderPlayerSettingsPanel();
 		RenderPackageManagerPanel();
 
-		// Profiler panel — Ctrl+F6 toggle, also reachable via Tools menu.
-		// Panel.Render checks pOpen and self-hides; calling unconditionally
-		// is fine and lets it manage its visibility-gates without us ifdef'ing.
+		// Profiler panel — Ctrl+F6 toggle. Panel manages its own visibility-gating internally.
 		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_F6)) {
 			m_ShowProfiler = !m_ShowProfiler;
 		}
@@ -427,6 +430,6 @@ namespace Axiom {
 			}
 		}
 
-		ImGui::End();
+		ImGui::End(); // Close dockspace opened in RenderDockspaceRoot.
 	}
 }

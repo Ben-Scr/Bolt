@@ -72,6 +72,7 @@ namespace Axiom::Diagnostics {
 
 	private:
 		void RenderBody() const; // shared body of RenderInRect / RenderInMainViewport
+		float RenderOverlayWindow(const char* uniqueId, const ImVec2& topRight, float yOffset) const;
 
 		Snapshot m_Cached{};
 		std::chrono::steady_clock::time_point m_LastRefresh{};

@@ -288,6 +288,13 @@ namespace Axiom {
 		entt::registry m_Registry;
 		std::vector<std::unique_ptr<ISystem>> m_Systems;
 		std::vector<std::string> m_GameSystemClassNames;
+		// Snapshot of systems whose Awake() returned successfully, in awakening
+		// order. DestroyScene(enabledSystemCount) walks this list in reverse so
+		// rollback only tears down systems that actually entered the lifecycle —
+		// even if a system disabled itself or another system between Awake and
+		// the failure point, we still call OnDestroy on the right set. Cleared
+		// when DestroyScene runs.
+		std::vector<ISystem*> m_AwakenedSystems;
 
 
 		std::string m_Name;

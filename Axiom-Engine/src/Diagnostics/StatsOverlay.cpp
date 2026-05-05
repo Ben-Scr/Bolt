@@ -54,7 +54,9 @@ namespace Axiom::Diagnostics {
 		m_LastRefresh = now;
 
 		auto* app = Application::GetInstance();
-		const float dt = app ? app->GetTime().GetDeltaTime() : 0.0f;
+		// Stats reflect real wall-clock performance — use unscaled dt so TimeScale
+		// doesn't distort the FPS / CPU readouts.
+		const float dt = app ? app->GetTime().GetUnscaledDeltaTime() : 0.0f;
 		m_Cached.Fps       = (dt > 0.0f) ? (1.0f / dt) : 0.0f;
 		m_Cached.CpuMainMs = dt * 1000.0f;
 
@@ -117,13 +119,7 @@ namespace Axiom::Diagnostics {
 		ImGui::Text("Audio playing:   %u", s.AudioPlaying);
 	}
 
-	float StatsOverlay::RenderInRect(const ImVec2& imageMin, const ImVec2& imageMax, float yOffset) const {
-		constexpr float k_Pad = 8.0f;
-		const ImVec2 overlayPivot(1.0f, 0.0f);
-		const ImVec2 overlayPos(imageMax.x - k_Pad, imageMin.y + k_Pad + yOffset);
-
-		ImGui::SetNextWindowPos(overlayPos, ImGuiCond_Always, overlayPivot);
-		ImGui::SetNextWindowBgAlpha(0.78f);
+	namespace {
 		constexpr ImGuiWindowFlags k_OverlayFlags =
 			ImGuiWindowFlags_NoDecoration |
 			ImGuiWindowFlags_AlwaysAutoResize |
@@ -131,9 +127,15 @@ namespace Axiom::Diagnostics {
 			ImGuiWindowFlags_NoFocusOnAppearing |
 			ImGuiWindowFlags_NoNav |
 			ImGuiWindowFlags_NoMove;
+	}
+
+	float StatsOverlay::RenderOverlayWindow(const char* uniqueId, const ImVec2& topRight, float yOffset) const {
+		const ImVec2 overlayPos(topRight.x, topRight.y + yOffset);
+		ImGui::SetNextWindowPos(overlayPos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+		ImGui::SetNextWindowBgAlpha(0.78f);
 
 		float consumedHeight = 0.0f;
-		if (ImGui::Begin("##AxiomStatsOverlayRect", nullptr, k_OverlayFlags)) {
+		if (ImGui::Begin(uniqueId, nullptr, k_OverlayFlags)) {
 			RenderBody();
 			consumedHeight = ImGui::GetWindowSize().y;
 		}
@@ -141,32 +143,18 @@ namespace Axiom::Diagnostics {
 		return consumedHeight;
 	}
 
+	float StatsOverlay::RenderInRect(const ImVec2& imageMin, const ImVec2& imageMax, float yOffset) const {
+		constexpr float k_Pad = 8.0f;
+		return RenderOverlayWindow("##AxiomStatsOverlayRect",
+			ImVec2(imageMax.x - k_Pad, imageMin.y + k_Pad), yOffset);
+	}
+
 	float StatsOverlay::RenderInMainViewport(float yOffset) const {
 		const ImGuiViewport* vp = ImGui::GetMainViewport();
 		if (!vp) return 0.0f;
 		constexpr float k_Pad = 10.0f;
-		const ImVec2 overlayPivot(1.0f, 0.0f);
-		const ImVec2 overlayPos(
-			vp->WorkPos.x + vp->WorkSize.x - k_Pad,
-			vp->WorkPos.y + k_Pad + yOffset);
-
-		ImGui::SetNextWindowPos(overlayPos, ImGuiCond_Always, overlayPivot);
-		ImGui::SetNextWindowBgAlpha(0.78f);
-		constexpr ImGuiWindowFlags k_OverlayFlags =
-			ImGuiWindowFlags_NoDecoration |
-			ImGuiWindowFlags_AlwaysAutoResize |
-			ImGuiWindowFlags_NoSavedSettings |
-			ImGuiWindowFlags_NoFocusOnAppearing |
-			ImGuiWindowFlags_NoNav |
-			ImGuiWindowFlags_NoMove;
-
-		float consumedHeight = 0.0f;
-		if (ImGui::Begin("##AxiomStatsOverlayViewport", nullptr, k_OverlayFlags)) {
-			RenderBody();
-			consumedHeight = ImGui::GetWindowSize().y;
-		}
-		ImGui::End();
-		return consumedHeight;
+		return RenderOverlayWindow("##AxiomStatsOverlayViewport",
+			ImVec2(vp->WorkPos.x + vp->WorkSize.x - k_Pad, vp->WorkPos.y + k_Pad), yOffset);
 	}
 
 } // namespace Axiom::Diagnostics

@@ -7,11 +7,6 @@
 #include <algorithm>
 #include <filesystem>
 
-// From coreclr_delegates.h — signals [UnmanagedCallersOnly] to hostfxr
-#ifndef UNMANAGEDCALLERSONLY_METHOD
-#define UNMANAGEDCALLERSONLY_METHOD ((const wchar_t*)-1)
-#endif
-
 namespace Axiom {
 
 	bool        ScriptEngine::s_Initialized = false;
@@ -29,7 +24,10 @@ namespace Axiom {
 		if (s_Initialized)
 			return;
 
-		s_Initialized = false;
+		// Deferred init — actual CoreCLR/host bring-up happens in LoadCoreAssembly.
+		// s_Initialized stays false until that runs successfully; resetting it here
+		// would only matter if Init were re-entered after a partial init, which the
+		// guard above already prevents.
 		AIM_CORE_INFO_TAG("ScriptEngine", "ScriptEngine ready (CoreCLR, deferred init)");
 	}
 
@@ -37,8 +35,7 @@ namespace Axiom {
 	{
 		ShutdownGlobalSystems();
 
-		// Do NOT close the host — CoreCLR can only be initialized once per process.
-		// Just unload user assemblies and reset state.
+		// CoreCLR can only init once per process - never close host, only unload assemblies.
 		if (s_Callbacks.UnloadUserAssembly)
 			s_Callbacks.UnloadUserAssembly();
 
@@ -87,9 +84,9 @@ namespace Axiom {
 
 		bool ok = s_Host.LoadAssemblyAndGetFunction(
 			asmPath,
-			L"Axiom.Interop.ScriptHostBridge, Axiom-ScriptCore",
-			L"Initialize",
-			UNMANAGEDCALLERSONLY_METHOD,
+			AXIOM_DOTNET_STR("Axiom.Interop.ScriptHostBridge, Axiom-ScriptCore"),
+			AXIOM_DOTNET_STR("Initialize"),
+			AXIOM_DOTNET_UNMANAGEDCALLERSONLY_METHOD,
 			reinterpret_cast<void**>(&initFn));
 
 		if (!ok || !initFn)
@@ -464,8 +461,6 @@ namespace Axiom {
 		if (!s_Initialized || !s_Callbacks.GlobalSystemClassExists) return false;
 		return s_Callbacks.GlobalSystemClassExists(className.c_str()) != 0;
 	}
-
-	// ── New lifecycle thunks (appended for binary compat) ──
 
 	void ScriptEngine::InvokeAwake(uint32_t handle)
 	{

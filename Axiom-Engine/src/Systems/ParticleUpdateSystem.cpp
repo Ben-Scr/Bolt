@@ -22,10 +22,12 @@ namespace Axiom {
 	}
 
 	void ParticleUpdateSystem::Update(Scene& scene) {
-		// E20: fetch dt once per system Update and forward it to each component.
+		// fetch dt once per system Update and forward it to each component.
 		// Previously each ParticleSystem2DComponent::Update() reached back to
 		// Application::GetInstance()->GetTime().GetDeltaTime() per call.
-		const float dt = Application::GetInstance()->GetTime().GetDeltaTime();
+		Application* app = Application::GetInstance();
+		if (!app) return; // matches the null-check in Awake — paired symmetry.
+		const float dt = app->GetTime().GetDeltaTime();
 		for (const auto& [ent, particleSystem] : scene.GetRegistry().view<ParticleSystem2DComponent>(entt::exclude<DisabledTag>).each())
 			particleSystem.Update(dt);
 	}

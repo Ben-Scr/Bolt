@@ -2,8 +2,10 @@
 
 #include "Assets/AssetRegistry.hpp"
 #include "Audio/AudioManager.hpp"
+#include "Core/Log.hpp"
 #include "Core/UUID.hpp"
 #include "Graphics/TextureManager.hpp"
+#include "Scene/EntityHandle.hpp"
 #include "Serialization/Json.hpp"
 
 #include <algorithm>
@@ -11,6 +13,35 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+
+namespace Axiom {
+	class Scene;
+	struct ScriptComponent;
+}
+
+namespace Axiom::SceneSerializerInternal {
+	// Shared scene/prefab format constants. Previously duplicated as
+	// anonymous-namespace constexprs in SceneSerializer.cpp and
+	// SceneSerializerDeserialize.cpp, where they could silently drift.
+	inline constexpr int k_SceneFormatVersion = 1;
+	inline constexpr float k_MinScaleAxis = 0.0001f;
+}
+
+namespace Axiom::Detail {
+	// Canonical SerializeEntity / override-diff helpers. Definitions live in
+	// SceneSerializer.cpp; declared here so SceneSerializerDeserialize.cpp
+	// can call them too without re-implementing a divergent copy. Anonymous
+	// namespaces can't cross translation units, so we use a named namespace.
+	Json::Value SerializeEntity(Scene& scene, EntityHandle entity);
+	Json::Value SerializeScriptFields(const ScriptComponent& scriptComponent);
+
+	bool JsonEquivalent(const Json::Value& a, const Json::Value& b);
+	void BuildOverridePatch(
+		const Json::Value& prefabValue,
+		const Json::Value& instanceValue,
+		const std::string& prefix,
+		Json::Value& overrides);
+}
 
 namespace Axiom::SceneSerializerShared {
 	using Json::Value;
@@ -32,10 +63,22 @@ namespace Axiom::SceneSerializerShared {
 		}
 
 		if (value->IsString()) {
+			const std::string valueStr = value->AsStringOr();
 			try {
-				return static_cast<uint64_t>(std::stoull(value->AsStringOr()));
+				return static_cast<uint64_t>(std::stoull(valueStr));
 			}
 			catch (...) {
+				// Logged at warn level so corrupt asset/scene IDs (overflow,
+				// non-numeric, garbage) are visible during load instead of
+				// silently collapsing to the fallback. Most production data
+				// has well-formed numeric strings, so this only triggers on
+				// genuinely malformed input.
+				const std::string memberName(key);
+				AIM_CORE_WARN_TAG(
+					"Serialization",
+					"Failed to parse uint64 member '{}' (value: '{}')",
+					memberName,
+					valueStr);
 				return fallback;
 			}
 		}
@@ -99,11 +142,15 @@ namespace Axiom::SceneSerializerShared {
 				}
 				return handle;
 			}
+
+			if (outAssetId) {
+				*outAssetId = UUID(assetId);
+			}
 		}
 
 		const std::string path = GetStringMember(object, pathKey);
 		if (path.empty()) {
-			if (outAssetId) {
+			if (outAssetId && assetId == 0) {
 				*outAssetId = UUID(0);
 			}
 			return TextureHandle::Invalid();

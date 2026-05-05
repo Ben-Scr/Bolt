@@ -16,7 +16,10 @@ namespace Axiom {
 
 		static void Destroy(Entity entity);
 		void Destroy();
-		static Entity Null;
+		// Sentinel "no entity" value. Const so callers can't accidentally
+		// reseat the global to a real entity handle and corrupt every
+		// downstream null-check. Defined in Entity.cpp.
+		static const Entity Null;
 
 
 		template<typename TComponent, typename... Args>

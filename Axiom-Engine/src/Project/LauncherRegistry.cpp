@@ -63,22 +63,22 @@ namespace Axiom {
 
 			LauncherProjectEntry entry;
 			if (const Json::Value* nameValue = item.FindMember("name")) {
-				entry.name = nameValue->AsStringOr();
+				entry.Name = nameValue->AsStringOr();
 			}
 			if (const Json::Value* pathValue = item.FindMember("path")) {
-				entry.path = pathValue->AsStringOr();
+				entry.Path = pathValue->AsStringOr();
 			}
 			if (const Json::Value* lastOpenedValue = item.FindMember("lastOpened")) {
-				entry.lastOpened = lastOpenedValue->AsStringOr();
+				entry.LastOpened = lastOpenedValue->AsStringOr();
 			}
 
-			if (!entry.name.empty() && !entry.path.empty()) {
+			if (!entry.Name.empty() && !entry.Path.empty()) {
 				m_Projects.push_back(std::move(entry));
 			}
 		}
 
 		std::sort(m_Projects.begin(), m_Projects.end(),
-			[](const auto& a, const auto& b) { return a.lastOpened > b.lastOpened; });
+			[](const auto& a, const auto& b) { return a.LastOpened > b.LastOpened; });
 	}
 
 	void LauncherRegistry::Save() {
@@ -92,47 +92,55 @@ namespace Axiom {
 		Json::Value root = Json::Value::MakeArray();
 		for (const LauncherProjectEntry& project : m_Projects) {
 			Json::Value item = Json::Value::MakeObject();
-			item.AddMember("name", project.name);
-			item.AddMember("path", project.path);
-			item.AddMember("lastOpened", project.lastOpened);
+			item.AddMember("name", project.Name);
+			item.AddMember("path", project.Path);
+			item.AddMember("lastOpened", project.LastOpened);
 			root.Append(std::move(item));
 		}
 		File::WriteAllText(path, Json::Stringify(root, true));
 	}
 
 	void LauncherRegistry::AddProject(const std::string& name, const std::string& path) {
-		for (auto& p : m_Projects)
-			if (p.path == path) { p.lastOpened = NowISO8601(); return; }
+		for (auto& p : m_Projects) {
+			if (p.Path == path) {
+				p.LastOpened = NowISO8601();
+				// Re-sort so the bumped entry surfaces in the recent-projects view
+				// without waiting for the next UpdateLastOpened call.
+				std::sort(m_Projects.begin(), m_Projects.end(),
+					[](const auto& a, const auto& b) { return a.LastOpened > b.LastOpened; });
+				return;
+			}
+		}
 
 		LauncherProjectEntry entry;
-		entry.name = name;
-		entry.path = path;
-		entry.lastOpened = NowISO8601();
+		entry.Name = name;
+		entry.Path = path;
+		entry.LastOpened = NowISO8601();
 		m_Projects.insert(m_Projects.begin(), entry);
 	}
 
 	void LauncherRegistry::RemoveProject(const std::string& path) {
 		m_Projects.erase(
 			std::remove_if(m_Projects.begin(), m_Projects.end(),
-				[&](const auto& e) { return e.path == path; }),
+				[&](const auto& e) { return e.Path == path; }),
 			m_Projects.end());
 	}
 
 	void LauncherRegistry::UpdateLastOpened(const std::string& path) {
 		for (auto& p : m_Projects) {
-			if (p.path == path) {
-				p.lastOpened = NowISO8601();
+			if (p.Path == path) {
+				p.LastOpened = NowISO8601();
 				break;
 			}
 		}
 		std::sort(m_Projects.begin(), m_Projects.end(),
-			[](const auto& a, const auto& b) { return a.lastOpened > b.lastOpened; });
+			[](const auto& a, const auto& b) { return a.LastOpened > b.LastOpened; });
 	}
 
 	void LauncherRegistry::ValidateAll() {
 		m_Projects.erase(
 			std::remove_if(m_Projects.begin(), m_Projects.end(),
-				[](const auto& e) { return !AxiomProject::Validate(e.path); }),
+				[](const auto& e) { return !AxiomProject::Validate(e.Path); }),
 			m_Projects.end());
 	}
 

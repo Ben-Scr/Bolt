@@ -3,11 +3,14 @@
 #include "Collections/AABB.hpp"
 #include "Collections/Color.hpp"
 #include "Collections/Viewport.hpp"
+#include "Scene/EntityHandle.hpp"
 
 #include <glm/glm.hpp>
 #include <memory>
 
 namespace Axiom {
+	class Scene;
+
 	class AXIOM_API Camera2DComponent {
 	public:
 		Camera2DComponent() = default;
@@ -20,12 +23,12 @@ namespace Axiom {
 		void AddOrthographicSize(float ds) { SetOrthographicSize(m_OrthographicSize + ds); }
 		float GetOrthographicSize() const { return m_OrthographicSize; }
 
-		void SetPosition(Vec2 p) { m_Transform->Position = p; UpdateView(); }
-		void AddPosition(Vec2 p) { SetPosition(p + m_Transform->Position); }
-		Vec2 GetPosition() const { return m_Transform->Position; }
+		void SetPosition(Vec2 p);
+		void AddPosition(Vec2 p);
+		Vec2 GetPosition() const;
 
-		void SetRotation(float rad) { m_Transform->Rotation = rad; UpdateView(); }
-		float GetRotation() const { return m_Transform->Rotation; }
+		void SetRotation(float rad);
+		float GetRotation() const;
 
 		void SetZoom(float z) { m_Zoom = z; UpdateProj(); }
 		float GetZoom() const { return m_Zoom; }
@@ -46,17 +49,22 @@ namespace Axiom {
 		float ViewportWidth() const { return static_cast<float>(m_Viewport->GetWidth()); }
 		float ViewportHeight() const { return static_cast<float>(m_Viewport->GetHeight()); }
 
-		bool IsValid() const { return m_Transform; }
+		bool IsValid() const { return m_OwnerScene != nullptr; }
 	private:
 		void SetViewport(Viewport* viewport) { m_Viewport = viewport; }
 		void UpdateProj();
 		void UpdateView();
 		void UpdateViewportAABB();
 
-		void Initialize(Transform2DComponent& transform);
+		// Re-lookup each call; EnTT's packed storage relocates instances on emplace/destroy.
+		Transform2DComponent* TryGetTransform();
+		const Transform2DComponent* TryGetTransform() const;
+
+		void Initialize(Scene& scene, EntityHandle entity);
 		void Destroy();
 
-		Transform2DComponent* m_Transform = nullptr;
+		EntityHandle m_OwnerEntity{ entt::null };
+		Scene* m_OwnerScene = nullptr;
 		float m_Zoom{ 1.0f };
 		float m_OrthographicSize{ 5.0f };
 		Color m_ClearColor{ 0.1f, 0.1f, 0.1f, 1.0f };

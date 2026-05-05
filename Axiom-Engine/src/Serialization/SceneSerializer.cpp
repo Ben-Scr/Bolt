@@ -568,13 +568,7 @@ namespace Axiom {
 				}
 			}
 
-			// ── Generic registry-driven serialize for package components ──
-			// Mirror of the deserialize sweep in SceneSerializerDeserialize.cpp.
-			// For every registered type that has a non-null `serialize`
-			// callback, ask the registry whether the entity carries it; if so,
-			// store the returned JSON under `serializedName`. Built-ins all
-			// leave `serialize` null and are handled above; this path picks up
-			// package-registered components like Tilemap2D.
+			// Registry-driven serialize for package components (mirror of deserialize sweep).
 			{
 				Entity entityWrapper = scene.GetEntity(entity);
 				SceneManager::Get().GetComponentRegistry().ForEachComponentInfo(
@@ -697,17 +691,24 @@ namespace Axiom {
 			Value prefabEntity = SerializeEntity(scene, entity);
 			RemoveEntityIdentityMembers(prefabEntity);
 
+			// AssetRegistry::GetOrCreateAssetUUID derives the GUID from the path,
+			// not the file content, so we can ask for the GUID before writing the
+			// file at all. Single Stringify+write pass — the previous code wrote
+			// the file twice (once to register the asset, once with the GUID baked
+			// in) which doubled disk I/O on every prefab save.
+			const uint64_t prefabGuid = AssetRegistry::GetOrCreateAssetUUID(path);
+
 			Value root = Value::MakeObject();
 			root.AddMember("version", Value(SCENE_FORMAT_VERSION));
 			root.AddMember("type", Value("Prefab"));
+			if (prefabGuid != 0) {
+				root.AddMember("AssetGUID", Value(std::to_string(prefabGuid)));
+			}
+			// Both "Entity" and "prefab" — the legacy key stays in for backwards
+			// compatibility with existing prefab files; the deserializer accepts either.
 			root.AddMember("Entity", prefabEntity);
 			root.AddMember("prefab", prefabEntity);
 			File::WriteAllText(path, Json::Stringify(root, true));
-			const uint64_t prefabGuid = AssetRegistry::GetOrCreateAssetUUID(path);
-			if (prefabGuid != 0) {
-				root.AddMember("AssetGUID", Value(std::to_string(prefabGuid)));
-				File::WriteAllText(path, Json::Stringify(root, true));
-			}
 
 			std::string name = "Entity";
 			if (scene.GetRegistry().all_of<NameComponent>(entity)) {

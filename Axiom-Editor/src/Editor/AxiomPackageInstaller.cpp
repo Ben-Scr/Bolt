@@ -22,24 +22,19 @@ namespace Axiom {
 			// fieldName is treated as a literal token (assumed alphanumeric — which is true for
 			// our schema fields: name / version / description), so no regex-escape needed.
 
-			{
-				const std::string patternStr = fieldName + "\\s*=\\s*\"([^\"]*)\"";
-				std::regex pattern(patternStr);
-				std::smatch match;
-				if (std::regex_search(content, match, pattern)) {
-					return match[1].str();
-				}
+			std::smatch match;
+			if (std::regex_search(content, match, std::regex(fieldName + "\\s*=\\s*\"([^\"]*)\""))) {
+				return match[1].str();
 			}
-			{
-				const std::string patternStr = fieldName + "\\s*=\\s*'([^']*)'";
-				std::regex pattern(patternStr);
-				std::smatch match;
-				if (std::regex_search(content, match, pattern)) {
-					return match[1].str();
-				}
+			if (std::regex_search(content, match, std::regex(fieldName + "\\s*=\\s*'([^']*)'"))) {
+				return match[1].str();
 			}
 			return {};
 		}
+
+		// Pre-built once per-process. ExtractStringField was rebuilding two regexes per
+		// call — at hundreds of fields × packages × layers, that's measurable on cold scans.
+		// Layer-detection regexes are simple enough to cache by name.
 
 		bool ReadFileToString(const std::filesystem::path& path, std::string& out) {
 			std::ifstream stream(path, std::ios::binary);
@@ -72,14 +67,20 @@ namespace Axiom {
 		manifest.Description = ExtractStringField(content, "description");
 		manifest.PackageDir = std::filesystem::path(packageDir).generic_string();
 
-		// Detect which layers are declared via `<layer> = {` patterns.
-		auto hasLayer = [&content](const std::string& layerName) {
-			std::regex pattern(layerName + "\\s*=\\s*\\{");
-			return std::regex_search(content, pattern);
-		};
-		manifest.HasEngineCoreLayer = hasLayer("engine_core");
-		manifest.HasStandaloneCppLayer = hasLayer("standalone_cpp");
-		manifest.HasCSharpLayer = hasLayer("csharp");
+		// Detect which layers are declared via `<layer> = {` patterns. Both canonical
+		// names and legacy aliases are accepted; the loader normalizes them on the
+		// premake side, but this editor parser used to only see the legacy names.
+		static const std::regex k_NativeRe(R"((^|[\s,;{])native\s*=\s*\{)");
+		static const std::regex k_EngineCoreRe(R"((^|[\s,;{])engine_core\s*=\s*\{)");
+		static const std::regex k_NativeStandaloneRe(R"((^|[\s,;{])native_standalone\s*=\s*\{)");
+		static const std::regex k_StandaloneCppRe(R"((^|[\s,;{])standalone_cpp\s*=\s*\{)");
+		static const std::regex k_CSharpRe(R"((^|[\s,;{])csharp\s*=\s*\{)");
+
+		manifest.HasNativeLayer = std::regex_search(content, k_NativeRe)
+			|| std::regex_search(content, k_EngineCoreRe);
+		manifest.HasNativeStandaloneLayer = std::regex_search(content, k_NativeStandaloneRe)
+			|| std::regex_search(content, k_StandaloneCppRe);
+		manifest.HasCSharpLayer = std::regex_search(content, k_CSharpRe);
 
 		if (manifest.Name.empty() || manifest.Version.empty()) {
 			return std::nullopt;

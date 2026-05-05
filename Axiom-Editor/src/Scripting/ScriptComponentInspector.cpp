@@ -497,10 +497,21 @@ namespace Axiom {
 	{
 		if (entities.empty()) return;
 
+		// The inspector dispatcher can hand us a selection that doesn't
+		// uniformly carry ScriptComponent (e.g. mid-edit add/remove,
+		// stale selection after undo). Bail / skip rather than blowing
+		// up inside EnTT's view assertion.
 		const Entity& primary = entities[0];
+		if (!primary.HasComponent<ScriptComponent>()) {
+			return;
+		}
 		auto& scriptComp = const_cast<Entity&>(primary).GetComponent<ScriptComponent>();
 		bool shapeUniform = true;
 		for (std::size_t i = 1; i < entities.size(); ++i) {
+			if (!entities[i].HasComponent<ScriptComponent>()) {
+				shapeUniform = false;
+				continue;
+			}
 			const auto& other = entities[i].GetComponent<ScriptComponent>();
 			if (!ScriptComponentShapeMatches(scriptComp, other)) {
 				shapeUniform = false;

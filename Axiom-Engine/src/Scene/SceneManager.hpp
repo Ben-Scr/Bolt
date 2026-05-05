@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Scene/Scene.hpp"
 #include "Scene/SceneDefinition.hpp"
 #include "Scene/ComponentRegistry.hpp"
 
@@ -14,7 +15,6 @@ namespace Axiom {
 }
 
 namespace Axiom {
-	class Scene;
 
 	class AXIOM_API SceneManager {
 		friend class Window;
@@ -69,9 +69,8 @@ namespace Axiom {
 		void ForeachLoadedScene(TFunc&& func) {
 			auto scenes = m_LoadedScenes;
 			for (const std::shared_ptr<Scene>& scenePointer : scenes) {
-				if (scenePointer) {
-					func(*scenePointer);
-				}
+				// IsLoaded filter — scene can briefly sit in the list after its flag is cleared.
+				if (scenePointer && scenePointer->IsLoaded()) func(*scenePointer);
 			}
 		}
 
@@ -79,9 +78,7 @@ namespace Axiom {
 		void ForeachLoadedScene(TFunc&& func) const {
 			auto scenes = m_LoadedScenes;
 			for (const std::shared_ptr<Scene>& scenePointer : scenes) {
-				if (scenePointer) {
-					func(*scenePointer);
-				}
+				if (scenePointer && scenePointer->IsLoaded()) func(*scenePointer);
 			}
 		}
 

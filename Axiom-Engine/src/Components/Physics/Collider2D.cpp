@@ -13,10 +13,10 @@ namespace Axiom {
 	float Collider2D::GetBounciness() const { return b2Shape_GetRestitution(m_ShapeId); }
 	void Collider2D::SetLayer(uint64_t layer) {
 		b2Filter filter = b2Shape_GetFilter(m_ShapeId);
-		filter.maskBits = layer;
+		filter.categoryBits = layer;
 		b2Shape_SetFilter(m_ShapeId, filter);
 	}
-	uint64_t Collider2D::GetLayer() const { return b2Shape_GetFilter(m_ShapeId).maskBits; }
+	uint64_t Collider2D::GetLayer() const { return b2Shape_GetFilter(m_ShapeId).categoryBits; }
 	bool Collider2D::IsEnabled() const { return b2Body_IsEnabled(m_BodyId); }
 	bool Collider2D::IsSensor() const { return b2Shape_IsSensor(m_ShapeId); }
 

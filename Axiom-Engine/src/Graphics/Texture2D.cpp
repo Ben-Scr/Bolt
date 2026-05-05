@@ -76,6 +76,11 @@ namespace Axiom {
 		ChooseInternalAndFormat(n, srgb, internalFmt, dataFmt);
 
 
+		// Save & restore GL_UNPACK_ALIGNMENT — leaving it at 1 globally would change
+		// behaviour for every other GL TexImage call in the process (ImGui font atlas,
+		// gizmo glyph atlases, etc).
+		GLint savedUnpackAlign = 4;
+		glGetIntegerv(GL_UNPACK_ALIGNMENT, &savedUnpackAlign);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
 		glGenTextures(1, &m_Tex);
@@ -91,6 +96,7 @@ namespace Axiom {
 		ApplySamplerParams();
 
 		glBindTexture(GL_TEXTURE_2D, 0);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, savedUnpackAlign);
 		stbi_image_free(pixels);
 
 		m_Width = w; m_Height = h; m_Channels = n;

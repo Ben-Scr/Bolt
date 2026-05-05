@@ -43,8 +43,7 @@ namespace Axiom {
 
 	void GpuTimer::Shutdown() {
 		if (!m_Initialized) return;
-		// Best-effort delete. If the GL context is already gone, glDeleteQueries
-		// is a no-op on most drivers; the handles leak harmlessly.
+		// Best-effort: dead GL context is a no-op on most drivers.
 		for (size_t i = 0; i < kFrameRingSize; i++) {
 			if (m_Frames[i].Query != 0) {
 				glDeleteQueries(1, &m_Frames[i].Query);
@@ -61,10 +60,7 @@ namespace Axiom {
 		if (!m_Initialized) return;
 		if (m_FrameOpen) return; // mismatched call — drop silently
 
-		// If the ring is full, the oldest pending query gets overwritten —
-		// that frame's GPU time is lost but we keep cadence stable. In
-		// practice PollAndPublish runs every frame, so the ring drains as
-		// fast as it fills (kFrameRingSize == 3).
+		// Ring full: drop oldest pending query to keep cadence stable.
 		if (m_PendingCount >= kFrameRingSize) {
 			// Drop oldest without reading.
 			m_NextRead = (m_NextRead + 1) % kFrameRingSize;
@@ -98,9 +94,7 @@ namespace Axiom {
 		GLint available = GL_FALSE;
 		glGetQueryObjectiv(slot.Query, GL_QUERY_RESULT_AVAILABLE, &available);
 		if (available == GL_FALSE) {
-			// Result not ready yet — wait until next frame. With a 3-frame
-			// ring this should almost never trigger past the very first
-			// frames after Initialize.
+			// Result not ready; wait one more frame.
 			return;
 		}
 
@@ -116,13 +110,11 @@ namespace Axiom {
 	}
 
 	long long GpuTimer::QueryGpuMemoryMb() {
-		// NVIDIA: GL_NVX_gpu_memory_info exposes total/available KB.
-		// We report the in-use estimate as (total - currentlyAvailable).
+		// NVIDIA NVX_gpu_memory_info: in-use = total - available (KB).
 		constexpr GLenum NVX_TOTAL_KB     = 0x9048;
 		constexpr GLenum NVX_AVAILABLE_KB = 0x9049;
 
-		// Probe by clearing GL error and checking after the get.
-		while (glGetError() != GL_NO_ERROR) {} // drain prior errors
+		while (glGetError() != GL_NO_ERROR) {}
 
 		GLint totalKb = 0;
 		glGetIntegerv(NVX_TOTAL_KB, &totalKb);
@@ -135,23 +127,18 @@ namespace Axiom {
 			}
 		}
 
-		// AMD: GL_ATI_meminfo gives a 4-int vector of {total, largest free
-		// block, total aux, largest aux} in KB for VBO/TEXTURE/RENDERBUFFER
-		// memory pools. Use VBO as the representative pool. The "used"
-		// estimate is total - largest free block (best you can compute
-		// from this extension).
+		// AMD ATI_meminfo: {total, largest free, aux total, aux free} KB. No "total" query exists.
 		constexpr GLenum ATI_VBO_FREE_MEMORY = 0x87FB;
 		while (glGetError() != GL_NO_ERROR) {}
 
 		GLint freeKb[4] = { 0, 0, 0, 0 };
 		glGetIntegerv(ATI_VBO_FREE_MEMORY, freeKb);
 		if (glGetError() == GL_NO_ERROR && freeKb[0] > 0) {
-			// Without a "total" query we can only report what's free.
-			// The panel will show this; not ideal but not nothing.
+			// AMD: no total query; report free as a best-effort approximation.
 			return static_cast<long long>(freeKb[0]) / 1024;
 		}
 
-		// Intel / Mesa: no standard extension. Caller renders "N/A".
+		// Intel / Mesa: no standard extension; caller renders "N/A".
 		return -1;
 	}
 

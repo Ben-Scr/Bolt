@@ -8,6 +8,7 @@
 #include "Core/Application.hpp"
 #include "Core/Window.hpp"
 #include "Diagnostics/StatsOverlay.hpp"
+#include "Editor/ApplicationEditorAccess.hpp"
 #include "Graphics/GizmoRenderer.hpp"
 #include "Graphics/Gizmo.hpp"
 #include "Graphics/Renderer2D.hpp"
@@ -262,7 +263,7 @@ namespace Axiom {
 			ImGui::End();
 			m_IsGameViewFocused = false;
 			m_IsGameViewHovered = false;
-			Application::SetGameInputEnabled(false);
+			ApplicationEditorAccess::SetGameInputEnabled(false);
 			return;
 		}
 
@@ -376,14 +377,27 @@ namespace Axiom {
 					ImGui::TextDisabled("Main camera has no viewport");
 					m_IsGameViewHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
 					m_IsGameViewFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-					Application::SetGameInputEnabled(m_IsGameViewFocused);
+					ApplicationEditorAccess::SetGameInputEnabled(m_IsGameViewFocused);
 					ImGui::End();
 					return;
 				}
-				int savedW = savedViewport->GetWidth();
-				int savedH = savedViewport->GetHeight();
-				savedViewport->SetSize(fbW, fbH);
+				const int savedW = savedViewport->GetWidth();
+				const int savedH = savedViewport->GetHeight();
 
+				// RAII guard: if RenderSceneIntoFBO throws, the camera viewport
+				// is still restored before the exception unwinds out of ImGui::End.
+				struct ViewportRestoreGuard {
+					Viewport* vp;
+					int w;
+					int h;
+					Camera2DComponent* cam;
+					~ViewportRestoreGuard() {
+						vp->SetSize(w, h);
+						cam->UpdateViewport();
+					}
+				} guard{ savedViewport, savedW, savedH, gameCam };
+
+				savedViewport->SetSize(fbW, fbH);
 				gameCam->UpdateViewport();
 				glm::mat4 vp = gameCam->GetViewProjectionMatrix();
 				AABB viewAABB = gameCam->GetViewportAABB();
@@ -421,8 +435,8 @@ namespace Axiom {
 					m_GameViewHasRendered = true;
 				}
 
-				savedViewport->SetSize(savedW, savedH);
-				gameCam->UpdateViewport();
+				// guard's destructor restores the viewport — explicit restore here
+				// is no longer needed and would be a redundant double-set.
 
 				ImGui::InvisibleButton("##GameViewCanvas", viewportSize);
 				const ImVec2 canvasMin = ImGui::GetItemRectMin();
@@ -478,7 +492,7 @@ namespace Axiom {
 
 		m_IsGameViewHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
 		m_IsGameViewFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-		Application::SetGameInputEnabled(m_IsGameViewFocused);
+		ApplicationEditorAccess::SetGameInputEnabled(m_IsGameViewFocused);
 		ImGui::End();
 	}
 

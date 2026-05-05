@@ -6,7 +6,7 @@
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
 
-#include <glm/glm.hpp>                     
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -21,9 +21,57 @@ namespace Axiom {
 		return activeScene ? activeScene->GetMainCamera() : nullptr;
 	}
 
+	Transform2DComponent* Camera2DComponent::TryGetTransform() {
+		if (!m_OwnerScene || m_OwnerEntity == entt::null) return nullptr;
+		if (!m_OwnerScene->IsValid(m_OwnerEntity)) return nullptr;
+		if (!m_OwnerScene->HasComponent<Transform2DComponent>(m_OwnerEntity)) return nullptr;
+		return &m_OwnerScene->GetComponent<Transform2DComponent>(m_OwnerEntity);
+	}
+
+	const Transform2DComponent* Camera2DComponent::TryGetTransform() const {
+		if (!m_OwnerScene || m_OwnerEntity == entt::null) return nullptr;
+		if (!m_OwnerScene->IsValid(m_OwnerEntity)) return nullptr;
+		if (!m_OwnerScene->HasComponent<Transform2DComponent>(m_OwnerEntity)) return nullptr;
+		return &m_OwnerScene->GetComponent<Transform2DComponent>(m_OwnerEntity);
+	}
+
 	void Camera2DComponent::UpdateViewport() {
 		UpdateProj();
 		UpdateView();
+	}
+
+	void Camera2DComponent::SetPosition(Vec2 p) {
+		if (auto* transform = TryGetTransform()) {
+			transform->Position = p;
+			UpdateView();
+		}
+	}
+
+	void Camera2DComponent::AddPosition(Vec2 p) {
+		if (auto* transform = TryGetTransform()) {
+			SetPosition(p + transform->Position);
+		}
+	}
+
+	Vec2 Camera2DComponent::GetPosition() const {
+		if (const auto* transform = TryGetTransform()) {
+			return transform->Position;
+		}
+		return Vec2{ 0.0f, 0.0f };
+	}
+
+	void Camera2DComponent::SetRotation(float rad) {
+		if (auto* transform = TryGetTransform()) {
+			transform->Rotation = rad;
+			UpdateView();
+		}
+	}
+
+	float Camera2DComponent::GetRotation() const {
+		if (const auto* transform = TryGetTransform()) {
+			return transform->Rotation;
+		}
+		return 0.0f;
 	}
 
 	glm::mat4 Camera2DComponent::GetViewProjectionMatrix() const {
@@ -31,7 +79,7 @@ namespace Axiom {
 	}
 
 	void Camera2DComponent::UpdateProj() {
-		if (m_Viewport->GetWidth() == 0 || m_Viewport->GetHeight() == 0) return;
+		if (!m_Viewport || m_Viewport->GetWidth() == 0 || m_Viewport->GetHeight() == 0) return;
 		const float aspect = m_Viewport->GetAspect();
 		const float halfH = m_OrthographicSize * m_Zoom;
 		const float halfW = halfH * aspect;
@@ -40,27 +88,23 @@ namespace Axiom {
 		const float zFar = 100.0f;
 
 		m_ProjMat = glm::ortho(-halfW, +halfW, -halfH, +halfH, zNear, zFar);
-		if (m_Transform) {
+		if (TryGetTransform()) {
 			UpdateViewportAABB();
 		}
 	}
 
 	void Camera2DComponent::UpdateView() {
-		// E19: closed-form 2D inverse view. The camera model is
-		//   M = T(px,py) * Rz(theta)
-		// Its inverse is
-		//   M^-1 = Rz(-theta) * T(-px,-py)
-		// which expanded into a 4x4 column-major glm::mat4 is the matrix below.
-		// Replaces the previous glm::inverse(M) call (per-frame general 4x4
-		// inverse via cofactor expansion).
-		const float rotZ = m_Transform->Rotation;
+		// Closed-form view = Rz(-theta) * T(-p) — replaces per-frame glm::inverse(M).
+		const Transform2DComponent* transform = TryGetTransform();
+		if (!transform) return;
+
+		const float rotZ = transform->Rotation;
 		const float c = std::cos(rotZ);
 		const float s = std::sin(rotZ);
-		const float px = m_Transform->Position.x;
-		const float py = m_Transform->Position.y;
+		const float px = transform->Position.x;
+		const float py = transform->Position.y;
 
-		// Column-major. Rotation block is Rz(-theta) (transpose of Rz);
-		// translation column is Rz(-theta) * (-p).
+		// Column-major: rotation block is Rz(-theta), translation column is Rz(-theta) * (-p).
 		glm::mat4 view(1.0f);
 		view[0][0] =  c; view[0][1] = -s; view[0][2] = 0.0f; view[0][3] = 0.0f;
 		view[1][0] =  s; view[1][1] =  c; view[1][2] = 0.0f; view[1][3] = 0.0f;
@@ -75,11 +119,17 @@ namespace Axiom {
 	}
 
 	void Camera2DComponent::UpdateViewportAABB() {
+		if (!m_Viewport) return;
+
+		const Transform2DComponent* transform = TryGetTransform();
+		if (!transform) return;
 		Vec2 worldViewport = WorldViewPort();
-		m_WorldViewportAABB = AABB::Create(m_Transform->Position, worldViewport / 2.f);
+		m_WorldViewportAABB = AABB::Create(transform->Position, worldViewport / 2.f);
 	}
 
 	Vec2 Camera2DComponent::WorldViewPort() const {
+		if (!m_Viewport) return { 0.0f, 0.0f };
+
 		float aspect = m_Viewport->GetAspect();
 		float worldHeight = 2.0f * (m_OrthographicSize * m_Zoom);
 		float worldWidth = worldHeight * aspect;
@@ -88,6 +138,7 @@ namespace Axiom {
 
 	Vec2 Camera2DComponent::ScreenToWorld(Vec2 pos) const
 	{
+		if (!m_Viewport) return { 0.0f, 0.0f };
 		if (m_Viewport->GetWidth() == 0 || m_Viewport->GetHeight() == 0) return { 0.0f, 0.0f };
 		const float xNdc = (2.0f * pos.x / float(m_Viewport->GetWidth())) - 1.0f;
 		const float yNdc = 1.0f - (2.0f * pos.y / float(m_Viewport->GetHeight()));
@@ -106,9 +157,10 @@ namespace Axiom {
 		return { world.x, world.y };
 	}
 
-	void Camera2DComponent::Initialize(Transform2DComponent& transform) {
+	void Camera2DComponent::Initialize(Scene& scene, EntityHandle entity) {
 		m_Viewport = Window::GetMainViewport();
-		m_Transform = &transform;
+		m_OwnerScene = &scene;
+		m_OwnerEntity = entity;
 		m_ViewMat = glm::mat4(1.0f);
 		m_ProjMat = glm::mat4(1.0f);
 		UpdateProj();
@@ -116,7 +168,8 @@ namespace Axiom {
 	}
 
 	void Camera2DComponent::Destroy() {
-		m_Transform = nullptr;
+		m_OwnerScene = nullptr;
+		m_OwnerEntity = entt::null;
 		m_Viewport = nullptr;
 	}
 }

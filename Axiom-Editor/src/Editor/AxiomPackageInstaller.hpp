@@ -17,9 +17,10 @@ namespace Axiom {
 
 		// Which layers does this package declare? Detected by scanning the manifest
 		// for `<layer> = {` patterns. At least one of these is true for any valid
-		// manifest the loader will register.
-		bool HasEngineCoreLayer = false;
-		bool HasStandaloneCppLayer = false;
+		// manifest the loader will register. Both canonical names and the legacy
+		// aliases (engine_core / standalone_cpp) are accepted by the parser.
+		bool HasNativeLayer = false;            // canonical "native" (legacy alias: "engine_core")
+		bool HasNativeStandaloneLayer = false;  // canonical "native_standalone" (legacy alias: "standalone_cpp")
 		bool HasCSharpLayer = false;
 	};
 

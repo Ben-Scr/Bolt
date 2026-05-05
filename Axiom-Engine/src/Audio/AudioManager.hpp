@@ -33,9 +33,7 @@ namespace Axiom {
 		static void UnloadAudio(const AudioHandle& audioHandle);
 		static void UnloadAllAudio();
 
-		// Walks every live Scene's registry collecting AudioHandle values from
-		// components that hold them (AudioSourceComponent and any others). Frees
-		// every Audio entry not in that set. Returns the number of entries freed.
+		/// Frees Audio entries not referenced by any Scene component. Returns the number of entries freed.
 		static size_t PurgeUnreferenced();
 
 
@@ -121,7 +119,11 @@ namespace Axiom {
 		static std::unordered_map<std::string, AudioHandle::HandleType> s_audioPathToHandle;
 		static AudioHandle::HandleType s_nextHandle;
 
-		static std::vector<SoundInstance> s_soundInstances;
+		// Held via unique_ptr so the slot's address is stable while miniaudio's
+		// audio thread reads from `&Sound` concurrently. A bare `vector<SoundInstance>`
+		// would relocate `ma_sound` on growth and crash mid-playback. Free slots
+		// hold null until reused.
+		static std::vector<std::unique_ptr<SoundInstance>> s_soundInstances;
 		static std::vector<uint32_t> s_freeInstanceIndices;
 
 

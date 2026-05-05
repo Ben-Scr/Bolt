@@ -29,11 +29,13 @@
 #include "Utils/Process.hpp"
 #include "Packages/NuGetSource.hpp"
 #include "Packages/GitHubSource.hpp"
+#include "Editor/ApplicationEditorAccess.hpp"
 #include "Editor/EditorComponentRegistration.hpp"
 #include "Editor/ExternalEditor.hpp"
 #include "Inspector/ReferencePicker.hpp"
 #include "Gui/EditorIcons.hpp"
 #include "Gui/EditorTheme.hpp"
+#include "Gui/HierarchyDragData.hpp"
 #include "Assets/AssetRegistry.hpp"
 #include "Scripting/ScriptEngine.hpp"
 #include "Scripting/ScriptSystem.hpp"
@@ -162,7 +164,7 @@ namespace Axiom {
 
 	void ImGuiEditorLayer::OnAttach(Application& app) {
 		Application::SetIsPlaying(false);
-		Application::SetGameInputEnabled(false);
+		ApplicationEditorAccess::SetGameInputEnabled(false);
 		Gizmo::SetShowInRuntime(false);
 		if (app.GetRenderer2D()) {
 			app.GetRenderer2D()->SetSkipBeginFrameRender(true);
@@ -195,7 +197,7 @@ namespace Axiom {
 	void ImGuiEditorLayer::OnDetach(Application& app) {
 		(void)app;
 		m_ProfilerPanel.Shutdown();
-		Application::SetGameInputEnabled(true);
+		ApplicationEditorAccess::SetGameInputEnabled(true);
 		Gizmo::SetShowInRuntime(true);
 		if (m_LogSubscriptionId.value != 0) {
 			Log::OnLog.Remove(m_LogSubscriptionId);
@@ -204,12 +206,13 @@ namespace Axiom {
 		m_LogDispatchState.reset();
 		ClearPreviewTextureCache();
 
-		DestroyFBO(m_EditorViewFBO);
-		DestroyFBO(m_GameViewFBO);
-		EditorIcons::Shutdown();
+		// Reverse construction order: panels → icons → FBOs.
 		m_AssetBrowser.Shutdown();
 		m_PackageManagerPanel.Shutdown();
 		m_PackageManager.Shutdown();
+		EditorIcons::Shutdown();
+		DestroyFBO(m_EditorViewFBO);
+		DestroyFBO(m_GameViewFBO);
 	}
 
 	void ImGuiEditorLayer::OnUpdate(Application& app, float dt) {
@@ -257,7 +260,7 @@ namespace Axiom {
 		if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
 			DuplicateSelectedEntity(scene);
 		}
-		if (input.GetKeyDown(KeyCode::Delete)) {
+		if (input.GetKeyDown(KeyCode::Delete) || input.GetKeyDown(KeyCode::KpDecimal)) {
 			DeleteSelectedEntity(scene);
 		}
 		if (input.GetKeyDown(KeyCode::F2)) {
@@ -323,6 +326,7 @@ namespace Axiom {
 
 		ImGuiID dockspaceId = ImGui::GetID("AxiomEditorDockspace");
 		ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+		// End() is in OnPreRender after RenderMainMenu — must stay open for the menubar.
 	}
 
 	void ImGuiEditorLayer::RenderMainMenu(Scene& scene) {
@@ -423,7 +427,7 @@ namespace Axiom {
 		}
 
 		m_LogEntries.clear();
-		Application::SetPlaymodePaused(false);
+		ApplicationEditorAccess::SetPlaymodePaused(false);
 
 		ScriptSystem* scriptSys = scene.HasSystem<ScriptSystem>() ? scene.GetSystem<ScriptSystem>() : nullptr;
 		if (scriptSys && scriptSys->IsRebuilding()) {
@@ -440,8 +444,13 @@ namespace Axiom {
 
 	void ImGuiEditorLayer::CompletePlayModeEntry(Scene& scene) {
 		m_PlayModeRecompilePending = false;
-		Application::SetPlaymodePaused(false);
+		ApplicationEditorAccess::SetPlaymodePaused(false);
 		Application::SetIsPlaying(true);
+		// Reset Box2D sleep timers so bodies that sat through editor
+		// idle don't immediately freeze on the first physics step.
+		if (PhysicsSystem2D::IsInitialized()) {
+			PhysicsSystem2D::WakeAllBodies();
+		}
 		StartPlayOnAwakeComponents(scene);
 	}
 
@@ -468,7 +477,7 @@ namespace Axiom {
 		const float iconSize = ImGui::GetTextLineHeight();
 		const ImVec2 btnSize(iconSize, iconSize);
 		const bool isPlaying = Application::GetIsPlaying();
-		const bool isPaused = Application::IsPlaymodePaused();
+		const bool isPaused = ApplicationEditorAccess::IsPlaymodePaused();
 
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
 
@@ -491,7 +500,7 @@ namespace Axiom {
 		else {
 			if (isPaused) {
 				if (IconButton("##Continue", "play", iconSize, btnSize)) {
-					Application::SetPlaymodePaused(false);
+					ApplicationEditorAccess::SetPlaymodePaused(false);
 					Scene* active = SceneManager::Get().GetActiveScene();
 					if (active) {
 						for (auto ent : m_EditorPausedAudioEntities) {
@@ -507,7 +516,7 @@ namespace Axiom {
 			}
 			else {
 				if (IconButton("##Pause", "pause", iconSize, btnSize)) {
-					Application::SetPlaymodePaused(true);
+					ApplicationEditorAccess::SetPlaymodePaused(true);
 					m_EditorPausedAudioEntities.clear();
 					Scene* active = SceneManager::Get().GetActiveScene();
 					if (active) {
@@ -524,7 +533,7 @@ namespace Axiom {
 
 			ImGui::SameLine();
 			if (IconButton("##Step", "step_forward", iconSize, btnSize)) {
-				Application::SetPlaymodePaused(false);
+				ApplicationEditorAccess::SetPlaymodePaused(false);
 				m_StepFrames = 2;
 			}
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step (advance one frame)");
@@ -558,8 +567,22 @@ namespace Axiom {
 		// Handle step-frame logic: pause again after stepping one frame
 		if (isPlaying && m_StepFrames > 0) {
 			m_StepFrames--;
-			if (m_StepFrames == 0)
-				Application::SetPlaymodePaused(true);
+			if (m_StepFrames == 0) {
+				ApplicationEditorAccess::SetPlaymodePaused(true);
+				// SetPlaymodePaused only suspends gameplay update; audio runs on
+				// miniaudio's own thread, so we mirror the Pause button's manual
+				// capture. List is appended (not cleared) so any entries from a
+				// prior explicit Pause survive to be resumed by Continue.
+				Scene* active = SceneManager::Get().GetActiveScene();
+				if (active) {
+					for (auto [ent, audio] : active->GetRegistry().view<AudioSourceComponent>().each()) {
+						if (audio.IsPlaying()) {
+							audio.Pause();
+							m_EditorPausedAudioEntities.push_back(ent);
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -577,7 +600,7 @@ namespace Axiom {
 		m_EntityOrder.clear();
 		m_PlayModeRecompilePending = false;
 
-		Application::SetPlaymodePaused(false);
+		ApplicationEditorAccess::SetPlaymodePaused(false);
 		Application::SetIsPlaying(false);
 
 		if (!m_PlayModeScenePath.empty()) {
@@ -1146,7 +1169,6 @@ namespace Axiom {
 
 					// Drag-drop source: drag entity to reorder or to asset browser for prefab
 					if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-						struct HierarchyDragData { int Index; uint32_t EntityHandle; };
 						HierarchyDragData dragData{ entityIdx, static_cast<uint32_t>(entityHandle) };
 						ImGui::SetDragDropPayload("HIERARCHY_ENTITY", &dragData, sizeof(dragData));
 						ImGui::Text("Move: %s", entity.GetName().c_str());
@@ -1156,7 +1178,6 @@ namespace Axiom {
 					// Drag-drop target: reorder entities, or accept .prefab from asset browser
 					if (ImGui::BeginDragDropTarget()) {
 						if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("HIERARCHY_ENTITY")) {
-							struct HierarchyDragData { int Index; uint32_t EntityHandle; };
 							auto* dragData = static_cast<const HierarchyDragData*>(payload->Data);
 							int srcIndex = dragData->Index;
 							if (srcIndex != entityIdx && srcIndex >= 0 && srcIndex < static_cast<int>(m_EntityOrder.size())) {

@@ -15,7 +15,7 @@ namespace Axiom {
 		Rigidbody2DComponent() = default;
 
 		void SetBodyType(BodyType bodyType);
-		BodyType GetBodyType();
+		BodyType GetBodyType() const;
 
 		bool IsAwake() const;
 

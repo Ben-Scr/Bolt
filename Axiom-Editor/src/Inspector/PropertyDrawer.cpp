@@ -2,6 +2,7 @@
 #include "Inspector/PropertyDrawer.hpp"
 
 #include "Assets/AssetRegistry.hpp"
+#include "Gui/HierarchyDragData.hpp"
 #include "Gui/ImGuiUtils.hpp"
 #include "Inspector/PropertyType.hpp"
 #include "Inspector/PropertyValue.hpp"
@@ -148,6 +149,30 @@ namespace Axiom::PropertyDrawer {
 				ImGui::EndPopup();
 			}
 			return cleared;
+		}
+
+		uint64_t ResolveDroppedAssetId(const ImGuiPayload* payload) {
+			if (!payload || !payload->Data || payload->DataSize <= 0) {
+				return 0;
+			}
+
+			const char* data = static_cast<const char*>(payload->Data);
+			std::string droppedPath(data, static_cast<std::size_t>(payload->DataSize));
+			if (!droppedPath.empty() && droppedPath.back() == '\0') {
+				droppedPath.pop_back();
+			}
+			if (droppedPath.empty()) {
+				return 0;
+			}
+
+			const uint64_t assetId = AssetRegistry::GetOrCreateAssetUUID(droppedPath);
+			if (assetId != 0) {
+				return assetId;
+			}
+
+			AssetRegistry::MarkDirty();
+			AssetRegistry::Sync();
+			return AssetRegistry::GetOrCreateAssetUUID(droppedPath);
 		}
 
 		// ── Per-type drawers ─────────────────────────────────────────
@@ -583,8 +608,7 @@ namespace Axiom::PropertyDrawer {
 				},
 				[kind](PropertyValue& outValue) {
 					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_BROWSER_ITEM")) {
-						std::string droppedPath(static_cast<const char*>(payload->Data));
-						const uint64_t assetId = AssetRegistry::GetOrCreateAssetUUID(droppedPath);
+						const uint64_t assetId = ResolveDroppedAssetId(payload);
 						if (assetId != 0 && AssetRegistry::GetKind(assetId) == kind) {
 							outValue.UIntValue = assetId;
 							return true;
@@ -609,7 +633,6 @@ namespace Axiom::PropertyDrawer {
 						ReferencePicker::CollectEntities());
 				},
 				[](PropertyValue& outValue) {
-					struct HierarchyDragData { int Index; uint32_t EntityHandle; };
 					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("HIERARCHY_ENTITY")) {
 						if (payload->DataSize == sizeof(HierarchyDragData)) {
 							const auto* data = static_cast<const HierarchyDragData*>(payload->Data);
@@ -623,8 +646,7 @@ namespace Axiom::PropertyDrawer {
 						}
 					}
 					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_BROWSER_ITEM")) {
-						std::string droppedPath(static_cast<const char*>(payload->Data));
-						const uint64_t assetId = AssetRegistry::GetOrCreateAssetUUID(droppedPath);
+						const uint64_t assetId = ResolveDroppedAssetId(payload);
 						if (assetId != 0 && AssetRegistry::GetKind(assetId) == AssetKind::Prefab) {
 							outValue.UIntValue = assetId;
 							outValue.StringValue = "prefab";

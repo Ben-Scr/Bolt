@@ -6,6 +6,8 @@
 #include <hostfxr.h>
 #include <coreclr_delegates.h>
 
+#include <type_traits>
+
 #ifdef AIM_PLATFORM_WINDOWS
 #include <windows.h>
 #define STR(s) L ## s
@@ -16,12 +18,9 @@
 
 namespace Axiom {
 
-	// ── Error callback ─────────────────────────────────────────────────
-
 	static void HOSTFXR_CALLTYPE HostFxrErrorWriter(const char_t* message)
 	{
 #ifdef AIM_PLATFORM_WINDOWS
-		// Convert wchar_t* to UTF-8 for logging
 		int size = WideCharToMultiByte(CP_UTF8, 0, message, -1, nullptr, 0, nullptr, nullptr);
 		std::string utf8(size - 1, 0);
 		WideCharToMultiByte(CP_UTF8, 0, message, -1, &utf8[0], size, nullptr, nullptr);
@@ -30,8 +29,6 @@ namespace Axiom {
 		AIM_CORE_ERROR_TAG("DotNetHost", "{}", message);
 #endif
 	}
-
-	// ── Platform helpers ───────────────────────────────────────────────
 
 	static void* LoadLibraryFromPath(const char_t* path)
 	{
@@ -60,7 +57,15 @@ namespace Axiom {
 #endif
 	}
 
-	// ── DotNetHost implementation ──────────────────────────────────────
+	static std::basic_string<char_t> ToHostFxrPath(const std::filesystem::path& path)
+	{
+		static_assert(std::is_same_v<DotNetHostChar, char_t>, "DotNetHostChar must match hostfxr char_t");
+#ifdef AIM_PLATFORM_WINDOWS
+		return path.wstring();
+#else
+		return path.string();
+#endif
+	}
 
 	DotNetHost::~DotNetHost()
 	{
@@ -73,7 +78,6 @@ namespace Axiom {
 			Close();
 		}
 
-		// Use nethost to find hostfxr.dll
 		char_t hostfxrPath[1024]{};
 		size_t pathSize = sizeof(hostfxrPath) / sizeof(char_t);
 
@@ -84,7 +88,6 @@ namespace Axiom {
 			return false;
 		}
 
-		// Load hostfxr library
 		m_HostFxrLib = LoadLibraryFromPath(hostfxrPath);
 		if (!m_HostFxrLib)
 		{
@@ -92,7 +95,6 @@ namespace Axiom {
 			return false;
 		}
 
-		// Resolve function pointers
 		m_InitFn = GetExport(m_HostFxrLib, "hostfxr_initialize_for_runtime_config");
 		m_GetDelegateFn = GetExport(m_HostFxrLib, "hostfxr_get_runtime_delegate");
 		m_CloseFn = GetExport(m_HostFxrLib, "hostfxr_close");
@@ -116,25 +118,20 @@ namespace Axiom {
 			return true;
 		}
 
-		// Step 1: Load hostfxr
 		if (!LoadHostFxr())
 			return false;
 
-		// Set error writer for detailed diagnostics
 		if (m_SetErrorWriterFn)
 		{
 			auto setErrorWriter = reinterpret_cast<hostfxr_set_error_writer_fn>(m_SetErrorWriterFn);
 			setErrorWriter(HostFxrErrorWriter);
 		}
 
-		// Step 2: Initialize the .NET runtime
 		auto initFn = reinterpret_cast<hostfxr_initialize_for_runtime_config_fn>(m_InitFn);
-		std::wstring configPath = runtimeConfigPath.wstring();
+		std::basic_string<char_t> configPath = ToHostFxrPath(runtimeConfigPath);
 
+		// rc 0/1/2 are all success codes; only negative rc indicates failure.
 		int rc = initFn(configPath.c_str(), nullptr, &m_HostContext);
-		// rc == 0: Success
-		// rc == 1: Success_HostAlreadyInitialized (also valid)
-		// rc == 2: Success_DifferentRuntimeProperties (also valid)
 		if (rc < 0 || !m_HostContext)
 		{
 			AIM_CORE_ERROR_TAG("DotNetHost", "Failed to initialize .NET runtime: 0x{:x}", static_cast<unsigned>(rc));
@@ -142,7 +139,6 @@ namespace Axiom {
 			return false;
 		}
 
-		// Step 3: Get the load_assembly_and_get_function_pointer delegate
 		auto getDelegateFn = reinterpret_cast<hostfxr_get_runtime_delegate_fn>(m_GetDelegateFn);
 
 		rc = getDelegateFn(m_HostContext,
@@ -163,9 +159,9 @@ namespace Axiom {
 
 	bool DotNetHost::LoadAssemblyAndGetFunction(
 		const std::filesystem::path& assemblyPath,
-		const wchar_t* typeName,
-		const wchar_t* methodName,
-		const wchar_t* delegateType,
+		const DotNetHostChar* typeName,
+		const DotNetHostChar* methodName,
+		const DotNetHostChar* delegateType,
 		void** outFunctionPtr)
 	{
 		if (!m_Initialized || !m_LoadAssemblyAndGetFunctionPointer)
@@ -184,7 +180,7 @@ namespace Axiom {
 			return false;
 		}
 		auto canonPath = std::filesystem::canonical(assemblyPath);
-		std::wstring asmPath = canonPath.wstring();
+		std::basic_string<char_t> asmPath = ToHostFxrPath(canonPath);
 
 		int rc = loadFn(
 			asmPath.c_str(),

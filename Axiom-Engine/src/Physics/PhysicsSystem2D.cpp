@@ -2,6 +2,7 @@
 
 #include <Components/Physics/Rigidbody2DComponent.hpp>
 #include <Components/Physics/FastBody2DComponent.hpp>
+#include <Components/Physics/BoxCollider2DComponent.hpp>
 #include <Components/General/Transform2DComponent.hpp>
 #include <Components/Tags.hpp>
 
@@ -26,15 +27,17 @@ namespace Axiom {
 		AIM_CORE_INFO_TAG("PhysicsSystem", "Box2D + Axiom-Physics initialized");
 	}
 
-	void PhysicsSystem2D::FixedUpdate(float dt) {
-		AXIOM_PROFILE_SCOPE("Physics");
-		if (!s_IsEnabled) return;
-
-		// E16: Pre-step sync — single ForeachLoadedScene walk handling both
-		// Rigidbody2D (Box2D) and FastBody2D (Axiom-Physics) write-back to the
-		// physics worlds.
+	void PhysicsSystem2D::SyncTransformsToPhysics() {
+		// Pre-step sync. BoxCollider polygon FIRST so its dirty-read
+		// happens before the body loops clear the dirty flag.
 		SceneManager::Get().ForeachLoadedScene([](Scene& scene) {
 			auto& registry = scene.GetRegistry();
+
+			for (auto [ent, box, tf] : registry.view<BoxCollider2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
+				if (tf.IsDirty() && box.IsValid()) {
+					box.SyncWithTransform(scene);
+				}
+			}
 
 			for (auto [ent, rb, tf] : registry.view<Rigidbody2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
 				if (tf.IsDirty() && rb.IsValid()) {
@@ -49,31 +52,51 @@ namespace Axiom {
 					tf.ClearDirty();
 				}
 			}
+
+			// Clear dirty for collider-only entities (no body sync touched them).
+			for (auto [ent, box, tf] : registry.view<BoxCollider2DComponent, Transform2DComponent>(entt::exclude<DisabledTag, Rigidbody2DComponent, FastBody2DComponent>).each()) {
+				if (tf.IsDirty()) {
+					tf.ClearDirty();
+				}
+			}
 		});
+	}
 
-		// Box2D simulation. We deliberately defer collision-callback dispatch
-		// until AFTER the post-step transform sync below (see H4). Box2D's own
-		// dispatcher collects events into a list during Step; running user
-		// scripts here would (a) hand them stale Transform2D values that
-		// haven't been synced from Box2D yet, and (b) leave any user-side
-		// `entity.Destroy()` straddling the Box2D step / Axiom-Physics step
-		// boundary. Both steps run first, then transforms are synced, then
-		// callbacks fire on a fully-settled scene.
+	void PhysicsSystem2D::Update() {
+		if (!s_IsEnabled) return;
+		SyncTransformsToPhysics();
+	}
+
+	/* static */ void PhysicsSystem2D::WakeAllBodies() {
+		// AxiomPhys (FastBody2D) has no sleep optimization, so only Box2D
+		// rigidbodies need their sleep timer reset.
+		SceneManager::Get().ForeachLoadedScene([](Scene& scene) {
+			auto& registry = scene.GetRegistry();
+			for (auto [ent, rb] : registry.view<Rigidbody2DComponent>(entt::exclude<DisabledTag>).each()) {
+				if (rb.IsValid()) {
+					b2Body_SetAwake(rb.GetBodyHandle(), true);
+				}
+			}
+		});
+	}
+
+	void PhysicsSystem2D::FixedUpdate(float dt) {
+		AXIOM_PROFILE_SCOPE("Physics");
+		if (!s_IsEnabled) return;
+		if (!s_MainWorld || !s_AxiomWorld) return;
+
+		SyncTransformsToPhysics();
+
+		// Step both worlds, then sync poses back, then dispatch callbacks
+		// — so callbacks see fully-settled scene state.
 		s_MainWorld->Step(dt);
-
-		// Axiom-Physics simulation (Box2D step already completed above; Axiom
-		// step has no dependency on Box2D state, so both syncs fuse into one
-		// ForeachLoadedScene walk below).
 		s_AxiomWorld->Step(dt);
 
-		// E16: Fused post-step transform sync — one ForeachLoadedScene walk
-		// for both Rigidbody2D (Box2D) and FastBody2D (Axiom-Physics) instead
-		// of two. Replaces the previously separate Box2D-sync + Axiom-sync
-		// walks. Ordering preserved: both steps have already run.
 		SceneManager::Get().ForeachLoadedScene([](Scene& scene) {
 			auto& registry = scene.GetRegistry();
 
 			for (auto [ent, rb, tf] : registry.view<Rigidbody2DComponent, Transform2DComponent>(entt::exclude<DisabledTag>).each()) {
+				if (!rb.IsValid()) continue;
 				tf.Position = rb.GetPosition();
 				tf.Rotation = rb.GetRotation();
 				tf.ClearDirty();
@@ -88,11 +111,6 @@ namespace Axiom {
 			}
 		});
 
-		// H4: Collision callback dispatch happens AFTER all physics steps and
-		// transform syncs are complete. User scripts may call
-		// `entity.Destroy()` inside these callbacks; the IsValid guard
-		// inside each lambda short-circuits subsequent events targeting an
-		// already-destroyed entity in the same dispatch batch.
 		s_MainWorld->GetDispatcher().Process(
 			s_MainWorld->GetWorldID(),
 			[](const Collision2D& collision) {

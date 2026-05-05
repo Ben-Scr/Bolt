@@ -9,7 +9,7 @@
 
 
 namespace Axiom {
-	Entity Entity::Null{ entt::null, static_cast<Scene*>(nullptr) };
+	const Entity Entity::Null{ entt::null, static_cast<Scene*>(nullptr) };
 
 	EntityHandle Entity::GetHandle() const {
 		return m_EntityHandle;

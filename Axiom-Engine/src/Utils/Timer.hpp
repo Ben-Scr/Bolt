@@ -39,7 +39,7 @@ namespace Axiom {
 
 		float ElapsedSeconds() const {
 			auto totalElapsed = GetTotalElapsed();
-			return std::chrono::duration_cast<std::chrono::seconds>(totalElapsed).count();
+			return std::chrono::duration_cast<std::chrono::duration<float>>(totalElapsed).count();
 		}
 
 		float ElapsedMilliseconds() const {

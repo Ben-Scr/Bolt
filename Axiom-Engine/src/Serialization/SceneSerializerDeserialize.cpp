@@ -469,13 +469,7 @@ namespace Axiom {
 				}
 			}
 
-			// ── Generic registry-driven serialize for package components ──
-			// Walk every type registered with the ComponentRegistry that has
-			// a non-null `serialize` callback. Built-in components don't set
-			// the callback (they're hardcoded above) so this loop only fires
-			// for components added via Package::RegisterSerializableComponent.
-			// Skips serializedNames already present in entityValue so a future
-			// migration of a built-in to the generic path won't double-write.
+			// Registry-driven serialize; skips names already in entityValue to avoid double-write.
 			{
 				Entity entityWrapper = scene.GetEntity(entity);
 				SceneManager* sceneManager = &SceneManager::Get();
@@ -540,9 +534,7 @@ namespace Axiom {
 			return Json::Stringify(left, false) == Json::Stringify(right, false);
 		}
 
-		// Per-field recursive diff. Mirrors the implementation in SceneSerializer.cpp;
-		// duplicated here so RefreshPrefabInstance can run in this translation unit
-		// alongside ApplyOverrides without exposing internals through the header.
+		// Recursive diff; duplicated from SceneSerializer.cpp to keep ApplyOverrides internals private.
 		void BuildOverridePatch(const Value& prefabValue, const Value& instanceValue,
 			const std::string& prefix, Value& overrides) {
 			if (prefabValue.IsObject() && instanceValue.IsObject()) {
@@ -810,11 +802,14 @@ namespace Axiom {
 
 		const std::string sourcePath(source);
 		const std::string serializedName = GetStringMember(root, "name");
-		if (!sourcePath.empty()) {
-			scene.SetName(std::filesystem::path(sourcePath).stem().string());
-		}
-		else if (!serializedName.empty()) {
+		// Prefer the serialized name when present — file-stem fallback is only for
+		// legacy scenes that never wrote a "name" field. Previously the file stem
+		// always won, making the serialized "name" a write-only field.
+		if (!serializedName.empty()) {
 			scene.SetName(serializedName);
+		}
+		else if (!sourcePath.empty()) {
+			scene.SetName(std::filesystem::path(sourcePath).stem().string());
 		}
 
 		const uint64_t sceneId = GetUInt64Member(root, "sceneId", 0);
@@ -1215,11 +1210,7 @@ namespace Axiom {
 			}
 		}
 
-		// ── Generic registry-driven deserialize for package components ──
-		// Mirror of the SerializeEntity sweep. For every registered type that
-		// has a non-null `deserialize` callback, look up the serializedName
-		// in the entity JSON; if present, ensure the component is added and
-		// hand the JSON value off to the registered deserializer.
+		// Registry-driven deserialize for package components.
 		{
 			Entity entityWrapper = scene.GetEntity(entity);
 			SceneManager* sceneManager = &SceneManager::Get();
@@ -1511,10 +1502,7 @@ namespace Axiom {
 			return true;
 		}
 
-		// Fallthrough: unknown built-in name. Check the registry for a
-		// package-registered component whose serializedName matches. Lets
-		// per-component overrides (single-component reset/replay paths) reach
-		// package components the same way they reach built-ins.
+		// Unknown built-in: try registry for a package component with matching serializedName.
 		{
 			Entity entityWrapper = scene.GetEntity(entity);
 			SceneManager* sceneManager = &SceneManager::Get();
@@ -1665,16 +1653,14 @@ namespace Axiom {
 		const uint64_t prefabGuid = static_cast<uint64_t>(scene.GetPrefabGUID(existing));
 		if (prefabGuid == 0) return entt::null;
 
-		// Pull the post-save source from disk. If it can't be loaded the prefab
-		// is gone (orphan); leave the instance untouched rather than corrupting it.
+		// Orphaned prefab: leave instance untouched rather than corrupting it.
 		Value newSourceValue;
 		if (!LoadPrefabEntityValue(prefabGuid, newSourceValue)) {
 			return existing;
 		}
 		RemoveEntityIdentityMembers(newSourceValue);
 
-		// Diff the live instance against the OLD source — these are the per-field
-		// overrides the user wants to keep across the prefab edit.
+		// Diff against OLD source to capture per-field overrides the user kept across the edit.
 		Value oldSource = previousSourceEntityValue;
 		RemoveEntityIdentityMembers(oldSource);
 
@@ -1684,17 +1670,13 @@ namespace Axiom {
 		Value overrides = Value::MakeObject();
 		BuildOverridePatch(oldSource, currentInstance, {}, overrides);
 
-		// Apply the captured overrides on top of the new source. The wrapper
-		// shape matches what ApplyOverrides expects (an object with an
-		// "Overrides" member keyed by dot-path).
+		// Wrapper shape matches ApplyOverrides — object with "Overrides" member keyed by dot-path.
 		Value finalValue = newSourceValue;
 		Value overridesWrapper = Value::MakeObject();
 		overridesWrapper.AddMember("Overrides", std::move(overrides));
 		ApplyOverrides(finalValue, overridesWrapper);
 
-		// Replace the live instance. DeserializeFullEntity preserves Origin and
-		// PrefabGUID via the explicit args, so the new entity remains a tracked
-		// instance of the same prefab.
+		// DeserializeFullEntity preserves Origin and PrefabGUID via the explicit args.
 		scene.DestroyEntity(existing);
 		return DeserializeFullEntity(scene, finalValue, EntityOrigin::Prefab, prefabGuid);
 	}

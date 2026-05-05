@@ -33,17 +33,17 @@ namespace Axiom {
 		bool IsPaused() const;
 		bool IsValid() const;
 
-		const AudioHandle& GetAudioHandle() const { return m_audioHandle; }
+		const AudioHandle& GetAudioHandle() const { return m_AudioHandle; }
 		UUID GetAudioAssetId() const { return m_AudioAssetId; }
 		void SetAudioAssetId(UUID assetId) { m_AudioAssetId = assetId; }
 
-		uint32_t GetInstanceId() const { return m_instanceId; }
-		void SetInstanceId(uint32_t id) { m_instanceId = id; }
+		uint32_t GetInstanceId() const { return m_InstanceId; }
+		void SetInstanceId(uint32_t id) { m_InstanceId = id; }
 
 	private:
-		AudioHandle m_audioHandle;
+		AudioHandle m_AudioHandle;
 		UUID m_AudioAssetId{ 0 };
-		uint32_t m_instanceId = 0;
+		uint32_t m_InstanceId = 0;
 
 
 		float m_Volume = 1.0f;

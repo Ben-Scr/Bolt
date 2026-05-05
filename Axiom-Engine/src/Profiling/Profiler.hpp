@@ -108,7 +108,7 @@ namespace Axiom {
 
 		// Lookups. nullptr if no such module.
 		static ProfilerModule* Find(const std::string& name);
-		static const std::vector<ProfilerModule>& AllModules();
+		static std::vector<ProfilerModule> AllModules();
 
 		// Read the most recent CurrentValue of a module by name. 0.0 if no
 		// such module or no samples have been recorded yet. Used by the
@@ -166,10 +166,7 @@ namespace Axiom {
 		static inline void Shutdown() {}
 		static inline ProfilerModule* Register(const std::string&) { return nullptr; }
 		static inline ProfilerModule* Find(const std::string&) { return nullptr; }
-		static inline const std::vector<ProfilerModule>& AllModules() {
-			static const std::vector<ProfilerModule> empty;
-			return empty;
-		}
+		static inline std::vector<ProfilerModule> AllModules() { return {}; }
 		static inline float GetCurrentValue(const std::string&) { return 0.0f; }
 		static inline void PushValue(const std::string&, float) {}
 		static inline void PushSample(const std::string&, float) {}

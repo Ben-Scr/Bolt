@@ -20,7 +20,7 @@ namespace Axiom {
 		}
 	}
 
-	BodyType Rigidbody2DComponent::GetBodyType() {
+	BodyType Rigidbody2DComponent::GetBodyType() const {
 		switch (b2Body_GetType(m_BodyId)) {
 		case b2_staticBody:
 			return BodyType::Static;
@@ -70,7 +70,10 @@ namespace Axiom {
 		b2Body_SetAngularDamping(m_BodyId, value);
 	}
 
-	void Rigidbody2DComponent::SetRotation(float radians) { b2Body_SetTransform(m_BodyId, b2Body_GetPosition(m_BodyId), b2Rot(radians)); }
+	void Rigidbody2DComponent::SetRotation(float radians) {
+		// Negate to match GetRotation's convention (see Transform2DComponent::GetB2Rotation).
+		b2Body_SetTransform(m_BodyId, b2Body_GetPosition(m_BodyId), b2Rot(std::cos(radians), -std::sin(radians)));
+	}
 	void Rigidbody2DComponent::SetPosition(const Vec2& position) { b2Body_SetTransform(m_BodyId, b2Vec2(position.x, position.y), b2Body_GetRotation(m_BodyId)); }
 	Vec2 Rigidbody2DComponent::GetPosition() const { b2Vec2 b2Pos = IsValid() ? b2Body_GetPosition(m_BodyId) : b2Vec2_zero; return { b2Pos.x, b2Pos.y }; }
 

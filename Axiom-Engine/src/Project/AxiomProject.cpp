@@ -291,10 +291,7 @@ AXIOM_NATIVE_SCRIPT_EXPORT void AxiomDestroyScript(Axiom::NativeScript* script) 
 				? std::string()
 				: MakeRelativePathOrEmpty(std::filesystem::path(project.NativeScriptsDir), engineRoot);
 
-			// Build the user's custom-defines block. Empty when the project
-			// hasn't added any — the placeholder substitution then drops the
-			// line entirely (no useless empty target_compile_definitions
-			// call in the generated CMakeLists).
+			// Empty when no custom defines — the placeholder substitution drops the line entirely.
 			std::string customDefinesBlock;
 			if (!project.CustomDefines.empty()) {
 				customDefinesBlock = "target_compile_definitions(${PROJECT_NAME} PRIVATE";
@@ -371,19 +368,13 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Dist>:AIM_DIST;NDEBUG>
 )
 
-# Build profile macro — sibling of the C# AXIOM_BUILD_DEVELOPMENT/RELEASE
-# defines. Editor hot-reload omits -DAXIOM_BUILD_PROFILE so we default to
-# DEVELOPMENT here; the build pipeline passes -DAXIOM_BUILD_PROFILE=RELEASE
-# when ActiveBuildProfile == Release. Native scripts can then guard with
-# `#ifdef AXIOM_BUILD_RELEASE` exactly like C# scripts.
+# AXIOM_BUILD_DEVELOPMENT/RELEASE — mirrors the C# define so native scripts can use #ifdef.
 if(NOT DEFINED AXIOM_BUILD_PROFILE)
     set(AXIOM_BUILD_PROFILE "DEVELOPMENT")
 endif()
 target_compile_definitions(${PROJECT_NAME} PRIVATE AXIOM_BUILD_${AXIOM_BUILD_PROFILE})
 
-# Project custom defines, baked into the CMake file at project save time.
-# Same list the C# .csproj's <DefineConstants> receives, so C# and native
-# scripts agree on the same symbol set.
+# Project custom defines — same list as C# <DefineConstants>, baked at save time.
 )" + std::string(R"(@AXIOM_PROJECT_CUSTOM_DEFINES_BLOCK@)") + R"(
 
 if(WIN32)
@@ -419,18 +410,14 @@ foreach(config Debug Release Dist)
 endforeach()
 )";
 
-			// Substitute the custom-defines placeholder. find/replace once;
-			// if no defines were configured the placeholder line is removed
-			// entirely (along with its trailing newline) so the generated
-			// CMakeLists stays clean.
+			// Substitute placeholder; strip the line entirely when no defines were configured.
 			const std::string placeholder = "@AXIOM_PROJECT_CUSTOM_DEFINES_BLOCK@";
 			const auto pos = output.find(placeholder);
 			if (pos != std::string::npos) {
 				if (customDefinesBlock.empty()) {
-					// Strip the placeholder line including its trailing \n.
 					std::size_t lineEnd = output.find('\n', pos);
 					if (lineEnd == std::string::npos) lineEnd = output.size();
-					else lineEnd += 1; // consume the newline too
+					else lineEnd += 1;
 					output.erase(pos, lineEnd - pos);
 				} else {
 					output.replace(pos, placeholder.size(), customDefinesBlock);
@@ -531,9 +518,7 @@ endforeach()
 		}
 		root.AddMember("globalSystems", std::move(globalSystems));
 
-		// Only emit "packages" when the project explicitly opts into a filtered allow-list.
-		// Missing field == legacy "scan everything" behaviour, which is the right default
-		// for projects that haven't yet been touched by a package-manager workflow.
+		// Missing field == legacy "scan everything" default; emit only when allow-list is set.
 		if (!project.Packages.empty()) {
 			Json::Value packages = Json::Value::MakeArray();
 			for (const std::string& name : project.Packages) {
@@ -544,8 +529,7 @@ endforeach()
 			root.AddMember("packages", std::move(packages));
 		}
 
-		// Profiler block — only written when at least one field deviates from
-		// the defaults, so virgin projects don't gain a noisy "profiler" key.
+		// Only written when non-default to keep virgin project files clean.
 		const auto& prof = project.Profiler;
 		const bool profilerNonDefault =
 			prof.EnableInRuntime ||
@@ -569,8 +553,6 @@ endforeach()
 			root.AddMember("profiler", std::move(profilerJson));
 		}
 
-		// Runtime stats overlay opt-out. Only written when the user disabled
-		// it (default true) so virgin project files stay clean.
 		if (!project.ShowRuntimeStats) {
 			root.AddMember("showRuntimeStats", false);
 		}
@@ -578,8 +560,6 @@ endforeach()
 			root.AddMember("showRuntimeLogs", false);
 		}
 
-		// Build profile + custom defines. Only written when non-default to
-		// keep virgin project files compact.
 		if (project.ActiveBuildProfile != AxiomProject::BuildProfile::Development) {
 			root.AddMember("buildProfile",
 				std::string(AxiomProject::BuildProfileToString(project.ActiveBuildProfile)));
@@ -632,12 +612,7 @@ endforeach()
 			defineConstants += buildDefine;
 		}
 
-		// Build profile + project custom defines. Pulled from the currently
-		// loaded project so editor hot-reload (AXIOM_EDITOR primary) and
-		// build-pipeline (AXIOM_BUILD primary) both pick up the user's
-		// chosen profile + custom defines from a single source of truth.
-		// Editor hot-reload always uses Development as the profile —
-		// shipping defaults shouldn't bleed into editor preview.
+		// Editor hot-reload always uses Development; shipping defaults shouldn't bleed into editor preview.
 		AxiomProject* project = ProjectManager::GetCurrentProject();
 		const std::string profileDefine = (primarySymbol == "AXIOM_EDITOR")
 			? std::string("AXIOM_BUILD_DEVELOPMENT")
@@ -856,11 +831,7 @@ endforeach()
 				}
 				if (const Json::Value* packagesValue = root.FindMember("packages")) {
 					project.Packages.clear();
-					// Defend against malformed projects: GetArray on a
-					// non-array Value would assert/throw inside Json::Value.
-					// A non-array `packages` field means the user wrote
-					// something invalid; silently skip and warn rather than
-					// taking the editor down at project-load time.
+					// Skip + warn on malformed input rather than asserting in Json::Value::GetArray.
 					if (packagesValue->IsArray()) {
 						for (const Json::Value& packageValue : packagesValue->GetArray()) {
 							const std::string packageName = packageValue.AsStringOr();
@@ -1070,9 +1041,7 @@ endforeach()
 )CS";
 		File::WriteAllText(project.CsprojPath, csproj);
 
-		// Generate .sln — only the user project is visible.
-		// Axiom-ScriptCore is linked via DLL reference in the .csproj,
-		// so it does not need a project entry here.
+		// Axiom-ScriptCore is linked via DLL reference in the .csproj — no project entry needed.
 		ReportCreateProgress(progressCallback, 0.72f, "Generating solution and starter scripts...");
 		std::string projGuid = GenerateGUID();
 
@@ -1300,11 +1269,7 @@ public class GameScript : EntityScript
 		const std::string& configuration, const std::string& platform) {
 		BuildResult result;
 
-		// Empty target list = nothing to build. Treat as success so callers can use this
-		// uniformly: enumerate project-local packages, derive targets, hand them off.
-		// A project with no project-local packages produces an empty list and skips MSBuild
-		// entirely — exactly what we want, since the engine binaries are already up to date
-		// from the user's last `Setup.bat` build.
+		// Empty target list = success no-op. A project with no local packages skips MSBuild entirely.
 		if (targets.empty()) {
 			result.Succeeded = true;
 			result.ExitCode = 0;
@@ -1327,9 +1292,7 @@ public class GameScript : EntityScript
 			return result;
 		}
 
-		// MSBuild's -t:X;Y;Z flag scopes the build to those project targets. Project names
-		// in the solution are dot-separated (e.g. Pkg.Foo.Native). MSBuild expects them
-		// joined with semicolons.
+		// MSBuild expects -t:X;Y;Z with semicolons; solution targets are dot-separated (Pkg.Foo.Native).
 		std::string targetsArg = "-t:";
 		for (size_t i = 0; i < targets.size(); ++i) {
 			if (i > 0) targetsArg += ";";
@@ -1348,9 +1311,7 @@ public class GameScript : EntityScript
 			"-p:Platform=" + platform,
 			targetsArg,
 			"-m",
-			"-restore",         // run `dotnet restore` before build — without this, freshly
-			                    // generated csproj files fail with NETSDK1004 on first build
-			                    // because no project.assets.json exists yet
+			"-restore", // freshly generated csproj fails with NETSDK1004 without restore
 			"-verbosity:minimal",
 			"-nologo"
 		}, engineRoot);
@@ -1369,9 +1330,7 @@ public class GameScript : EntityScript
 	}
 
 	std::vector<std::string> AxiomProject::EnumerateProjectLocalPackages(const std::string& projectRoot) {
-		// A project's local packages live at <projectRoot>/Packages/<Name>/axiom-package.lua.
-		// We don't read or parse the manifest here — caller derives MSBuild target names
-		// from the directory name (`Pkg.<Name>.Native`, `Pkg.<Name>`).
+		// Returns directory names under <projectRoot>/Packages containing an axiom-package.lua.
 		std::vector<std::string> names;
 		if (projectRoot.empty()) return names;
 
@@ -1397,23 +1356,17 @@ public class GameScript : EntityScript
 		AutomateResult result;
 		result.Regenerate = RegenerateSolutionForProject(projectRootDir);
 
-		// Run build only if regen succeeded OR if premake binary was missing (ExitCode == -1
-		// in our convention) — in the latter case the existing solution is still valid.
+		// ExitCode == -1 means premake was missing — the existing solution is still valid, proceed.
 		const bool premakeRanAndFailed = !result.Regenerate.Succeeded && result.Regenerate.ExitCode != -1;
 		if (premakeRanAndFailed) {
 			AIM_ERROR_TAG("AxiomProject", "Skipping build because premake regeneration failed.");
 			return result;
 		}
 
-		// Build only the project-local packages, NOT the whole engine solution. The engine
-		// binaries are already in place from Setup.bat; trying to relink Axiom-Engine.dll
-		// here would fail because the calling process (launcher/editor) has it loaded.
+		// Build local packages only — relinking Axiom-Engine.dll would fail (loaded by caller).
 		std::vector<std::string> targets;
 		for (const std::string& packageName : EnumerateProjectLocalPackages(projectRootDir)) {
-			// Each package exposes up to two MSBuild targets: a native StaticLib/SharedLib
-			// (`Pkg.X.Native`) and a managed C# SharedLib (`Pkg.X`). Premake only generates
-			// the ones that exist; passing both as targets is safe — MSBuild ignores
-			// targets that don't resolve to a real project.
+			// Up to two targets per package; MSBuild silently ignores unresolved ones.
 			targets.push_back("Pkg." + packageName + ".Native");
 			targets.push_back("Pkg." + packageName);
 		}

@@ -17,6 +17,12 @@ namespace Axiom {
 				z /= length;
 				w /= length;
 			}
+			else {
+				// Zero-length quaternion has no defined orientation; falling back to
+				// identity is the only sensible choice (silently no-oping leaves the
+				// caller with a (0,0,0,0) "rotation" that misbehaves everywhere downstream).
+				x = 0.0f; y = 0.0f; z = 0.0f; w = 1.0f;
+			}
 		}
 	};
 

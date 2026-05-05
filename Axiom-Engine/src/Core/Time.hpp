@@ -13,7 +13,10 @@ namespace Axiom {
 		float GetUnscaledDeltaTime() const { return m_DeltaTime; }
 		void SetTargetFramerate(float fps);
 
-		float GetFixedDeltaTime() const { return m_FixedDeltaTime * m_TimeScale; }
+		// Always returns the unscaled fixed step. TimeScale changes step *frequency*
+		// (more/fewer FixedUpdate calls per real second), not the per-call dt — so
+		// integration done in FixedUpdate scales correctly without compounding.
+		float GetFixedDeltaTime() const { return m_FixedDeltaTime; }
 		void SetFixedDeltaTime(float step);
 
 		float GetUnscaledFixedDeltaTime() const { return m_FixedDeltaTime; }

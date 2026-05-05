@@ -68,10 +68,7 @@ namespace Axiom {
 				}
 			}
 
-			// H7: GameSystem.OnAwake — fires once before the first Start. Lazy-
-			// creates the managed instance if it doesn't exist yet (mirrors
-			// Start's bootstrap path) and guards against double-fire across
-			// reload / re-activation.
+			// Lazy-creates managed instance and guards against double-fire across reload.
 			void Awake(Scene& scene) override
 			{
 				if (m_Handle == 0) {
@@ -86,8 +83,6 @@ namespace Axiom {
 				}
 			}
 
-			// H7: GameSystem.OnFixedUpdate — paired with engine FixedUpdate
-			// ticks (after physics step + transform sync).
 			void FixedUpdate(Scene&) override
 			{
 				if (m_Handle != 0) {
@@ -165,28 +160,13 @@ namespace Axiom {
 	}
 
 	Entity Scene::CreatePrefabInstance(AssetGUID prefabGuid, const std::string& name) {
-		// H14 / audit: this is currently a STUB. The returned entity is tagged
-		// with the prefab GUID via EntityOrigin::Prefab and the existing
-		// PrefabInstanceComponent path, but the prefab's actual component data
-		// is NOT deserialized into the new entity — only Transform2D + Name
-		// are added. A real prefab system needs:
-		//   1. PrefabAsset = (entity + component graph) serialized as JSON via
-		//      the existing SceneSerializer machinery (a single-entity scene).
-		//   2. AssetRegistry's AssetKind::Prefab loader to materialise the
-		//      asset on demand.
-		//   3. This method to look up the asset by GUID and deserialize its
-		//      component graph onto `entityHandle`, applying the optional
-		//      override `name` if non-empty.
-		// Until that lands, callers should treat the return value as "an empty
-		// entity tagged with the prefab GUID" and not as a fully-instantiated
-		// prefab. We log a one-shot warning so this misleading API surface
-		// doesn't silently swallow caller intent.
+		// STUB: returned entity is tagged with the prefab GUID but only Transform2D + Name are added.
+		// TODO: deserialize the prefab's component graph from a PrefabAsset.
 		static bool s_WarnedPrefabStub = false;
 		if (!s_WarnedPrefabStub) {
 			s_WarnedPrefabStub = true;
 			AIM_CORE_WARN_TAG("Scene",
-				"CreatePrefabInstance is a STUB — prefab '{}' will be created as an empty entity (Transform + Name only). "
-				"Prefab component-graph deserialization is not yet implemented (see audit H14).",
+				"CreatePrefabInstance is a STUB — prefab '{}' will be empty (Transform + Name only).",
 				static_cast<uint64_t>(prefabGuid));
 		}
 		auto entityHandle = CreateEntityHandle(EntityOrigin::Prefab, prefabGuid);
@@ -407,6 +387,9 @@ namespace Axiom {
 			if (auto* managedSystem = dynamic_cast<ManagedGameSystem*>(it->get());
 				managedSystem && managedSystem->GetClassName() == className) {
 				if (m_IsLoaded) {
+					// Symmetric teardown: disable before destroy, matching the
+					// SetEnabled / OnEnable / OnDisable contract on ISystem.
+					managedSystem->OnDisable(*this);
 					managedSystem->OnDestroy(*this);
 				}
 				m_Systems.erase(it);
@@ -432,6 +415,7 @@ namespace Axiom {
 		for (auto it = m_Systems.begin(); it != m_Systems.end(); ) {
 			if (IsManagedGameSystem(*it)) {
 				if (m_IsLoaded) {
+					(*it)->OnDisable(*this);
 					(*it)->OnDestroy(*this);
 				}
 				it = m_Systems.erase(it);
@@ -454,6 +438,7 @@ namespace Axiom {
 		for (auto it = m_Systems.begin(); it != m_Systems.end(); ) {
 			if (IsManagedGameSystem(*it)) {
 				if (m_IsLoaded) {
+					(*it)->OnDisable(*this);
 					(*it)->OnDestroy(*this);
 				}
 				it = m_Systems.erase(it);
@@ -511,10 +496,7 @@ namespace Axiom {
 	}
 
 	EntityHandle Scene::GetMainCameraEntity() {
-		// Run GetMainCamera() for its side effect — when the cached
-		// m_MainCameraEntity is stale (camera disabled / destroyed) it
-		// rescans the registry and updates the cache. After that the
-		// cached handle is authoritative.
+		// Side effect: refreshes m_MainCameraEntity if cached camera is stale.
 		(void)GetMainCamera();
 		return m_MainCameraEntity;
 	}
@@ -582,11 +564,6 @@ namespace Axiom {
 	}
 
 	void Scene::UpdateSystems() {
-		// ECS::Update used to be its own profiler bucket; in the new four-
-		// category layout its time falls under "Others" (Frame – Render –
-		// Scripts – Physics – VSync). Object Count is now sampled per-frame
-		// at the top level (Application::Run), summed across all loaded
-		// scenes — so it doesn't need a per-scene push here.
 		ForeachEnabledSystem("Update", [this](ISystem& s) { s.Update(*this); });
 	}
 
@@ -701,12 +678,12 @@ namespace Axiom {
 
 	void Scene::OnRigidBody2DComponentConstruct(entt::registry& registry, EntityHandle entity)
 	{
-		// Hooks must run for editor-preview scenes too — the inspector's drawers
-		// (Rigidbody2D, BoxCollider2D, etc.) call accessors like GetScale() that
-		// assume the Box2D body/shape exists. The transient body briefly lives in
-		// the global PhysicsSystem2D world and is destroyed when the prefab is
-		// closed; gating the construct hook left m_BodyId invalid and crashed
-		// the inspector. Audio and script destroy hooks remain gated below.
+		// Skip Box2D body creation for editor-preview scenes (e.g. prefab inspector
+		// thumbnails). Without this gate, every preview entity would push a real body
+		// into the singleton physics world and corrupt simulation state on the live scene.
+		// Drawers must defend against rb2D.IsValid() == false rather than assume.
+		if (m_IsEditorPreview) return;
+
 		if (!registry.all_of<Transform2DComponent>(entity)) {
 			AIM_CORE_WARN_TAG("Scene", "Adding missing Transform2DComponent before creating Rigidbody2D for entity {}", static_cast<uint32_t>(entity));
 			registry.emplace<Transform2DComponent>(entity);
@@ -727,6 +704,7 @@ namespace Axiom {
 	}
 
 	void Scene::OnRigidBody2DComponentDestroy(entt::registry& registry, EntityHandle entity) {
+		if (m_IsEditorPreview) return;
 		auto& rb2D = GetComponent<Rigidbody2DComponent>(entity);
 
 		if (!rb2D.IsValid()) return;
@@ -743,6 +721,7 @@ namespace Axiom {
 	}
 
 	void Scene::OnBoxCollider2DComponentConstruct(entt::registry& registry, EntityHandle entity) {
+		if (m_IsEditorPreview) return;
 		if (!registry.all_of<Transform2DComponent>(entity)) {
 			AIM_CORE_WARN_TAG("Scene", "Adding missing Transform2DComponent before creating BoxCollider2D for entity {}", static_cast<uint32_t>(entity));
 			registry.emplace<Transform2DComponent>(entity);
@@ -752,9 +731,7 @@ namespace Axiom {
 		BoxCollider2DComponent& boxCollider = GetComponent<BoxCollider2DComponent>(entity);
 		boxCollider.m_EntityHandle = entity;
 
-		// Note: Check if the collider already has the Rigidbody2D component
-		// Get the body and assign it to the boxCollider
-		// Else Create a new Static body
+		// Reuse existing rigidbody if present, else spawn a static body.
 		if (HasComponent<Rigidbody2DComponent>(entity)) {
 			auto& rb = GetComponent<Rigidbody2DComponent>(entity);
 			boxCollider.m_BodyId = rb.GetBodyHandle();
@@ -768,6 +745,7 @@ namespace Axiom {
 	}
 
 	void Scene::OnBoxCollider2DComponentDestroy(entt::registry& registry, EntityHandle entity) {
+		if (m_IsEditorPreview) return;
 		auto& boxCollider2D = GetComponent<BoxCollider2DComponent>(entity);
 		if (IsEntityBeingDestroyed(entity) || !registry.all_of<Rigidbody2DComponent>(entity)) {
 			boxCollider2D.Destroy();
@@ -792,15 +770,13 @@ namespace Axiom {
 
 	void Scene::OnCamera2DComponentConstruct(entt::registry& registry, EntityHandle entity)
 	{
-		// Editor-preview scenes participate too — drawer queries Initialize / GetViewport.
-		// m_MainCameraEntity is per-scene, so this can't hijack the active scene's camera.
 		if (!registry.all_of<Transform2DComponent>(entity)) {
 			AIM_CORE_WARN_TAG("Scene", "Adding missing Transform2DComponent before creating Camera2D for entity {}", static_cast<uint32_t>(entity));
 			registry.emplace<Transform2DComponent>(entity);
 		}
 
 		Camera2DComponent& camera2D = GetComponent<Camera2DComponent>(entity);
-		camera2D.Initialize(GetComponent<Transform2DComponent>(entity));
+		camera2D.Initialize(*this, entity);
 		camera2D.UpdateViewport();
 
 		if (!registry.all_of<DisabledTag>(entity)

@@ -5,6 +5,7 @@ namespace Axiom {
 	class ScriptBindings {
 	public:
 		static void PopulateNativeBindings(NativeBindings& bindings);
+		static bool IsScriptInputEnabled();
 	};
 
 }

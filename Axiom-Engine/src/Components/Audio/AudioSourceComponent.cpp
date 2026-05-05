@@ -7,11 +7,11 @@
 namespace Axiom {
 
 	AudioSourceComponent::AudioSourceComponent(const AudioHandle& audioHandle)
-		: m_audioHandle(audioHandle)
+		: m_AudioHandle(audioHandle)
 	{}
 
 	void AudioSourceComponent::Play() {
-		if (!m_audioHandle.IsValid()) {
+		if (!m_AudioHandle.IsValid()) {
 			AIM_CORE_WARN("[{}] Cannot play invalid audio handle", ErrorCodeToString(AxiomErrorCode::InvalidHandle));
 			return;
 		}
@@ -19,38 +19,38 @@ namespace Axiom {
 	}
 
 	void AudioSourceComponent::Pause() {
-		if (m_instanceId == 0) {
+		if (m_InstanceId == 0) {
 			return;
 		}
 		AudioManager::PauseAudioSource(*this);
 	}
 
 	void AudioSourceComponent::Stop() {
-		if (m_instanceId == 0) {
+		if (m_InstanceId == 0) {
 			return;
 		}
 		AudioManager::StopAudioSource(*this);
 	}
 
 	void AudioSourceComponent::Resume() {
-		if (m_instanceId == 0) {
+		if (m_InstanceId == 0) {
 			return;
 		}
 		AudioManager::ResumeAudioSource(*this);
 	}
 
 	void AudioSourceComponent::Destroy() {
-		if (m_instanceId != 0) {
-			AudioManager::DestroySoundInstance(m_instanceId);
-			m_instanceId = 0;
+		if (m_InstanceId != 0) {
+			AudioManager::DestroySoundInstance(m_InstanceId);
+			m_InstanceId = 0;
 		}
 	}
 
 	void AudioSourceComponent::SetVolume(float volume) {
 		m_Volume = Max(0.0f, volume);
 
-		if (m_instanceId != 0) {
-			auto* instance = AudioManager::GetSoundInstance(m_instanceId);
+		if (m_InstanceId != 0) {
+			auto* instance = AudioManager::GetSoundInstance(m_InstanceId);
 			if (instance && instance->IsValid) {
 				float masterVolume = AudioManager::GetMasterVolume();
 				ma_sound_set_volume(&instance->Sound, m_Volume * masterVolume);
@@ -61,8 +61,8 @@ namespace Axiom {
 	void AudioSourceComponent::SetPitch(float pitch) {
 		m_Pitch = Max(0.01f, pitch);
 
-		if (m_instanceId != 0) {
-			auto* instance = AudioManager::GetSoundInstance(m_instanceId);
+		if (m_InstanceId != 0) {
+			auto* instance = AudioManager::GetSoundInstance(m_InstanceId);
 			if (instance && instance->IsValid) {
 				ma_sound_set_pitch(&instance->Sound, m_Pitch);
 			}
@@ -73,8 +73,8 @@ namespace Axiom {
 		m_Loop = loop;
 
 
-		if (m_instanceId != 0) {
-			auto* instance = AudioManager::GetSoundInstance(m_instanceId);
+		if (m_InstanceId != 0) {
+			auto* instance = AudioManager::GetSoundInstance(m_InstanceId);
 			if (instance && instance->IsValid) {
 				ma_sound_set_looping(&instance->Sound, m_Loop);
 			}
@@ -82,11 +82,11 @@ namespace Axiom {
 	}
 
 	bool AudioSourceComponent::IsPlaying() const {
-		if (m_instanceId == 0) {
+		if (m_InstanceId == 0) {
 			return false;
 		}
 
-		auto* instance = AudioManager::GetSoundInstance(m_instanceId);
+		auto* instance = AudioManager::GetSoundInstance(m_InstanceId);
 		if (instance && instance->IsValid) {
 			return ma_sound_is_playing(&instance->Sound);
 		}
@@ -95,13 +95,18 @@ namespace Axiom {
 	}
 
 	bool AudioSourceComponent::IsPaused() const {
-		if (m_instanceId == 0) {
+		if (m_InstanceId == 0) {
 			return false;
 		}
 
-		auto* instance = AudioManager::GetSoundInstance(m_instanceId);
+		auto* instance = AudioManager::GetSoundInstance(m_InstanceId);
 		if (instance && instance->IsValid) {
-			return !ma_sound_is_playing(&instance->Sound) && ma_sound_at_end(&instance->Sound) == MA_FALSE;
+			// A never-started sound is not playing AND not at end either — exclude it
+			// by requiring that some playback cursor has progressed (at_end is set
+			// after a non-looping sound finishes, but only if it ever started).
+			if (ma_sound_is_playing(&instance->Sound)) return false;
+			if (ma_sound_at_end(&instance->Sound) == MA_TRUE) return false;
+			return ma_sound_get_time_in_pcm_frames(&instance->Sound) > 0;
 		}
 
 		return false;
@@ -109,21 +114,21 @@ namespace Axiom {
 
 
 	void AudioSourceComponent::SetAudioHandle(const AudioHandle& audioHandle, UUID assetId) {
-		if (m_instanceId != 0) {
-			Stop();
+		if (m_InstanceId != 0) {
+			Destroy();
 		}
 
-		m_audioHandle = audioHandle;
+		m_AudioHandle = audioHandle;
 		m_AudioAssetId = assetId;
 	}
 
 	void AudioSourceComponent::PlayOneShot() {
-		if (!m_audioHandle.IsValid()) {
+		if (!m_AudioHandle.IsValid()) {
 			AIM_CORE_WARN("[{}] AudioSource cannot play one-shot - invalid audio handle", ErrorCodeToString(AxiomErrorCode::InvalidHandle));
 			return;
 		}
-		AudioManager::PlayOneShot(m_audioHandle, m_Volume);
+		AudioManager::PlayOneShot(m_AudioHandle, m_Volume);
 	}
 
-	bool AudioSourceComponent::IsValid() const { return m_audioHandle.IsValid(); }
+	bool AudioSourceComponent::IsValid() const { return m_AudioHandle.IsValid(); }
 }

@@ -19,11 +19,15 @@ namespace Axiom {
 		Vec2 GetScale() const;
 		Vec2 GetLocalScale(const Scene& scene) const;
 
-		// Note: has to be called when the transforms scale has been changed.
-		void UpdateScale(const Scene& scene);
+		void SyncWithTransform(const Scene& scene);
+		void UpdateScale(const Scene& scene) { SyncWithTransform(scene); }
 
 		void SetCenter(const Vec2& center, const Scene& scene);
 		Vec2 GetCenter() const;
+
+		void Destroy();
 	private:
+		Vec2 m_LocalSize{ 1.0f, 1.0f };
+		Vec2 m_LastAppliedScale{ 0.0f, 0.0f };
 	};
 }

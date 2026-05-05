@@ -37,6 +37,11 @@
 #include "Physics/Physics2D.hpp"
 
 namespace Axiom {
+	bool ScriptBindings::IsScriptInputEnabled()
+	{
+		return Application::s_Instance && Application::s_Instance->m_IsScriptInputEnabled;
+	}
+
 	EntityHandle ToEntityHandle(uint64_t id)
 	{
 		return static_cast<EntityHandle>(static_cast<uint32_t>(id));
@@ -85,13 +90,7 @@ namespace Axiom {
 			return false;
 		}
 
-		// IDs crossing the script bridge are *only* runtime IDs (or the
-		// equivalent UUID-resolution path). We deliberately do NOT fall back
-		// to `ToEntityHandle(entityID)` here: that would truncate the high 32
-		// bits of a UUID and could coincidentally collide with a live entt
-		// handle whose lower 32 bits happen to match — silent type confusion
-		// across the script boundary, hard to debug.
-
+		// Never fall back to ToEntityHandle(entityID) — UUIDs would truncate and silently alias entt handles.
 		Scene* currentScene = ScriptEngine::GetScene();
 		if (currentScene) {
 			if (TryResolveEntityByUUID(*currentScene, entityID, outHandle)) {
@@ -129,10 +128,8 @@ namespace Axiom {
 		return nullptr;
 	}
 
-	// E27: HAZARD: Returned const char* is invalidated by the next binding call that
-	// touches s_StringReturnBuffer. Managed callers MUST copy immediately.
-	// TODO(audit-H/E27): Replace with managed-side buffer ownership
-	// (Axiom_*_GetString(char* buf, int bufLen)) to eliminate this bug class.
+	// HAZARD: returned const char* invalidates on the next binding call. Managed callers MUST copy immediately.
+	// TODO: replace with managed-side buffer ownership.
 	thread_local std::string s_StringReturnBuffer;
 
 	void PopulateNonComponentBindings(NativeBindings& b);
@@ -145,19 +142,7 @@ namespace Axiom {
 		auto& comp = scene->GetComponent<Type>(handle)
 
 
-	// Helper: find ComponentInfo by name. The lookup tries multiple keys so
-	// callers can pass any of the names the engine knows the component by:
-	//   1. displayName    — what the editor inspector shows ("Tilemap 2D")
-	//   2. serializedName — the JSON key in scene/prefab files ("Tilemap2D")
-	//   3. serializedName + "Component" — C# convention for package types
-	//      (`typeof(Tilemap2DComponent).Name` -> "Tilemap2DComponent")
-	//   4. displayName_no_spaces + "Component" — same C# convention but
-	//      derived from the display name when no serializedName is set.
-	//
-	// Built-in component types appear in C#'s `s_NativeComponentNames` map
-	// (Entity.cs) and use the displayName form, so they hit case 1 directly.
-	// Package types like Tilemap2DComponent fall through C#'s `typeof(T).Name`
-	// fallback, which produces "Tilemap2DComponent" — case 3 catches it.
+	// Tries displayName, serializedName, and the +"Component" C# fallbacks for package types.
 	static const ComponentInfo* FindComponentByName(const std::string& name) {
 		const auto& registry = SceneManager::Get().GetComponentRegistry();
 		const ComponentInfo* found = nullptr;
@@ -1106,10 +1091,7 @@ namespace Axiom {
 	{
 		GET_COMPONENT(AudioSourceComponent, entityID, 0);
 
-		// Mirror SpriteRenderer_GetTexture: prefer the explicit asset ID; if
-		// the component holds only a live handle (e.g. loaded by path), look
-		// the UUID up via AudioManager and cache it back so subsequent calls
-		// are O(1).
+		// Cache UUID resolved from a loaded handle so subsequent calls are O(1).
 		uint64_t assetId = static_cast<uint64_t>(comp.GetAudioAssetId());
 		if (assetId == 0 && comp.GetAudioHandle().IsValid()) {
 			assetId = AudioManager::GetAudioAssetUUID(comp.GetAudioHandle());

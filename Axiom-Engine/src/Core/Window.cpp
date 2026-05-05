@@ -50,10 +50,7 @@ namespace Axiom {
 
 		AIM_ASSERT(code == GLFW_TRUE, AxiomErrorCode::Undefined, "GLFW library couldn't initialize, error code " + StringHelper::WrapWith(std::to_string(code), '\''));
 
-		// Null-check primary monitor: in headless / CI / detached-session
-		// scenarios glfwGetPrimaryMonitor() can return nullptr, which used
-		// to silently propagate into glfwGetVideoMode and crash later when
-		// k_Videomode was dereferenced (e.g. in CenterWindow / SetFullScreen).
+		// Headless / CI / detached-session: glfwGetPrimaryMonitor can return null.
 		GLFWmonitor* mainMonitor = GetMainMonitor();
 		if (!mainMonitor) {
 			AIM_CORE_ERROR_TAG("Window", "No primary monitor available");
@@ -76,9 +73,7 @@ namespace Axiom {
 		s_MainViewport.reset();
 		s_ActiveWindow = nullptr;
 		k_Videomode = nullptr;
-		// Reset to default so a subsequent Initialize() (after a reload)
-		// starts from the same baseline as a fresh process. Previously the
-		// last user-set vsync state leaked across reloads.
+		// Reset across reloads — last user-set vsync state would otherwise leak.
 		s_IsVsync = true;
 		s_IsInitialized = false;
 		glfwTerminate();

@@ -736,11 +736,8 @@ internal static class ScriptInstanceManager
 
             foreach (var field in fields)
             {
-                // Skip fields from EntityScript base class
                 if (field.DeclaringType == typeof(EntityScript)) continue;
-
-                var showAttr = field.GetCustomAttribute<ShowInEditorAttribute>();
-                if (showAttr == null) continue;
+                if (!IsFieldEditorVisible(field)) continue;
 
                 string fieldType = MapFieldType(field.FieldType);
                 if (fieldType == "unsupported") continue;
@@ -1102,6 +1099,18 @@ internal static class ScriptInstanceManager
         return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
     }
 
+    // Inspector visibility rules:
+    //   public field (no [EditorIgnore]/[HideFromEditor])  -> visible
+    //   private/protected field with [ShowInEditor]        -> visible
+    //   anything with [EditorIgnore] or [HideFromEditor]   -> hidden
+    private static bool IsFieldEditorVisible(FieldInfo field)
+    {
+        if (field.GetCustomAttribute<EditorIgnoreAttribute>() != null) return false;
+        if (field.GetCustomAttribute<HideFromEditorAttribute>() != null) return false;
+        if (field.IsPublic) return true;
+        return field.GetCustomAttribute<ShowInEditorAttribute>() != null;
+    }
+
     // Build a single field's JSON object for the editor metadata payload.
     // Centralised here so GetScriptFields and GetClassFieldDefs emit the same
     // shape — the C++ inspector parses the result into PropertyDescriptor.
@@ -1112,12 +1121,17 @@ internal static class ScriptInstanceManager
     private static void AppendFieldJson(System.Text.StringBuilder sb, FieldInfo field, object? value)
     {
         var ic = System.Globalization.CultureInfo.InvariantCulture;
-        var showAttr = field.GetCustomAttribute<ShowInEditorAttribute>()!;
+        // showAttr is optional now: public fields are visible by default
+        // and only need ShowInEditor when overriding the display name.
+        var showAttr = field.GetCustomAttribute<ShowInEditorAttribute>();
 
         string fieldType = MapFieldType(field.FieldType);
         string valueStr = FormatFieldValue(field.FieldType, value);
-        string displayName = string.IsNullOrEmpty(showAttr.DisplayName) ? field.Name : showAttr.DisplayName;
-        bool readOnly = showAttr.ReadOnly;
+        string displayName = (showAttr != null && !string.IsNullOrEmpty(showAttr.DisplayName))
+            ? showAttr.DisplayName
+            : field.Name;
+        bool readOnly = (showAttr?.ReadOnly ?? false)
+            || field.GetCustomAttribute<EditorReadOnlyAttribute>() != null;
 
         float clampMin = 0, clampMax = 0;
         bool hasClamp = false;
@@ -1251,9 +1265,7 @@ internal static class ScriptInstanceManager
             {
                 if (field.DeclaringType == typeof(EntityScript)) continue;
                 if (field.DeclaringType == typeof(Component)) continue;
-
-                var showAttr = field.GetCustomAttribute<ShowInEditorAttribute>();
-                if (showAttr == null) continue;
+                if (!IsFieldEditorVisible(field)) continue;
 
                 string fieldType = MapFieldType(field.FieldType);
                 if (fieldType == "unsupported") continue;

@@ -1,5 +1,6 @@
 #include "pch.hpp"
 #include "Serialization/Json.hpp"
+#include "Core/Log.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -11,9 +12,7 @@
 namespace Axiom::Json {
 
 	namespace {
-		// Cap recursion depth to prevent a malformed deeply-nested JSON from
-		// stack-overflowing the parser. 256 covers any reasonable user data
-		// (scenes, prefabs, project files); pathological input is rejected.
+		// Recursion cap rejects pathological deep nesting before it overflows the parser stack.
 		constexpr int kMaxParseDepth = 256;
 
 		class Parser {
@@ -23,10 +22,7 @@ namespace Axiom::Json {
 			}
 
 			bool ParseValue(Value& outValue, std::string* outError) {
-				// Skip a leading UTF-8 BOM (EF BB BF). Some editors (Notepad,
-				// some VS configs) write one; the JSON spec doesn't include it
-				// in valid input, but rejecting BOM-prefixed files is a
-				// frequent and surprising failure mode.
+				// Skip leading UTF-8 BOM (EF BB BF) — some editors emit it though it's not valid JSON.
 				if (m_Text.size() >= 3
 					&& static_cast<unsigned char>(m_Text[0]) == 0xEF
 					&& static_cast<unsigned char>(m_Text[1]) == 0xBB
@@ -145,12 +141,7 @@ namespace Axiom::Json {
 						if (!ParseUnicodeEscape(codePoint, outError)) {
 							return false;
 						}
-						// JSON encodes code points outside the BMP as a UTF-16
-						// surrogate pair: a high surrogate (D800-DBFF) followed
-						// by `\u` and a low surrogate (DC00-DFFF). Detect the
-						// pair and combine into the actual 21-bit code point;
-						// without this we'd emit invalid UTF-8 for every emoji
-						// or non-BMP character.
+						// Combine UTF-16 surrogate pair (high D800-DBFF + low DC00-DFFF) into one code point.
 						if (codePoint >= 0xD800 && codePoint <= 0xDBFF) {
 							if (m_Position + 2 > m_Text.size()
 								|| m_Text[m_Position] != '\\'
@@ -301,10 +292,7 @@ namespace Axiom::Json {
 
 				const std::string numericText(m_Text.substr(start, m_Position - start));
 
-				// Integer-shaped numbers go to int64/uint64 storage to preserve
-				// full 64-bit precision (UUIDs, AssetGUIDs are >2^53). Only
-				// fall back to double when we see a fraction or exponent, or
-				// when the integer doesn't fit in [INT64_MIN, UINT64_MAX].
+				// Integers go to int64/uint64 to preserve full precision (UUIDs are >2^53).
 				if (!isFloat) {
 					if (isNegative) {
 						const char* first = numericText.data();
@@ -497,10 +485,19 @@ namespace Axiom::Json {
 				case Value::NumberKind::Double:
 				default:
 				{
-					std::ostringstream stream;
-					stream.precision(15);
-					stream << value.AsDoubleOr(0.0);
-					out += stream.str();
+					// to_chars on stack buffer; ostringstream alloc dominated Stringify time on large scenes.
+					char buffer[32];
+					const double doubleValue = value.AsDoubleOr(0.0);
+					auto [ptr, ec] = std::to_chars(
+						buffer, buffer + sizeof(buffer), doubleValue,
+						std::chars_format::general);
+					if (ec == std::errc{}) {
+						out.append(buffer, static_cast<size_t>(ptr - buffer));
+					}
+					else {
+						// Unreachable for finite doubles in 32 bytes; fall back rather than emit garbage.
+						out += "0";
+					}
 					break;
 				}
 				}
@@ -663,10 +660,7 @@ namespace Axiom::Json {
 			return static_cast<int>(m_UInt64);
 		}
 
-		// Largest double < INT_MAX+1 that's still ≤ INT_MAX. Comparing
-		// against `static_cast<double>(INT_MAX)` would round up to INT_MAX+1,
-		// so values in (INT_MAX, INT_MAX+1] would pass the guard and produce
-		// UB on cast.
+		// double(INT_MAX) rounds up; comparing >= INT_MAX+1.0 avoids the UB-on-cast hazard.
 		if (m_Number < static_cast<double>(std::numeric_limits<int>::min()) ||
 			m_Number >= static_cast<double>(std::numeric_limits<int>::max()) + 1.0) {
 			return fallback;
@@ -690,11 +684,8 @@ namespace Axiom::Json {
 			return static_cast<int64_t>(m_UInt64);
 		}
 
-		// `static_cast<double>(INT64_MAX)` rounds up to 9223372036854775808.0,
-		// which is INT64_MAX+1. Values in (INT64_MAX, INT64_MAX+1] would pass
-		// a naive `> INT64_MAX` check then UB on cast. Use the next-lower
-		// exactly-representable double instead.
-		constexpr double k_MaxSafeI64 = 9223372036854774784.0;  // INT64_MAX rounded down to nearest representable double
+		// double(INT64_MAX) rounds up; use next-lower exactly-representable double to avoid UB on cast.
+		constexpr double k_MaxSafeI64 = 9223372036854774784.0;  // INT64_MAX rounded down
 		constexpr double k_MinSafeI64 = -9223372036854775808.0; // INT64_MIN is exactly representable
 
 		if (m_Number < k_MinSafeI64 || m_Number > k_MaxSafeI64) {
@@ -717,8 +708,7 @@ namespace Axiom::Json {
 			return static_cast<uint64_t>(m_Int64);
 		}
 
-		// `static_cast<double>(UINT64_MAX)` rounds up; same UB hazard as
-		// AsInt64Or. Use the next-lower exactly-representable double.
+		// Same UB hazard as AsInt64Or — use next-lower exactly-representable double.
 		constexpr double k_MaxSafeU64 = 18446744073709549568.0;
 
 		if (m_Number < 0.0 || m_Number > k_MaxSafeU64) {
@@ -784,6 +774,9 @@ namespace Axiom::Json {
 		SetType(Type::Object);
 		for (auto& [memberKey, memberValue] : m_Object) {
 			if (memberKey == key) {
+				// Overwrite-on-duplicate is load-bearing (BuildOverridePatch re-keys); trace for visibility.
+				AIM_CORE_TRACE_TAG("Serialization",
+					"Duplicate JSON key '{}' overwritten", key);
 				memberValue = std::move(value);
 				return memberValue;
 			}
@@ -813,6 +806,56 @@ namespace Axiom::Json {
 		m_String.clear();
 		m_Object.clear();
 		m_Array.clear();
+	}
+
+	bool operator==(const Value& a, const Value& b) {
+		if (a.m_Type != b.m_Type) return false;
+		switch (a.m_Type) {
+		case Value::Type::Null: return true;
+		case Value::Type::Bool: return a.m_Bool == b.m_Bool;
+		case Value::Type::Number: {
+			auto numericValue = [](const Value& v) -> double {
+				switch (v.m_NumberKind) {
+				case Value::NumberKind::Int64:  return static_cast<double>(v.m_Int64);
+				case Value::NumberKind::UInt64: return static_cast<double>(v.m_UInt64);
+				case Value::NumberKind::Double: return v.m_Number;
+				}
+				return v.m_Number;
+			};
+			if (a.m_NumberKind == b.m_NumberKind) {
+				switch (a.m_NumberKind) {
+				case Value::NumberKind::Int64:  return a.m_Int64 == b.m_Int64;
+				case Value::NumberKind::UInt64: return a.m_UInt64 == b.m_UInt64;
+				case Value::NumberKind::Double: return a.m_Number == b.m_Number;
+				}
+			}
+			return numericValue(a) == numericValue(b);
+		}
+		case Value::Type::String: return a.m_String == b.m_String;
+		case Value::Type::Array: {
+			if (a.m_Array.size() != b.m_Array.size()) return false;
+			for (size_t i = 0; i < a.m_Array.size(); ++i) {
+				if (!(a.m_Array[i] == b.m_Array[i])) return false;
+			}
+			return true;
+		}
+		case Value::Type::Object: {
+			if (a.m_Object.size() != b.m_Object.size()) return false;
+			for (const auto& [key, value] : a.m_Object) {
+				bool found = false;
+				for (const auto& [bKey, bValue] : b.m_Object) {
+					if (bKey == key) {
+						if (!(value == bValue)) return false;
+						found = true;
+						break;
+					}
+				}
+				if (!found) return false;
+			}
+			return true;
+		}
+		}
+		return false;
 	}
 
 	bool TryParse(std::string_view text, Value& outValue, std::string* outError) {

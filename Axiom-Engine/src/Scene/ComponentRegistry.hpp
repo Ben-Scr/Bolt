@@ -18,6 +18,9 @@ namespace Axiom {
                 if (!info.drawInspector) info.drawInspector = existing->second.drawInspector;
                 if (info.properties.empty()) info.properties = existing->second.properties;
                 if (info.conflictsWith.empty()) info.conflictsWith = existing->second.conflictsWith;
+                // Preserve serialize/deserialize: AttachInspector re-registers and would otherwise drop them.
+                if (!info.serialize) info.serialize = existing->second.serialize;
+                if (!info.deserialize) info.deserialize = existing->second.deserialize;
             }
 
             info.has = [](Entity e) { return e.HasComponent<T>(); };
@@ -44,11 +47,7 @@ namespace Axiom {
 
         const auto& All() const { return m_map; }
 
-        // Resolve the ComponentInfo for a registered component type. Used
-        // by hybrid inspectors that want to draw their declarative
-        // properties first (`PropertyDrawer::DrawAll(entities, info->properties, ...)`)
-        // and then append a few extra widgets that don't fit the property
-        // model (e.g. texture preview, runtime read-outs).
+        /// Resolve ComponentInfo for hybrid inspectors that mix DrawAll with custom widgets.
         template <typename T>
         const ComponentInfo* GetInfo() const {
             const auto it = m_map.find(typeid(T));
@@ -76,10 +75,7 @@ namespace Axiom {
             }
         }
 
-        // True if `proposed` conflicts with any component already present on
-        // `entity`. Bidirectional: if either side declared the conflict it
-        // counts. Used by the editor's Add Component popup to filter entries
-        // and (optionally) by gameplay code before calling info.add directly.
+        /// Bidirectional conflict check; either side's declaration counts.
         bool HasConflict(Entity entity, std::type_index proposed) const {
             const auto proposedIt = m_map.find(proposed);
             const ComponentInfo* proposedInfo = (proposedIt != m_map.end()) ? &proposedIt->second : nullptr;
@@ -102,12 +98,7 @@ namespace Axiom {
             return false;
         }
 
-        // Span-based variant for callers that already have a list of types
-        // (e.g. proposing two components at once). `presentTypes` lists what
-        // would be on the entity AFTER the proposed addition; this returns
-        // the first conflicting pair, or std::nullopt if the set is valid.
-        // Currently used by tests — production callers prefer the Entity
-        // overload above.
+        /// Type-pair check for callers that already have type_index values.
         bool TypesConflict(std::type_index a, std::type_index b) const {
             if (a == b) return false;
             const auto ai = m_map.find(a);

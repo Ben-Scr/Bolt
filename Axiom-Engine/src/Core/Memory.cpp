@@ -152,7 +152,7 @@ namespace Axiom {
 			s_GlobalStats.TotalAllocated += size;
 		}
 
-#if HZ_ENABLE_PROFILING
+#if AIM_ENABLE_PROFILING
 		TracyAlloc(memory, size);
 #endif
 
@@ -182,7 +182,7 @@ namespace Axiom {
 				data->m_AllocationStatsMap[desc].TotalAllocated += size;
 		}
 
-#if HZ_ENABLE_PROFILING
+#if AIM_ENABLE_PROFILING
 		TracyAlloc(memory, size);
 #endif
 

@@ -25,7 +25,8 @@ namespace Axiom {
 			return { col[0], col[1], col[2], col[3] };
 		}
 
-		Color SetAlpha(float a) { this->a = a; return *this; }
+		Color& SetAlpha(float alpha) { this->a = alpha; return *this; }
+		Color WithAlpha(float alpha) const { Color c = *this; c.a = alpha; return c; }
 
 		static const Color Red() { return Color(1.0f, 0.0f, 0.0f); }
 		static const Color Green() { return Color(0.0f, 1.0f, 0.0f); }
@@ -79,7 +80,7 @@ namespace Axiom {
 				a.r + t * (b.r - a.r),
 				a.g + t * (b.g - a.g),
 				a.b + t * (b.b - a.b),
-				a.r + t * (b.a - a.a)
+				a.a + t * (b.a - a.a)
 			);
 		}
 

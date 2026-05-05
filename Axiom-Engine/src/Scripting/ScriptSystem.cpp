@@ -754,12 +754,7 @@ namespace Axiom {
 	{
 		m_LastScene = &scene;
 
-		// Per-binary scripting opt-out. Processes that aren't going to run
-		// game logic (the launcher in particular) set EnableScripting=false
-		// in their ApplicationConfig — that lets us skip CoreCLR init and,
-		// crucially, NOT load Axiom-ScriptCore.dll. Loading the DLL holds an
-		// OS file lock for the process's lifetime, which blocks the editor
-		// from rebuilding ScriptCore while the launcher is still running.
+		// Skipped here so launcher doesn't lock Axiom-ScriptCore.dll while editor rebuilds it.
 		auto* app = Application::GetInstance();
 		if (app && !app->GetConfiguration().EnableScripting) {
 			return;
@@ -770,9 +765,7 @@ namespace Axiom {
 			m_PollingOwner = this;
 		}
 		if (m_ActiveSystemCount > 1) {
-			// Subsequent scenes still need OnAwake fired for their own
-			// ScriptComponents. The engine and assemblies are already
-			// initialized by the first scene's Awake.
+			// First scene's Awake handles engine/assembly init; subsequent scenes still fire OnAwake.
 			if (ScriptEngine::IsInitialized())
 			{
 				ScriptSceneScope sceneScope(scene);
@@ -810,12 +803,11 @@ namespace Axiom {
 			ScriptEngine::Init();
 		}
 
-		// Core assembly — check multiple locations
 		if (m_CoreAssemblyPath.empty())
 		{
 			std::vector<std::filesystem::path> candidates = {
 				exeDir / ".." / "Axiom-ScriptCore" / "Axiom-ScriptCore.dll",  // dev layout
-				exeDir / "Axiom-ScriptCore.dll",                              // packaged build (beside exe)
+				exeDir / "Axiom-ScriptCore.dll",                              // packaged build
 			};
 			for (const auto& candidate : candidates) {
 				if (std::filesystem::exists(candidate)) {
@@ -828,7 +820,6 @@ namespace Axiom {
 		if (!ScriptEngine::IsInitialized() && std::filesystem::exists(m_CoreAssemblyPath))
 			ScriptEngine::LoadCoreAssembly(m_CoreAssemblyPath);
 
-		// User assembly — project-aware
 		if (m_UserAssemblyPath.empty())
 		{
 			if (project)
@@ -852,7 +843,6 @@ namespace Axiom {
 		}
 		InitializeRegisteredGlobalSystems();
 
-		// C# file watcher — project-aware
 		if (project)
 		{
 			auto scriptsDir = std::filesystem::path(project->ScriptsDirectory);
@@ -893,7 +883,6 @@ namespace Axiom {
 			}
 		}
 
-		// Native C++ scripting — project-aware
 		if (project)
 		{
 			const bool hasNativeScriptSources = project->HasNativeScriptSources();
@@ -956,11 +945,7 @@ namespace Axiom {
 
 		AIM_INFO_TAG("ScriptSystem", "Script system initialized");
 
-		// ── EntityScript OnAwake dispatch (first scene to initialize) ─
-		// Bind any ScriptComponent instances eagerly so OnAwake fires before
-		// the first Update. The C# side guards against double-fire via its
-		// own per-instance HasAwoken flag, so re-entry from script reload is
-		// safe.
+		// Eager OnAwake dispatch for first scene; C# side guards against double-fire on reload.
 		if (ScriptEngine::IsInitialized())
 		{
 			ScriptSceneScope sceneScope(scene);
@@ -990,16 +975,9 @@ namespace Axiom {
 		}
 	}
 
-	// ── C# rebuild ─────────────────────────────────────────────────────
-
 	void ScriptSystem::RebuildAndReloadScripts()
 	{
-		// Drop rebuild requests once the application has begun shutting down.
-		// FileWatcher events can fire during teardown (the OS is still
-		// notifying us about file changes that happened before Stop()), and
-		// kicking off MSBuild here just produces the lock-contention bug
-		// where MSBuild can't write the new .dll because we (or our peer
-		// process) still has it loaded.
+		// Drop rebuilds during shutdown — late watcher events would lock the .dll mid-teardown.
 		if (Application::IsShuttingDown()) {
 			m_RebuildQueued = false;
 			return;
@@ -1028,8 +1006,6 @@ namespace Axiom {
 			});
 		});
 	}
-
-	// ── C++ native rebuild ─────────────────────────────────────────────
 
 	void ScriptSystem::RebuildAndReloadNativeScripts()
 	{
@@ -1092,10 +1068,7 @@ namespace Axiom {
 					"-B", buildDirectory.string(),
 					"-S", nativeProjectDirectory,
 					"-DCMAKE_BUILD_TYPE=" + buildConfig,
-					// Editor hot-reload always builds the DEVELOPMENT profile —
-					// editor preview shouldn't bleed Release stripping into
-					// running games. The Build panel pipeline overrides this
-					// (passes RELEASE) when packaging a release ship build.
+					// Editor hot-reload always uses DEVELOPMENT; Build panel overrides for ship builds.
 					"-DAXIOM_BUILD_PROFILE=DEVELOPMENT"
 				};
 
@@ -1147,8 +1120,6 @@ namespace Axiom {
 	{
 		return m_RebuildTask != nullptr || m_NativeRebuildTask != nullptr;
 	}
-
-	// ── OnPreRender: hot-reload polling + build overlay ──────────────────────
 
 	void ScriptSystem::TeardownManagedScripts(Scene& scene)
 	{
@@ -1342,7 +1313,6 @@ namespace Axiom {
 
 		bool anyRebuilding = false;
 
-		// C# build completion check
 		Process::Result result;
 		if (TryTakeTaskResult(m_RebuildTask, result))
 		{
@@ -1362,8 +1332,6 @@ namespace Axiom {
 			{
 				m_LastRebuildFailed = true;
 				AIM_ERROR_TAG("ScriptSystem", "C# build failed (exit code {})", result.ExitCode);
-				// E28: Split dotnet build output into structured per-diagnostic log entries
-				// instead of dumping the entire stdout as one wall-of-text error.
 				if (!result.Output.empty()) {
 					static const std::regex s_ErrorPattern(R"(error CS\d+:)");
 					static const std::regex s_WarningPattern(R"(warning CS\d+:)");
@@ -1403,7 +1371,6 @@ namespace Axiom {
 			}
 		}
 
-		// C++ build completion check
 		if (TryTakeTaskResult(m_NativeRebuildTask, result))
 		{
 			if (result.Succeeded())
@@ -1449,8 +1416,6 @@ namespace Axiom {
 			}
 		}
 
-		// Overlay rendering is the editor's responsibility — IsScriptRebuildRunning() /
-		// IsNativeRebuildRunning() / GetActiveRebuildElapsedSeconds() expose the state.
 		(void)anyRebuilding;
 	}
 
@@ -1475,8 +1440,6 @@ namespace Axiom {
 		const auto startTime = nativeRunning ? m_NativeRebuildTask->StartedAt : m_RebuildTask->StartedAt;
 		return std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
 	}
-
-	// ── Update: dual dispatch (Managed + Native) ───────────────────────
 
 	void ScriptSystem::Update(Scene& scene)
 	{
@@ -1504,7 +1467,6 @@ namespace Axiom {
 					const bool canUseManaged = scriptType == ScriptType::Managed || scriptType == ScriptType::Unknown;
 					const bool canUseNative = scriptType == ScriptType::Native || scriptType == ScriptType::Unknown;
 
-					// Try C# (managed) first
 					if (canUseManaged && managedRuntimeReady && ScriptEngine::ClassExists(instance.GetClassName()))
 					{
 						uint32_t handle = ScriptEngine::CreateScriptInstance(
@@ -1512,7 +1474,6 @@ namespace Axiom {
 						if (handle != 0)
 							instance.SetGCHandle(handle);
 					}
-					// Then try native C++
 					if (!instance.HasAnyInstance()
 						&& canUseNative
 						&& !IsTaskRunning(m_NativeRebuildTask)
@@ -1527,7 +1488,6 @@ namespace Axiom {
 					if (!instance.HasAnyInstance())
 						continue;
 
-					// Apply pending [ShowInEditor] field values from deserialization
 					if (instance.HasManagedInstance() && !scriptComp.PendingFieldValues.empty()) {
 						std::string prefix = instance.GetClassName() + ".";
 						auto& callbacks = ScriptEngine::GetCallbacks();
@@ -1547,7 +1507,6 @@ namespace Axiom {
 					}
 				}
 
-				// Dispatch lifecycle based on script type
 				if (instance.GetType() == ScriptType::Managed)
 				{
 					if (!managedRuntimeReady || !instance.HasManagedInstance()) {
@@ -1603,12 +1562,7 @@ namespace Axiom {
 		}
 	}
 
-	// H7: FixedUpdate dispatch — fires OnFixedUpdate on every bound script
-	// instance. Mirrors the structure of Update but skips the bind/start
-	// bookkeeping, since FixedUpdate only runs after Update has already
-	// brought the instance through Bind / OnStart at least once. Instances
-	// that haven't started yet are silently skipped this tick; they'll fire
-	// their first OnFixedUpdate the tick after their first OnStart lands.
+	// Skips bind/start bookkeeping; instance must already be Bound + Started by Update.
 	void ScriptSystem::FixedUpdate(Scene& scene)
 	{
 		AXIOM_PROFILE_SCOPE("Scripts.FixedUpdate");
@@ -1632,9 +1586,7 @@ namespace Axiom {
 					if (IsTaskRunning(m_NativeRebuildTask) || !instance.HasNativeInstance()) continue;
 					NativeScript* nativeInstance = instance.GetNativePtr();
 					if (!nativeInstance) continue;
-					// Native scripts don't have OnFixedUpdate yet (mirrors C# side
-					// being the first-class scripting surface); this is the
-					// future hook site. (void) silences -Wunused.
+					// TODO: native OnFixedUpdate hook
 					(void)fixedDt;
 				}
 			}

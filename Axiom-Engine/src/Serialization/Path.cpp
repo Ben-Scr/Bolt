@@ -53,8 +53,10 @@ namespace Axiom {
         case SpecialFolder::Pictures: return Combine(home, "Pictures");
         case SpecialFolder::Videos: return Combine(home, "Videos");
         case SpecialFolder::AppDataRoaming:
-        case SpecialFolder::LocalAppData:
-            return std::getenv("XDG_CONFIG_HOME") ? std::getenv("XDG_CONFIG_HOME") : Combine(home, ".config");
+        case SpecialFolder::LocalAppData: {
+            const char* xdg = std::getenv("XDG_CONFIG_HOME");
+            return (xdg && *xdg) ? std::string(xdg) : Combine(home, ".config");
+        }
         case SpecialFolder::ProgramData:
             return "/usr/share";
         default:
@@ -66,9 +68,23 @@ namespace Axiom {
     std::string Path::ExecutableDir()
     {
 #ifdef AIM_PLATFORM_WINDOWS
-        wchar_t buf[MAX_PATH]{};
-        GetModuleFileNameW(nullptr, buf, MAX_PATH);
-        return std::filesystem::path(buf).parent_path().string();
+        // Grow the buffer until the path fits — silent truncation at MAX_PATH would
+        // produce a wrong directory on long-installation paths (the registry-key value
+        // is `LongPathsEnabled = 1` in modern Windows, paths of 1000+ chars are real).
+        std::vector<wchar_t> buf(MAX_PATH);
+        for (;;) {
+            DWORD copied = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+            if (copied == 0) {
+                AIM_THROW(AxiomErrorCode::Undefined, "GetModuleFileNameW failed");
+            }
+            if (copied < buf.size()) break; // fit
+            // Buffer was too small — Windows null-terminates and returns size on truncation.
+            buf.resize(buf.size() * 2);
+            if (buf.size() > 65536) {
+                AIM_THROW(AxiomErrorCode::Undefined, "Executable path > 64KB; refusing");
+            }
+        }
+        return std::filesystem::path(buf.data()).parent_path().string();
 #else
         char buf[PATH_MAX]{};
         ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);

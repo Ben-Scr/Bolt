@@ -7,6 +7,16 @@ typedef void* hostfxr_handle;
 
 namespace Axiom {
 
+#ifdef AIM_PLATFORM_WINDOWS
+	using DotNetHostChar = wchar_t;
+#define AXIOM_DOTNET_STR(s) L ## s
+#else
+	using DotNetHostChar = char;
+#define AXIOM_DOTNET_STR(s) s
+#endif
+
+#define AXIOM_DOTNET_UNMANAGEDCALLERSONLY_METHOD reinterpret_cast<const Axiom::DotNetHostChar*>(-1)
+
 	/// <summary>
 	/// Encapsulates CoreCLR initialization via the hostfxr/.NET hosting API.
 	///
@@ -32,9 +42,9 @@ namespace Axiom {
 		/// delegateType: UNMANAGEDCALLERSONLY_METHOD or a specific delegate type name
 		bool LoadAssemblyAndGetFunction(
 			const std::filesystem::path& assemblyPath,
-			const wchar_t* typeName,
-			const wchar_t* methodName,
-			const wchar_t* delegateType,
+			const DotNetHostChar* typeName,
+			const DotNetHostChar* methodName,
+			const DotNetHostChar* delegateType,
 			void** outFunctionPtr);
 
 		/// Shut down the .NET runtime.

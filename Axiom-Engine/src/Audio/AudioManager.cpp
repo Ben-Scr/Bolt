@@ -48,7 +48,7 @@ namespace Axiom {
 	std::unordered_map<AudioHandle::HandleType, std::unique_ptr<Audio>> AudioManager::s_audioMap;
 	std::unordered_map<std::string, AudioHandle::HandleType> AudioManager::s_audioPathToHandle;
 	AudioHandle::HandleType AudioManager::s_nextHandle = 1;
-	std::vector<AudioManager::SoundInstance> AudioManager::s_soundInstances;
+	std::vector<std::unique_ptr<AudioManager::SoundInstance>> AudioManager::s_soundInstances;
 	std::vector<uint32_t> AudioManager::s_freeInstanceIndices;
 	float AudioManager::s_masterVolume = 1.0f;
 	std::string AudioManager::s_RootPath = Path::Combine("AxiomAssets", "Audio");
@@ -116,11 +116,13 @@ namespace Axiom {
 
 		s_soundsPlayedThisFrame = 0;
 		CleanupFinishedSounds();
+		// One recalc — ProcessSoundQueue and the cleanup pass keep s_activeSoundCount
+		// accurate via direct increments, so a second post-pass scan would just clobber
+		// any in-flight increments and waste an O(N) walk.
 		RecalculateActiveSoundCount();
 		ProcessSoundQueue();
 		UpdateListener();
 		UpdateSoundInstances();
-		RecalculateActiveSoundCount();
 	}
 
 	bool AudioManager::CanPlaySound(const AudioHandle& audioHandle, float priority) {
@@ -141,35 +143,40 @@ namespace Axiom {
 	}
 
 	void AudioManager::ProcessSoundQueue() {
-		uint32_t processed = 0;
-		const uint32_t maxProcessPerFrame = 4;
+		// Bound the work this frame: at most maxStartsPerFrame *successful* starts.
+		// Stale (age > 200ms) and throttled requests are skipped without consuming
+		// the start-budget so they don't starve legitimate sounds — only successful
+		// starts (or hard rejections like StartOneShotInstance failure) count.
+		const uint32_t maxStartsPerFrame = 4;
+		uint32_t startsThisCall = 0;
+		uint32_t requeueGuard = 0;
+		const uint32_t requeueGuardLimit = static_cast<uint32_t>(s_soundQueue.size()) + 16;
 
-		while (!s_soundQueue.empty() && processed < maxProcessPerFrame &&
+		while (!s_soundQueue.empty() && startsThisCall < maxStartsPerFrame &&
 			s_soundsPlayedThisFrame < s_maxSoundsPerFrame &&
 			s_activeSoundCount < s_maxConcurrentSounds) {
+
+			if (++requeueGuard > requeueGuardLimit) break;
 
 			SoundRequest request = s_soundQueue.top();
 			s_soundQueue.pop();
 
-
 			auto now = std::chrono::steady_clock::now();
 			auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - request.RequestTime);
 			if (age.count() > 200) {
-				processed++;
-				continue;
+				continue; // dropped — too stale to bother
 			}
 
 			if (IsThrottled(request.Handle)) {
-				processed++;
-				continue;
+				continue; // skip but don't burn the start-budget
 			}
 
 			if (StartOneShotInstance(request.Handle, request.Volume)) {
 				s_soundsPlayedThisFrame++;
 				ThrottleSound(request.Handle);
 				s_activeSoundCount++;
+				startsThisCall++;
 			}
-			processed++;
 		}
 	}
 
@@ -267,9 +274,10 @@ namespace Axiom {
 				s_audioPathToHandle.erase(it->second->GetFilepath());
 			}
 
-			for (auto& instance : s_soundInstances) {
-				if (instance.IsValid && instance.AudioHandle == audioHandle) {
-					RecycleSoundInstance(static_cast<uint32_t>(&instance - s_soundInstances.data()));
+			for (size_t i = 0; i < s_soundInstances.size(); ++i) {
+				auto& slot = s_soundInstances[i];
+				if (slot && slot->IsValid && slot->AudioHandle == audioHandle) {
+					RecycleSoundInstance(static_cast<uint32_t>(i));
 				}
 			}
 
@@ -281,9 +289,10 @@ namespace Axiom {
 
 	void AudioManager::UnloadAllAudio() {
 
-		for (auto& instance : s_soundInstances) {
-			if (instance.IsValid) {
-				RecycleSoundInstance(static_cast<uint32_t>(&instance - s_soundInstances.data()));
+		for (size_t i = 0; i < s_soundInstances.size(); ++i) {
+			auto& slot = s_soundInstances[i];
+			if (slot && slot->IsValid) {
+				RecycleSoundInstance(static_cast<uint32_t>(i));
 			}
 		}
 
@@ -307,9 +316,7 @@ namespace Axiom {
 			return 0;
 		}
 
-		// Collect in-use AudioHandle values from every loaded Scene's
-		// registry. AudioSourceComponent is the only component today that
-		// holds an AudioHandle.
+		// AudioSourceComponent is the only component holding an AudioHandle today.
 		std::unordered_set<AudioHandle::HandleType> referenced;
 		referenced.reserve(s_audioMap.size());
 
@@ -326,10 +333,7 @@ namespace Axiom {
 			}
 		});
 
-		// Walk s_audioMap and free any entry whose id isn't in the set.
-		// Audio has no notion of "default" / built-in entries, so every
-		// loaded Audio is fair game. We collect the doomed handles first
-		// to avoid mutating s_audioMap while iterating it.
+		// Collect doomed handles before freeing — can't mutate s_audioMap mid-iteration.
 		std::vector<AudioHandle> toFree;
 		toFree.reserve(s_audioMap.size());
 		for (const auto& [id, audio] : s_audioMap) {
@@ -554,13 +558,16 @@ namespace Axiom {
 		if (!s_freeInstanceIndices.empty()) {
 			instanceId = s_freeInstanceIndices.back();
 			s_freeInstanceIndices.pop_back();
+			// Reusing a slot — recreate the heap allocation; the previous unique_ptr
+			// was reset on Recycle so the address would be different anyway.
+			s_soundInstances[instanceId] = std::make_unique<SoundInstance>();
 		}
 		else {
 			instanceId = static_cast<uint32_t>(s_soundInstances.size());
-			s_soundInstances.emplace_back();
+			s_soundInstances.emplace_back(std::make_unique<SoundInstance>());
 		}
 
-		SoundInstance& instance = s_soundInstances[instanceId];
+		SoundInstance& instance = *s_soundInstances[instanceId];
 		const ma_uint32 dataSourceFlags = MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE;
 		ma_result result = ma_resource_manager_data_source_init(
 			ma_engine_get_resource_manager(&s_Engine),
@@ -574,6 +581,7 @@ namespace Axiom {
 				s_soundInstances.pop_back();
 			}
 			else {
+				s_soundInstances[instanceId].reset();
 				s_freeInstanceIndices.push_back(instanceId);
 			}
 			return 0;
@@ -589,6 +597,7 @@ namespace Axiom {
 				s_soundInstances.pop_back();
 			}
 			else {
+				s_soundInstances[instanceId].reset();
 				s_freeInstanceIndices.push_back(instanceId);
 			}
 			return 0;
@@ -624,12 +633,12 @@ namespace Axiom {
 			return nullptr;
 		}
 
-		SoundInstance& instance = s_soundInstances[index];
-		if (!instance.IsValid) {
+		auto& slot = s_soundInstances[index];
+		if (!slot || !slot->IsValid) {
 			return nullptr;
 		}
 
-		return  &instance;
+		return slot.get();
 	}
 
 	void AudioManager::RecycleSoundInstance(uint32_t index) {
@@ -637,27 +646,37 @@ namespace Axiom {
 			return;
 		}
 
-		SoundInstance& instance = s_soundInstances[index];
-		if (!instance.IsValid) {
+		auto& slot = s_soundInstances[index];
+		if (!slot || !slot->IsValid) {
 			return;
 		}
 
+		SoundInstance& instance = *slot;
 		ma_sound_stop(&instance.Sound);
 		ma_sound_uninit(&instance.Sound);
 		if (instance.HasDataSource) {
 			ma_resource_manager_data_source_uninit(&instance.DataSource);
 			instance.HasDataSource = false;
 		}
-		instance.IsValid = false;
-		instance.AudioHandle = AudioHandle();
+		// Reset the unique_ptr so the SoundInstance (and its embedded ma_sound, which
+		// the audio thread was reading) is fully torn down before the slot is reused.
+		slot.reset();
 		s_freeInstanceIndices.push_back(index);
 	}
 
 	void AudioManager::CleanupFinishedSounds() {
 		for (size_t i = 0; i < s_soundInstances.size(); ++i) {
-			SoundInstance& instance = s_soundInstances[i];
+			auto& slot = s_soundInstances[i];
+			if (!slot || !slot->IsValid) continue;
+			SoundInstance& instance = *slot;
 
-			if (instance.IsValid && !ma_sound_is_playing(&instance.Sound) && !ma_sound_is_looping(&instance.Sound)) {
+			// "not playing && not looping" alone matches *paused* sounds too — recycling
+			// them would silently invalidate AudioSourceComponent::m_InstanceId and break
+			// any later Resume(). Require ma_sound_at_end to distinguish real finishers
+			// from mid-stream pauses (same predicate AudioSourceComponent::IsPaused uses).
+			if (!ma_sound_is_playing(&instance.Sound)
+				&& !ma_sound_is_looping(&instance.Sound)
+				&& ma_sound_at_end(&instance.Sound) == MA_TRUE) {
 				RecycleSoundInstance(static_cast<uint32_t>(i));
 			}
 		}
@@ -677,8 +696,8 @@ namespace Axiom {
 
 	void AudioManager::RecalculateActiveSoundCount() {
 		s_activeSoundCount = 0;
-		for (const auto& instance : s_soundInstances) {
-			if (instance.IsValid && ma_sound_is_playing(&instance.Sound)) {
+		for (const auto& slot : s_soundInstances) {
+			if (slot && slot->IsValid && ma_sound_is_playing(&slot->Sound)) {
 				s_activeSoundCount++;
 			}
 		}

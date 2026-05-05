@@ -544,7 +544,7 @@ namespace Axiom {
 
 			ImGui::PushID(i);
 
-			std::string timeStr = FormatRelativeTime(entry.lastOpened);
+			std::string timeStr = FormatRelativeTime(entry.LastOpened);
 			std::string sizeStr = GetProjectSizeDisplayText(entry);
 
 			ImVec2 cursorPos = ImGui::GetCursorScreenPos();
@@ -583,11 +583,11 @@ namespace Axiom {
 
 			// Draw name
 			ImGui::SetCursorScreenPos(ImVec2(cursorPos.x + 8, cursorPos.y + 4));
-			ImGui::TextUnformatted(entry.name.c_str());
+			ImGui::TextUnformatted(entry.Name.c_str());
 
 			// Draw path
 			ImGui::SetCursorScreenPos(ImVec2(cursorPos.x + 8, cursorPos.y + 24));
-			ImGui::TextDisabled("%s", entry.path.c_str());
+			ImGui::TextDisabled("%s", entry.Path.c_str());
 
 			// Draw size with a placeholder while the background scan is running.
 			ImGui::SetCursorScreenPos(ImVec2(cursorPos.x + 8, cursorPos.y + 44));
@@ -620,7 +620,7 @@ namespace Axiom {
 
 		// Deferred removal to avoid modifying the list during iteration
 		if (removeIndex >= 0) {
-			const std::string removedPath = projects[removeIndex].path;
+			const std::string removedPath = projects[removeIndex].Path;
 			m_Registry.RemoveProject(removedPath);
 			m_Registry.Save();
 			m_ProjectSizeTasks.erase(removedPath);
@@ -628,15 +628,15 @@ namespace Axiom {
 	}
 
 	std::shared_ptr<LauncherLayer::ProjectSizeTaskState> LauncherLayer::GetOrStartProjectSizeTask(const LauncherProjectEntry& entry) {
-		auto existing = m_ProjectSizeTasks.find(entry.path);
+		auto existing = m_ProjectSizeTasks.find(entry.Path);
 		if (existing != m_ProjectSizeTasks.end()) {
 			return existing->second;
 		}
 
 		auto task = std::make_shared<ProjectSizeTaskState>();
-		m_ProjectSizeTasks.emplace(entry.path, task);
+		m_ProjectSizeTasks.emplace(entry.Path, task);
 
-		std::thread([task, path = entry.path]() {
+		std::thread([task, path = entry.Path]() {
 			std::string error;
 			const std::uintmax_t bytes = CalculateProjectDirectorySize(std::filesystem::path(path), error);
 
@@ -696,11 +696,11 @@ namespace Axiom {
 			}
 
 			const LauncherProjectEntry& entry = *m_PendingDeleteProject;
-			ImGui::TextWrapped("Delete project '%s'?", entry.name.c_str());
+			ImGui::TextWrapped("Delete project '%s'?", entry.Name.c_str());
 			ImGui::Spacing();
 			ImGui::TextWrapped("This will permanently delete the project folder from disk and remove it from the launcher list.");
 			ImGui::Spacing();
-			ImGui::TextWrapped("Folder: %s", entry.path.c_str());
+			ImGui::TextWrapped("Folder: %s", entry.Path.c_str());
 			ImGui::Spacing();
 			ImGui::Separator();
 			ImGui::Spacing();
@@ -730,11 +730,11 @@ namespace Axiom {
 			}
 
 			const LauncherProjectEntry& entry = *m_PendingDeleteProject;
-			ImGui::TextWrapped("Final confirmation: permanently delete '%s'?", entry.name.c_str());
+			ImGui::TextWrapped("Final confirmation: permanently delete '%s'?", entry.Name.c_str());
 			ImGui::Spacing();
 			ImGui::TextWrapped("This action cannot be undone. The folder below will be deleted from disk.");
 			ImGui::Spacing();
-			ImGui::TextWrapped("Folder: %s", entry.path.c_str());
+			ImGui::TextWrapped("Folder: %s", entry.Path.c_str());
 
 			if (!m_DeleteError.empty()) {
 				ImGui::Spacing();
@@ -871,7 +871,7 @@ namespace Axiom {
 #ifdef AIM_PLATFORM_WINDOWS
 		// Refuse to spawn a duplicate editor for the same project.
 		{
-			auto it = m_RunningProjects.find(entry.path);
+			auto it = m_RunningProjects.find(entry.Path);
 			if (it != m_RunningProjects.end()) {
 				HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, it->second);
 				if (hProc) {
@@ -912,7 +912,7 @@ namespace Axiom {
 		// reads stage/progress from m_OpenTask and dismisses 1.5 s after the worker
 		// reports success. m_OpeningProjectName is what the overlay shows underneath.
 		m_IsOpening = true;
-		m_OpeningProjectName = entry.name;
+		m_OpeningProjectName = entry.Name;
 
 		m_OpenTask.Worker = std::thread([this, entry]() {
 			OpenProjectWorkerBody(entry);
@@ -937,7 +937,7 @@ namespace Axiom {
 		};
 
 		setStage("Regenerating engine solution...", 0.10f);
-		AxiomProject::RegenerateResult regen = AxiomProject::RegenerateSolutionForProject(entry.path);
+		AxiomProject::RegenerateResult regen = AxiomProject::RegenerateSolutionForProject(entry.Path);
 		if (!regen.Succeeded && regen.ExitCode != -1) {
 			fail("Solution regen failed (premake exit code " + std::to_string(regen.ExitCode) + ").");
 			return;
@@ -948,7 +948,7 @@ namespace Axiom {
 		// with LNK1104 on the locked .ilk file. Engine binaries are already in place
 		// from Setup.bat. Projects without packages need zero MSBuild work.
 		const std::vector<std::string> packageNames =
-			AxiomProject::EnumerateProjectLocalPackages(entry.path);
+			AxiomProject::EnumerateProjectLocalPackages(entry.Path);
 		if (!packageNames.empty()) {
 			setStage("Building project-local packages...", 0.40f);
 			std::vector<std::string> targets;
@@ -983,8 +983,8 @@ namespace Axiom {
 			resolvedEditorExe = editorExe.lexically_normal();
 		}
 
-		const std::wstring projectPath = Utf8ToWide(entry.path);
-		if (projectPath.empty() && !entry.path.empty()) {
+		const std::wstring projectPath = Utf8ToWide(entry.Path);
+		if (projectPath.empty() && !entry.Path.empty()) {
 			fail("Project path is not valid UTF-8.");
 			return;
 		}
@@ -1013,7 +1013,7 @@ namespace Axiom {
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
 
-		AIM_INFO_TAG("Launcher", "Opened project: {} at {}", entry.name, entry.path);
+		AIM_INFO_TAG("Launcher", "Opened project: {} at {}", entry.Name, entry.Path);
 
 		std::scoped_lock lock(m_OpenTask.Mutex);
 		m_OpenTask.Stage = "Editor launched";
@@ -1058,10 +1058,10 @@ namespace Axiom {
 			// the user sees the launch confirmation for a beat before the launcher
 			// becomes interactive again.
 			m_OpenStartTime = std::chrono::steady_clock::now();
-			m_OpeningProjectName = entry.name;
-			m_DeferredUpdatePath = entry.path;
+			m_OpeningProjectName = entry.Name;
+			m_DeferredUpdatePath = entry.Path;
 #ifdef AIM_PLATFORM_WINDOWS
-			m_RunningProjects[entry.path] = pid;
+			m_RunningProjects[entry.Path] = pid;
 #endif
 		}
 		else {
@@ -1075,14 +1075,14 @@ namespace Axiom {
 		m_ProjectActionError.clear();
 
 		std::error_code ec;
-		if (!std::filesystem::exists(entry.path, ec) || ec) {
+		if (!std::filesystem::exists(entry.Path, ec) || ec) {
 			m_ProjectActionError = ec ? "Project folder could not be checked: " + ec.message() : "Project folder not found";
 			return;
 		}
 
 #ifdef AIM_PLATFORM_WINDOWS
-		const std::wstring projectPath = Utf8ToWide(entry.path);
-		if (projectPath.empty() && !entry.path.empty()) {
+		const std::wstring projectPath = Utf8ToWide(entry.Path);
+		if (projectPath.empty() && !entry.Path.empty()) {
 			m_ProjectActionError = "Project path is not valid UTF-8";
 			return;
 		}
@@ -1093,7 +1093,7 @@ namespace Axiom {
 			m_ProjectActionError = "Failed to open project in Explorer (code " + std::to_string(resultCode) + ")";
 		}
 #elif defined(AIM_PLATFORM_LINUX)
-		if (!Process::LaunchDetached({ "xdg-open", entry.path })) {
+		if (!Process::LaunchDetached({ "xdg-open", entry.Path })) {
 			m_ProjectActionError = "Failed to open project in file manager";
 		}
 #else
@@ -1112,10 +1112,10 @@ namespace Axiom {
 		m_ProjectActionError.clear();
 
 		std::error_code ec;
-		std::filesystem::path projectPath = std::filesystem::weakly_canonical(entry.path, ec);
+		std::filesystem::path projectPath = std::filesystem::weakly_canonical(entry.Path, ec);
 		if (ec) {
 			ec.clear();
-			projectPath = std::filesystem::absolute(entry.path, ec);
+			projectPath = std::filesystem::absolute(entry.Path, ec);
 			if (ec) {
 				return fail("Project folder could not be resolved: " + ec.message());
 			}
@@ -1131,9 +1131,9 @@ namespace Axiom {
 			return fail("Project folder could not be checked: " + ec.message());
 		}
 		if (!exists) {
-			m_Registry.RemoveProject(entry.path);
+			m_Registry.RemoveProject(entry.Path);
 			m_Registry.Save();
-			m_ProjectSizeTasks.erase(entry.path);
+			m_ProjectSizeTasks.erase(entry.Path);
 			return true;
 		}
 
@@ -1154,11 +1154,11 @@ namespace Axiom {
 			return fail("Failed to delete project folder: " + ec.message());
 		}
 
-		m_Registry.RemoveProject(entry.path);
+		m_Registry.RemoveProject(entry.Path);
 		m_Registry.Save();
-		m_ProjectSizeTasks.erase(entry.path);
+		m_ProjectSizeTasks.erase(entry.Path);
 
-		AIM_INFO_TAG("Launcher", "Deleted project '{}' at {}", entry.name, projectPath.string());
+		AIM_INFO_TAG("Launcher", "Deleted project '{}' at {}", entry.Name, projectPath.string());
 		return true;
 	}
 

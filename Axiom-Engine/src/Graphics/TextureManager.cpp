@@ -10,6 +10,7 @@
 #include "Scene/SceneManager.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <unordered_set>
 
 namespace Axiom {
@@ -113,12 +114,7 @@ namespace Axiom {
 	constexpr uint16_t k_InvalidIndex = std::numeric_limits<uint16_t>::max();
 
 	std::size_t TextureManager::GetTotalTextureMemoryBytes() {
-		// Iterate the live texture table. We exclude default textures by
-		// skipping the first `s_DefaultTextures.size()` entries — that's
-		// where Initialize() places them; user textures land after.
-		// Approximation: 4 bytes per pixel (RGBA8). Doesn't account for
-		// mipmaps (we don't generate any in the engine today) or compressed
-		// formats (none used).
+		// 4 bpp (RGBA8) approximation; skips default textures at the front of the table.
 		std::size_t total = 0;
 		const std::size_t defaultCount = s_DefaultTextures.size();
 		for (std::size_t i = 0; i < s_Textures.size(); ++i) {
@@ -205,6 +201,15 @@ namespace Axiom {
 				return TextureHandle::Invalid();
 			}
 
+			// Wraparound guard: if the slot has been recycled 65535 times, retiring it
+			// rather than wrapping prevents a stale handle (with the wrapped generation)
+			// from silently re-validating against a freshly-recycled entry.
+			if (entry.Generation == std::numeric_limits<uint16_t>::max()) {
+				AIM_CORE_WARN("Texture slot {} hit generation limit; retiring slot", index);
+				entry.IsValid = false;
+				entry.Texture.Destroy();
+				return TextureHandle::Invalid();
+			}
 			entry.Generation++;
 			entry.IsValid = true;
 			entry.Name = fullpath;
@@ -238,11 +243,24 @@ namespace Axiom {
 	}
 
 	TextureHandle TextureManager::LoadTextureByUUID(uint64_t assetId, Filter filter, Wrap u, Wrap v) {
-		if (assetId == 0 || !AssetRegistry::IsTexture(assetId)) {
+		if (assetId == 0) {
 			return TextureHandle::Invalid();
 		}
 
-		const std::string path = AssetRegistry::ResolvePath(assetId);
+		if (!AssetRegistry::IsTexture(assetId)) {
+			AssetRegistry::MarkDirty();
+			AssetRegistry::Sync();
+			if (!AssetRegistry::IsTexture(assetId)) {
+				return TextureHandle::Invalid();
+			}
+		}
+
+		std::string path = AssetRegistry::ResolvePath(assetId);
+		if (path.empty()) {
+			AssetRegistry::MarkDirty();
+			AssetRegistry::Sync();
+			path = AssetRegistry::ResolvePath(assetId);
+		}
 		if (path.empty()) {
 			return TextureHandle::Invalid();
 		}
@@ -409,7 +427,11 @@ namespace Axiom {
 
 			if (!entry.Texture.IsValid()) {
 				AIM_CORE_ERROR("[{}] Failed to load default texture at path: {}", ErrorCodeToString(AxiomErrorCode::LoadFailed), texPath);
+				// Push the invalid entry AND queue its slot for reuse so future
+				// LoadTexture calls can recycle it. Without this, every failed
+				// default-texture load permanently leaks a slot.
 				s_Textures.push_back(std::move(entry));
+				s_FreeIndices.push(static_cast<uint16_t>(s_Textures.size() - 1));
 				continue;
 			}
 
@@ -524,16 +546,10 @@ namespace Axiom {
 			return 0;
 		}
 
-		// Collect all in-use handles by walking every loaded Scene's
-		// registry. We pull from every component type that holds a
-		// TextureHandle field today: SpriteRendererComponent,
-		// ParticleSystem2DComponent (m_TextureHandle), and ImageComponent.
 		std::unordered_set<TextureHandle> referenced;
 		referenced.reserve(s_Textures.size());
 
-		// Ask external providers (editor caches, package panels, etc.) to
-		// emit the handles they currently hold. Wrapped per-provider so a
-		// misbehaving callback can't crash the purge.
+		// External providers (editor caches, package panels) emit their handles; per-provider try/catch.
 		const ReferenceEmitter emit = [&referenced](TextureHandle h) {
 			if (h.IsValid()) referenced.insert(h);
 		};
@@ -579,11 +595,7 @@ namespace Axiom {
 			}
 		});
 
-		// Walk s_Textures and free any non-default entry whose handle
-		// isn't in the reference set. The first s_DefaultTextures.size()
-		// entries are reserved by LoadDefaultTextures() during Initialize()
-		// and must never be evicted — UnloadTexture() also enforces this,
-		// but we skip them here to avoid the warning spam.
+		// Skip default-texture indices — UnloadTexture rejects them and would spam warnings.
 		const size_t defaultCount = s_DefaultTextures.size();
 		size_t freedCount = 0;
 		for (size_t i = defaultCount; i < s_Textures.size(); ++i) {

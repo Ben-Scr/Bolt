@@ -17,6 +17,8 @@ internal static unsafe class InternalCalls
     internal static float Application_GetFixedDeltaTime() => NativeCallbacks.Bindings.Application_GetFixedDeltaTime();
     internal static float Application_GetUnscaledDeltaTime() => NativeCallbacks.Bindings.Application_GetUnscaledDeltaTime();
     internal static float Application_GetFixedUnscaledDeltaTime() => NativeCallbacks.Bindings.Application_GetFixedUnscaledDeltaTime();
+    internal static float Application_GetTimeScale() => NativeCallbacks.Bindings.Application_GetTimeScale();
+    internal static void Application_SetTimeScale(float scale) => NativeCallbacks.Bindings.Application_SetTimeScale(scale);
     internal static bool Application_IsEditor() => NativeCallbacks.Bindings.Application_IsEditor() != 0;
 
     // ── Log ─────────────────────────────────────────────────────────

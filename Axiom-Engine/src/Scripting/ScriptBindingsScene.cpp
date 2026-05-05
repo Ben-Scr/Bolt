@@ -102,6 +102,14 @@ namespace Axiom {
 		auto* app = Application::GetInstance();
 		return app ? app->GetTime().GetUnscaledFixedDeltaTime() : (1.0f / 50.0f);
 	}
+	static float Axiom_Application_GetTimeScale() {
+		auto* app = Application::GetInstance();
+		return app ? app->GetTime().GetTimeScale() : 1.0f;
+	}
+	static void Axiom_Application_SetTimeScale(float scale) {
+		auto* app = Application::GetInstance();
+		if (app) app->GetTime().SetTimeScale(scale);
+	}
 
 	// ── Log Bindings ────────────────────────────────────────────────────
 
@@ -115,7 +123,7 @@ namespace Axiom {
 	static bool CanReadScriptInput()
 	{
 		auto* app = Application::GetInstance();
-		return app && Application::IsGameInputEnabled();
+		return app && ScriptBindings::IsScriptInputEnabled();
 	}
 
 	static int Axiom_Input_GetKey(int keyCode)
@@ -226,6 +234,8 @@ namespace Axiom {
 		b.Application_GetFixedDeltaTime = &Axiom_Application_GetFixedDeltaTime;
 		b.Application_GetUnscaledDeltaTime = &Axiom_Application_GetUnscaledDeltaTime;
 		b.Application_GetFixedUnscaledDeltaTime = &Axiom_Application_GetFixedUnscaledDeltaTime;
+		b.Application_GetTimeScale = &Axiom_Application_GetTimeScale;
+		b.Application_SetTimeScale = &Axiom_Application_SetTimeScale;
 
 		b.Log_Trace = &Axiom_Log_Trace;
 		b.Log_Info = &Axiom_Log_Info;

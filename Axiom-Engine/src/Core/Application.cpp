@@ -20,10 +20,7 @@
 #include "Scripting/ScriptEngine.hpp"
 
 #ifdef AIM_PLATFORM_WINDOWS
-// bring in windows.h + winmm for timeBeginPeriod/timeEndPeriod (used to
-// raise the system timer resolution to 1ms during the app lifetime so the
-// frame-cap sleep_until below stops undershooting). winmm.lib is already
-// linked by the project; psapi is only needed by the profiler block.
+// winmm: timeBeginPeriod for 1ms timer resolution (frame-cap accuracy).
 #  include <windows.h>
 #  include <timeapi.h>
 #  pragma comment(lib, "winmm.lib")
@@ -108,24 +105,12 @@ namespace Axiom {
 				}
 				auto now = Clock::now();
 
-				// "VSync" bucket — accumulates time spent waiting between frames.
-				// Two contributors: the soft frame-cap idle below (when v-sync is
-				// off) and the hard SwapBuffers wait (when v-sync is on). Since
-				// SwapBuffers happens inside RenderPipelineOnly which we don't
-				// instrument, we approximate by measuring the gap between when
-				// last frame's render completed and when we resume here. That
-				// gap is what the user perceives as "the frame is paced".
+				// VSync bucket: gap between last frame's render end and now (covers SwapBuffers + frame-cap idle).
 				const auto vsyncStart = m_LastFrameEndTime != Clock::time_point{}
 					? m_LastFrameEndTime
 					: now;
 
-				// CPU idling for runtime fps caps. The editor renders Game View pacing separately.
-				// replaced the previous "sleep_until(target - 10ms) + busy yield"
-				// pattern with a single sleep_until(target - 1ms). On Windows the
-				// system timer resolution is raised to 1ms via timeBeginPeriod(1)
-				// in Initialize() (released in Shutdown()), so sleep_until's
-				// undershoot collapses to ~1ms — well within tolerance for a
-				// frame cap and far cheaper than a per-iteration yield syscall.
+				// CPU idle for runtime fps cap. Relies on 1ms timer res from timeBeginPeriod in Initialize().
 				if (m_Configuration.UseTargetFrameRateForMainLoop && targetFps > 0.0f && (!m_Window->IsVsync() || IsEnginePaused()))
 				{
 					auto const nextFrameTime = m_LastFrameTime + targetFrameTime;
@@ -146,38 +131,24 @@ namespace Axiom {
 				}
 
 				try {
-					// One zone per whole frame. The macro expands to a Tracy
-					// ZoneScopedN("Frame") AND an in-engine ring-buffer push
-					// (the panel reads from the latter). Both are no-ops
-					// when the profiler is stripped.
 					AXIOM_PROFILE_SCOPE("Frame");
 
-					// FPS + Frame Time both derived from this single dt so
-					// they can never drift apart — no separate measurement
-					// for either.
 					Profiler::PushFrameDelta(deltaTime);
 
 					m_Time.Update(deltaTime);
 
-					// Input pipeline ordering: snapshot prev-state BEFORE we
-					// poll new events, then poll, so that GetKeyDown/GetKeyUp
-					// in this same frame's BeginFrame()/CoreInput() reflect
-					// events that arrived between last frame's poll and now.
-					// Previously Update() ran inside EndFrame() and poll ran
-					// AFTER, which delayed input reads by one frame.
+					// Snapshot prev-state BEFORE polling so GetKeyDown/Up reflect events from this frame.
 					m_Input.Update();
 					glfwPollEvents();
 					TryCompleteQuitRequest();
 
-					// Fixed-update accumulator must be driven entirely by
-					// UNSCALED time. Mixing scaled dt with unscaled fixed-dt
-					// caused the accumulator to drift with TimeScale, and
-					// also double-applied the scale when GetFixedDeltaTime()
-					// (also scaled) was passed to systems. Time-scaling is
-					// opt-in per system — they can multiply if they want.
-					m_FixedUpdateAccumulator += m_Time.GetUnscaledDeltaTime();
+					// Scale at the accumulator input so TimeScale controls step *frequency*.
+					// The step quantum stays unscaled — Box2D's solver needs a constant dt
+					// for stability, and per-call dt staying fixed prevents script integration
+					// (vel * Time.FixedDeltaTime) from compounding with the changed call rate.
+					m_FixedUpdateAccumulator += m_Time.GetDeltaTime();
 					while (m_FixedUpdateAccumulator >= m_Time.GetUnscaledFixedDeltaTime()) {
-						if (!IsEnginePaused() && !m_IsPlaymodePaused) {
+						if (!IsEnginePaused() && !m_IsGameplayPaused) {
 							BeginFixedFrame();
 							for (const auto& layer : m_LayerStack) {
 								layer->OnFixedUpdate(*this, m_Time.GetUnscaledFixedDeltaTime());
@@ -196,14 +167,8 @@ namespace Axiom {
 					m_Time.AdvanceFrameCount();
 
 #ifdef AXIOM_PROFILER_ENABLED
-					// VSync (between-frame idle) — measured at top of next frame
-					// against m_LastFrameEndTime. Small enough that we don't want
-					// to gate it; the profiler's per-module cadence handles that.
 					AXIOM_PROFILE_VALUE("VSync", vsyncMs);
 
-					// Memory category. Total Memory = process working set;
-					// Texture Memory = sum of loaded texture pixels (RGBA8);
-					// Object Count = live entity count across all loaded scenes.
 #  ifdef AIM_PLATFORM_WINDOWS
 					{
 						PROCESS_MEMORY_COUNTERS pmc{};
@@ -217,7 +182,6 @@ namespace Axiom {
 						AXIOM_PROFILE_VALUE("Texture Memory", float(textureBytes / (1024 * 1024)));
 					}
 
-					// Object Count: sum of live entities across loaded scenes.
 					{
 						std::size_t totalEntities = 0;
 						if (m_SceneManager) {
@@ -226,16 +190,12 @@ namespace Axiom {
 								totalEntities += entityStorage.free_list();
 							});
 						}
-						AXIOM_PROFILE_VALUE("Object Count", float(totalEntities));
+						AXIOM_PROFILE_VALUE("Entity Count", float(totalEntities));
 					}
 
-					// Audio category.
 					AXIOM_PROFILE_VALUE("Playing Sources", float(AudioManager::GetActiveSoundCount()));
 
-					// "Others" residual: total Frame Time minus the four named
-					// CPU buckets we already attributed. Surfaces work that's
-					// not in Render/Scripts/Physics/VSync — engine overhead,
-					// glfwPollEvents, Time::Update, layer dispatching, etc.
+					// "Others" residual: Frame Time minus the four named CPU buckets.
 					{
 						const float frameMs    = Profiler::GetCurrentValue("Frame Time");
 						const float renderMs   = Profiler::GetCurrentValue("Rendering");
@@ -246,12 +206,9 @@ namespace Axiom {
 					}
 #endif
 
-					// End-of-frame Tracy mark + sampling-cadence advance.
 					AXIOM_PROFILE_FRAME("Frame");
 
-					// Stamp end-of-frame for next iteration's VSync measurement.
-					// Has to be the very last thing in the try block — anything
-					// after it eats into the bucket.
+					// MUST be last in try-block — anything after eats into next frame's VSync bucket.
 					m_LastFrameEndTime = Clock::now();
 				}
 				catch (const std::exception& e) {
@@ -271,11 +228,7 @@ namespace Axiom {
 			if (!m_CanReload) break;
 			m_CanReload = false;
 
-			// Reload-tail: rebuild SceneManager so Initialize() does not
-			// re-call Initialize() on an already-shutdown manager. Other
-			// subsystems (Window, Renderer2D, etc.) are owned by unique_ptrs
-			// that get reset() in Shutdown(); SceneManager wasn't, so a
-			// post-reload Initialize() touched a half-dead object.
+			// Rebuild SceneManager so reload doesn't reuse a shut-down instance.
 			m_SceneManager.reset();
 			m_SceneManager = std::make_unique<SceneManager>();
 		}
@@ -283,17 +236,13 @@ namespace Axiom {
 
 	void Application::Initialize() {
 #ifdef AIM_PLATFORM_WINDOWS
-		// raise the Windows system timer resolution to 1ms once at app
-		// init so sleep_until in the frame-cap path is accurate. Paired with
-		// timeEndPeriod(1) in Shutdown(). Do NOT call this per frame.
+		// 1ms timer res for accurate sleep_until in the frame-cap path. Paired with timeEndPeriod in Shutdown.
 		timeBeginPeriod(1);
 #endif
 		m_Configuration = GetConfiguration();
 		SetName(m_Configuration.WindowSpecification.Title);
 
-		// Profiler comes up first — it has no GL/window dependencies and
-		// every later subsystem can already emit AXIOM_PROFILE_SCOPE marks
-		// during its own init. Stripped builds skip this entire block.
+		// Profiler first — no GL/window deps, lets later subsystems emit profile marks during init.
 #ifdef AXIOM_PROFILER_ENABLED
 		Profiler::Initialize();
 #endif
@@ -380,17 +329,10 @@ namespace Axiom {
 		}
 
 		if (m_Configuration.EnablePackageHost) {
-			// Load Axiom packages discovered next to the running executable. Each package's
-			// AxiomPackage_OnLoad runs once here so packages can register with engine
-			// subsystems (script bindings, component types, etc.) before Start().
-			// MUST run before InitializeStartupScenes so package-registered
-			// component types are present when scene deserialization runs.
+			// MUST run before InitializeStartupScenes so package-registered components exist for deserialization.
 			PackageHost::LoadAll();
 		}
 
-		// Load startup scenes AFTER package registration so package components
-		// (e.g. Tilemap2DComponent) round-trip through the deserialize sweep
-		// in SceneSerializerDeserialize.cpp.
 		m_SceneManager->InitializeStartupScenes();
 
 		ScriptEngine::RaiseApplicationStart();
@@ -409,7 +351,7 @@ namespace Axiom {
 		m_WasEnginePaused = enginePaused;
 
 		if (!enginePaused) {
-			bool gameplayActive = m_IsPlaying && !m_IsPlaymodePaused;
+			bool gameplayActive = m_IsPlaying && !m_IsGameplayPaused;
 
 			if (gameplayActive && m_Configuration.EnableAudio) 
 				AudioManager::Update();
@@ -424,6 +366,9 @@ namespace Axiom {
 			}
 
 			if (gameplayActive && m_SceneManager) m_SceneManager->UpdateScenes();
+
+			// Sync Transform2D into physics every frame (editor + play).
+			if (m_PhysicsSystem2D) m_PhysicsSystem2D->Update();
 
 			if (m_SceneManager) m_SceneManager->OnPreRenderScenes();
 			for (const auto& layer : m_LayerStack) {
@@ -450,9 +395,6 @@ namespace Axiom {
 			RenderPipelineOnly();
 		}
 
-		// Note: m_Input.Update() (advance prev-state) now runs at the TOP
-		// of the next iteration, immediately before glfwPollEvents(), so
-		// that GetKeyDown reflects events delivered to this frame.
 		m_IsRenderingFrame = false;
 	}
 
@@ -536,13 +478,10 @@ namespace Axiom {
 		if (!m_IsPlaying) return;
 
 		if (m_SceneManager) m_SceneManager->FixedUpdateScenes();
-		// Pass UNSCALED fixed dt — the accumulator above is driven by
-		// unscaled time, so feeding scaled dt here would compound the
-		// time-scale. Systems that want scaling can opt in by multiplying.
+		// Step quantum is unscaled and constant. TimeScale already affected how many
+		// times this fires per real second via the accumulator above.
 		if (m_PhysicsSystem2D) m_PhysicsSystem2D->FixedUpdate(m_Time.GetUnscaledFixedDeltaTime());
-		// GlobalSystem.OnFixedUpdate dispatch — paired with the per-scene
-		// FixedUpdate above. Runs after physics so global systems observe
-		// transforms already synced from the physics step.
+		// Runs after physics so global systems observe transforms synced from the physics step.
 		ScriptEngine::FixedUpdateGlobalSystems();
 	}
 
@@ -615,14 +554,7 @@ namespace Axiom {
 
 
 	void Application::CoreInput() {
-		if (m_Input.GetKey(KeyCode::LeftControl) && m_Input.GetKeyDown(KeyCode::I))
-		{
-			AIM_INFO_TAG("Debug", "From: " + m_Name);
-			AIM_INFO_TAG("Debug", "Current FPS: " + StringHelper::ToString(m_Time.GetFrameRate()));
-			AIM_INFO_TAG("Debug", "Time Elapsed Since Start: " + StringHelper::ToString(m_Time.GetElapsedTime(), " s"));
-		}
-
-		if (m_Input.GetKeyDown(KeyCode::Esc)) {
+		if (m_Input.GetKey(KeyCode::LeftControl) && m_Input.GetKeyDown(KeyCode::M)) {
 			if (m_Window) m_Window->MinimizeWindow();
 		}
 		if (m_Input.GetKeyDown(KeyCode::F11)) {
@@ -661,13 +593,7 @@ namespace Axiom {
 		m_EventBus.Clear();
 		m_LayerStack.Clear();
 
-		// PackageHost::UnloadAll() must run AFTER every subsystem that
-		// could call into package code. Packages may register components,
-		// script bindings, or other callbacks; FreeLibrary'ing them while
-		// any subsystem still holds those callbacks is a recipe for use-
-		// after-unmap. Order here: scenes/scripts down first (they invoke
-		// on_destroy hooks that may live in package code), then engine
-		// resource managers, then PackageHost::UnloadAll() *last*.
+		// Order matters: subsystems that hold package callbacks tear down BEFORE PackageHost::UnloadAll.
 		if (m_SceneManager) m_SceneManager->Shutdown();
 		if (ScriptEngine::IsInitialized()) ScriptEngine::Shutdown();
 		if (m_Configuration.EnableTextureManager) TextureManager::Shutdown();
@@ -680,8 +606,6 @@ namespace Axiom {
 		if (AudioManager::IsInitialized())
 			AudioManager::Shutdown();
 
-		// PackageHost teardown is the last subsystem call. By this
-		// point no engine callback table or registry holds package code.
 		if (m_Configuration.EnablePackageHost) PackageHost::UnloadAll();
 
 		if (m_Window) {
@@ -699,14 +623,11 @@ namespace Axiom {
 		m_Window.reset();
 
 #ifdef AXIOM_PROFILER_ENABLED
-		// Profiler comes down last so anything destructed above could still
-		// emit AXIOM_PROFILE_SCOPE marks during teardown without segfaulting
-		// on the static module table.
+		// Profiler last so subsystems above can still emit profile marks during teardown.
 		Profiler::Shutdown();
 #endif
 
 #ifdef AIM_PLATFORM_WINDOWS
-		// pair to the timeBeginPeriod(1) in Initialize().
 		timeEndPeriod(1);
 #endif
 
@@ -717,8 +638,8 @@ namespace Axiom {
 		m_IsBackgroundPaused = false;
 		m_IsMinimized = false;
 		m_WindowHasFocus = true;
-		m_IsPlaymodePaused = false;
-		m_IsGameInputEnabled = true;
+		m_IsGameplayPaused = false;
+		m_IsScriptInputEnabled = true;
 		m_IsShuttingDown = false;
 		m_WasEnginePaused = false;
 		m_FixedUpdateAccumulator = 0.0;

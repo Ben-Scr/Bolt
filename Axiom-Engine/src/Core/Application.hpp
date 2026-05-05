@@ -9,6 +9,7 @@
 #include "Input.hpp"
 #include "Time.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -31,6 +32,8 @@ namespace Axiom {
 	class AXIOM_API Application {
 		friend class Window;
 		friend class SceneManager;
+		friend class ApplicationEditorAccess;
+		friend class ScriptBindings;
 
 		using DurationChrono = std::chrono::high_resolution_clock::duration;
 		using Clock = std::chrono::high_resolution_clock;
@@ -102,31 +105,9 @@ namespace Axiom {
 		static bool IsPaused() { return s_Instance ? s_Instance->IsEnginePaused() : false; }
 		static bool IsShuttingDown() { return s_Instance ? s_Instance->m_IsShuttingDown : false; }
 
-		// Runtime check: true when the host process is the editor binary,
-		// false when it's a standalone runtime (built game). The editor's
-		// Application subclass calls SetEditorHost(true) in its constructor;
-		// runtime / launcher leave it false. Mirrors the compile-time
-		// AXIOM_EDITOR macro available to C# scripts — both are kept so
-		// users can pick whichever fits the call site:
-		//   • #if AXIOM_EDITOR / #endif         (compile-time strip)
-		//   • if (Application.IsEditor) ...     (runtime branch)
+		/// True for editor host, false for standalone runtime / launcher.
 		static bool IsEditor() { return s_Instance ? s_Instance->m_IsEditorHost : false; }
 		void SetEditorHost(bool isEditor) { m_IsEditorHost = isEditor; }
-
-		// ─── Editor-only access surface (H12) ────────────────────────────
-		// The methods below exist to let an editor host pause gameplay and
-		// gate game-input independently of the editor UI. They are no-ops in
-		// a standalone runtime but ship in the engine DLL today. A future
-		// refactor should push them behind a friend `ApplicationEditorAccess`
-		// struct in a header consumed only by Axiom-Editor; until then, treat
-		// as unstable in the public surface.
-
-		/// Pauses only gameplay (scene updates, physics, audio) while keeping the editor responsive.
-		static void SetPlaymodePaused(bool paused) { if (s_Instance) s_Instance->m_IsPlaymodePaused = paused; }
-		static bool IsPlaymodePaused() { return s_Instance ? s_Instance->m_IsPlaymodePaused : false; }
-		static void SetGameInputEnabled(bool enabled) { if (s_Instance) s_Instance->m_IsGameInputEnabled = enabled; }
-		static bool IsGameInputEnabled() { return s_Instance ? s_Instance->m_IsGameInputEnabled : true; }
-		// ─── End editor-only access surface ──────────────────────────────
 
 		/// Signals a quit request that can be intercepted (e.g. to show a save dialog).
 		static void RequestQuit();
@@ -187,14 +168,17 @@ namespace Axiom {
 		bool m_RunInBackground = false;
 		bool m_ShouldQuit = false;
 		bool m_CanReload = false;
-		bool m_IsEditorHost = false; // set by Editor's Application subclass; false for runtime/launcher
+		bool m_IsEditorHost = false;
 		bool m_IsPaused = false;
-		bool m_IsBackgroundPaused = false;
-		bool m_IsMinimized = false;
-		bool m_WindowHasFocus = true;
+		// Atomic — written from GLFW window-focus / iconify callbacks (which today
+		// fire from the polling thread, but the data type makes the contract
+		// explicit and survives any future move to a real event thread).
+		std::atomic<bool> m_IsBackgroundPaused{ false };
+		std::atomic<bool> m_IsMinimized{ false };
+		std::atomic<bool> m_WindowHasFocus{ true };
 		bool m_IsPlaying = true;
-		bool m_IsPlaymodePaused = false;
-		bool m_IsGameInputEnabled = true;
+		bool m_IsGameplayPaused = false;
+		bool m_IsScriptInputEnabled = true;
 		bool m_WasEnginePaused = false;
 		bool m_IsRenderingFrame = false;
 		bool m_IsRenderingRefresh = false;
@@ -212,11 +196,7 @@ namespace Axiom {
 		std::vector<std::string> m_PendingFileDrops;
 		double m_FixedUpdateAccumulator;
 		std::chrono::steady_clock::time_point m_LastFrameTime = Clock::now();
-		// Set at the end of each frame (after EndFrame returns). The next
-		// frame's main loop reads this to compute the "VSync" bucket =
-		// time spent between frames (sleep / spin / SwapBuffers wait).
-		// Default-constructed (epoch) on first frame, in which case the
-		// vsync bucket reads as 0 for that frame.
+		// Stamped at end of frame; next frame reads it to compute the VSync bucket.
 		std::chrono::steady_clock::time_point m_LastFrameEndTime{};
 		LayerStack m_LayerStack;
 		EventBus m_EventBus;

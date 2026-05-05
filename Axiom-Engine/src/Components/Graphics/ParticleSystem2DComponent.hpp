@@ -119,6 +119,12 @@ namespace Axiom {
 		std::vector<Particle> m_Particles;
 		std::vector<Burst> m_Bursts;
 
+		// NOTE: Don't deep-copy m_EmitterScene/m_EmitterEntity — they refer to
+		// scene-local runtime state that must be re-initialized via on_construct hook.
+		// EnTT requires components to be copyable for snapshot/restore, so we cannot
+		// delete the copy-ctor outright; if entity duplication ships, add a custom
+		// copy override that re-runs the emitter-binding hook on the destination
+		// entity instead of carrying these raw fields across.
 		Scene* m_EmitterScene{ nullptr };
 		EntityHandle m_EmitterEntity{ entt::null };
 		float m_EmitAccumulator{ 0.0f };

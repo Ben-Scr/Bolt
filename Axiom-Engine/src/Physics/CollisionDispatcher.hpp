@@ -64,11 +64,7 @@ namespace Axiom {
 		void Process(b2WorldId world, const ContactBeginCallback& onBegin = {}, const ContactEndCallback& onEnd = {}, const ContactStayCallback& onStay = {}) {
 			b2ContactEvents ev = b2World_GetContactEvents(world);
 
-			// User callbacks (often dispatched into managed scripts) can call
-			// entity.Destroy(), which removes a Collider2D component, which calls
-			// UnregisterShape — mutating m_begin/m_end/m_hit/m_activeContacts
-			// while we iterate them. Resolving the per-shape callback list
-			// up-front into a local snapshot makes the dispatch reentrant-safe.
+			// Callbacks may destroy entities and re-enter UnregisterShape — DispatchSafe snapshots first.
 			for (int i = 0; i < ev.beginCount; ++i) {
 				auto& e = ev.beginEvents[i];
 				auto collision2D = MakeCollision(e.shapeIdA, e.shapeIdB);
@@ -103,9 +99,7 @@ namespace Axiom {
 			}
 
 			if (onStay) {
-				// Snapshot the active-contact collisions so callbacks that
-				// destroy entities (and therefore erase from m_activeContacts)
-				// don't invalidate our iterator.
+				// Snapshot — entity-destroying callbacks would invalidate our iterator otherwise.
 				std::vector<Collision2D> stayCollisions;
 				stayCollisions.reserve(m_activeContacts.size());
 				for (const auto& [_, active] : m_activeContacts) {
@@ -159,10 +153,7 @@ namespace Axiom {
 			for (auto& cb : it->second) cb(e);
 		}
 
-		// Reentrant-safe variant: copies the matching callbacks into a local
-		// vector before invoking them, so a callback that triggers
-		// UnregisterShape (via entity destruction) can't free the underlying
-		// vector while we iterate. The copy is intentional.
+		// Reentrant-safe: callback may UnregisterShape mid-dispatch, so snapshot the vector first.
 		template<typename Evt, typename Map>
 		void DispatchSafe(b2ShapeId id, const Evt& e, Map& map) {
 			auto it = map.find(id);

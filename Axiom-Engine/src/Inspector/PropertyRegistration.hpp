@@ -19,18 +19,18 @@
 // PropertyRegistration: deduce PropertyType from C++ types and build
 // PropertyDescriptors for native components in one line.
 //
-// Usage (in a component registration lambda):
+// Usage (build a vector of PropertyDescriptors and pass to RegisterComponent):
 //
-//     ComponentInfo info{ "Name", "General", ComponentCategory::Component };
-//     info.serializedName = "name";
-//     Properties::Add(info, "Name", "Name", &NameComponent::Name);
-//     Properties::Add(info, "Tag",  "Tag",  &TagComponent::Tag);
+//     RegisterComponent<NameComponent>(sceneManager, "Name", ..., {
+//         Properties::Make("Name", "Name", &NameComponent::Name),
+//     });
 //
 // The pointer-to-member is enough: the field type, getter, and setter are
 // deduced. For enums, magic_enum builds the EnumDescriptor automatically.
-// For asset / entity references, register them with the explicit type-based
-// helpers (AddTextureRef, AddAudioRef, AddEntityRef, ...) so the drawer
-// knows which kind to filter for.
+// For getter/setter-driven fields use Properties::MakeWith<TField>(...).
+// For flag enums, use Properties::MakeFlagEnum.
+// For asset references, use the explicit helpers (Properties::MakeTextureRef
+// / Properties::MakeAudioRef) so the drawer knows which kind to filter for.
 // =============================================================================
 
 namespace Axiom::Properties {

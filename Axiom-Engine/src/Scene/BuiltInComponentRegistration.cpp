@@ -1,6 +1,7 @@
 #include "pch.hpp"
 #include "Scene/BuiltInComponentRegistration.hpp"
 
+#include "Assets/AssetRegistry.hpp"
 #include "Audio/AudioManager.hpp"
 #include "Components/Components.hpp"
 #include "Graphics/TextureManager.hpp"
@@ -14,14 +15,7 @@
 
 #include <vector>
 
-// SINGLE source of truth for the engine's built-in component list — display
-// names, categories, subcategories, serialised names, and now also the
-// declarative property list that drives the inspector's auto-drawer +
-// (eventually) the generic JSON serialiser.
-//
-// Adding a new built-in component is a one-line change here. Adding a new
-// inspectable field is one more entry in that component's `properties`
-// vector — no editor file needs to change.
+// Single source of truth for built-in components — names, categories, properties.
 namespace Axiom {
 	namespace {
 		template<typename T>
@@ -57,12 +51,6 @@ namespace Axiom {
 		}
 
 		// ── Texture / audio ref helpers ─────────────────────────────
-		// Wrap the LoadTextureByUUID / LoadAudioByUUID side-effects so each
-		// component's TextureRef / AudioRef descriptor is one line in the
-		// component's properties vector. Set lambdas reload the runtime
-		// handle from the new asset UUID and write through to the component's
-		// public field / setter.
-
 		template <typename T, typename HandleAccessor, typename HandleAssign>
 		PropertyDescriptor MakeTextureRefDirect(const std::string& name, const std::string& displayName,
 			HandleAccessor getHandle, HandleAssign setHandle)
@@ -70,14 +58,25 @@ namespace Axiom {
 			return Properties::MakeTextureRef(name, displayName,
 				[getHandle](const Entity& e) -> uint64_t {
 					const auto& component = e.GetComponent<T>();
+					if constexpr (requires { component.TextureAssetId; }) {
+						const uint64_t assetId = static_cast<uint64_t>(component.TextureAssetId);
+						if (assetId != 0) {
+							return assetId;
+						}
+					}
 					const auto handle = getHandle(component);
 					return handle.IsValid() ? TextureManager::GetTextureAssetUUID(handle) : 0ull;
 				},
 				[setHandle](Entity& e, uint64_t uuid) {
 					auto& component = e.GetComponent<T>();
-					const TextureHandle h = uuid != 0
+					TextureHandle h = uuid != 0
 						? TextureManager::LoadTextureByUUID(uuid)
 						: TextureHandle{};
+					if (uuid != 0 && !h.IsValid()) {
+						AssetRegistry::MarkDirty();
+						AssetRegistry::Sync();
+						h = TextureManager::LoadTextureByUUID(uuid);
+					}
 					setHandle(component, h, UUID(uuid));
 				});
 		}
@@ -186,11 +185,7 @@ namespace Axiom {
 					}),
 			});
 
-		// ParticleSystem2D keeps a fully-custom drawInspector — it has variant
-		// types (CircleParams/SquareParams), play/pause buttons, and conditional
-		// per-shape sections that don't map to declarative PropertyDescriptors.
-		// Other engine code shouldn't expect this one to participate in the
-		// auto-drawer / generic-serializer paths.
+		// Custom drawInspector — variant shapes / play-pause don't map to PropertyDescriptors.
 		RegisterComponent<ParticleSystem2DComponent>(sceneManager, "Particle System 2D",
 			ComponentCategory::Component, "Rendering", "ParticleSystem2D");
 
@@ -203,7 +198,8 @@ namespace Axiom {
 					[](const Entity& e) { return e.GetComponent<Rigidbody2DComponent>().GetPosition(); },
 					[](Entity& e, const Vec2& v) {
 						e.GetComponent<Rigidbody2DComponent>().SetPosition(v);
-					}),
+					},
+					[]() { PropertyMetadata m; m.ReadOnly = true; return m; }()),
 				Properties::MakeWith<Vec2>("Velocity", "Velocity",
 					[](const Entity& e) { return e.GetComponent<Rigidbody2DComponent>().GetVelocity(); },
 					[](Entity& e, const Vec2& v) {
@@ -214,7 +210,7 @@ namespace Axiom {
 					[](Entity& e, float v) {
 						e.GetComponent<Rigidbody2DComponent>().SetRotation(v);
 					},
-					[]() { PropertyMetadata m; m.DragSpeed = 0.01f; return m; }()),
+					[]() { PropertyMetadata m; m.DragSpeed = 0.01f; m.ReadOnly = true; return m; }()),
 				Properties::MakeWith<float>("GravityScale", "Gravity Scale",
 					[](const Entity& e) { return e.GetComponent<Rigidbody2DComponent>().GetGravityScale(); },
 					[](Entity& e, float v) {
@@ -223,18 +219,13 @@ namespace Axiom {
 					[]() { PropertyMetadata m; m.HasClamp = true; m.ClampMin = 0.0; m.ClampMax = 1.0; return m; }()),
 				Properties::MakeWith<BodyType>("BodyType", "Body Type",
 					[](const Entity& e) {
-						return const_cast<Entity&>(e).GetComponent<Rigidbody2DComponent>().GetBodyType();
+						return e.GetComponent<Rigidbody2DComponent>().GetBodyType();
 					},
 					[](Entity& e, BodyType v) {
 						e.GetComponent<Rigidbody2DComponent>().SetBodyType(v);
 					}),
 			});
 
-		// BoxCollider2D's Size + Offset setters need a Scene* to convert
-		// world ↔ local (the collider stores local-space; the inspector
-		// shows world-space). The Set lambdas pull the entity's Scene at
-		// edit time. Local Size is intentionally NOT exposed — it's a
-		// derived diagnostic that the user shouldn't edit directly.
 		RegisterComponent<BoxCollider2DComponent>(sceneManager, "Box Collider 2D",
 			ComponentCategory::Component, "Physics", "BoxCollider2D",
 			{
@@ -247,18 +238,16 @@ namespace Axiom {
 					},
 					[]() { PropertyMetadata m; m.DragSpeed = 0.05f; return m; }()),
 				Properties::MakeWith<Vec2>("Size", "Size",
-					[](const Entity& e) { return e.GetComponent<BoxCollider2DComponent>().GetScale(); },
-					[](Entity& e, const Vec2& worldSize) {
+					[](const Entity& e) {
+						const Scene* s = e.GetScene();
+						if (!s) return Vec2{ 1.0f, 1.0f };
+						return e.GetComponent<BoxCollider2DComponent>().GetLocalScale(*s);
+					},
+					[](Entity& e, const Vec2& localSize) {
 						Scene* s = e.GetScene();
-						if (!s || !s->HasComponent<Transform2DComponent>(e.GetHandle())) return;
-						auto& col = e.GetComponent<BoxCollider2DComponent>();
-						const auto& tr = s->GetComponent<Transform2DComponent>(e.GetHandle());
-						Vec2 localSize = col.GetLocalScale(*s);
-						const float clampedX = std::max(worldSize.x, 0.001f);
-						const float clampedY = std::max(worldSize.y, 0.001f);
-						if (std::fabs(tr.Scale.x) > 0.0001f) localSize.x = clampedX / tr.Scale.x;
-						if (std::fabs(tr.Scale.y) > 0.0001f) localSize.y = clampedY / tr.Scale.y;
-						col.SetScale(localSize, *s);
+						if (!s) return;
+						const Vec2 clamped{ std::max(localSize.x, 0.001f), std::max(localSize.y, 0.001f) };
+						e.GetComponent<BoxCollider2DComponent>().SetScale(clamped, *s);
 					},
 					[]() { PropertyMetadata m; m.HasClamp = true; m.ClampMin = 0.001; m.ClampMax = 1000.0; m.DragSpeed = 0.05f; return m; }()),
 				Properties::MakeWith<bool>("Sensor", "Sensor",
@@ -397,19 +386,12 @@ namespace Axiom {
 			});
 
 		// ── Conflicts ───────────────────────────────────────────────
-		// Visual-output exclusion: an entity carries exactly one renderer.
-		// Tilemap2DComponent (in the Tilemap2D package) declares its own half
-		// of these conflicts in its package init.
+		// One renderer per entity (Tilemap2D adds its own conflicts in its package init).
 		DeclareConflict<SpriteRendererComponent, ParticleSystem2DComponent>(sceneManager);
 		DeclareConflict<SpriteRendererComponent, ImageComponent>(sceneManager);
 		DeclareConflict<ImageComponent, ParticleSystem2DComponent>(sceneManager);
 
-		// Physics-stack exclusion: Box2D-backed and Axiom-Physics-backed bodies
-		// do not coexist on a single entity (they manage distinct simulation
-		// state under the same logical "rigid body"). Same for collider pairs:
-		// a Box2D collider attaches to a Box2D body; an Axiom-Physics collider
-		// attaches to an Axiom-Physics body. The two stacks must not be mixed
-		// per-entity.
+		// Box2D and Axiom-Physics stacks must not be mixed per-entity.
 		DeclareConflict<Rigidbody2DComponent, FastBody2DComponent>(sceneManager);
 		DeclareConflict<BoxCollider2DComponent, FastBoxCollider2DComponent>(sceneManager);
 		DeclareConflict<BoxCollider2DComponent, FastCircleCollider2DComponent>(sceneManager);

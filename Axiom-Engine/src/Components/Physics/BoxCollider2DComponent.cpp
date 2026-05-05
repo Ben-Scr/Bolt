@@ -18,13 +18,16 @@ namespace Axiom {
 
 	void BoxCollider2DComponent::SetScale(const Vec2& scale, const Scene& scene) {
 		const Transform2DComponent* tr = TryGetTransform(scene, m_EntityHandle, "SetScale");
-		if (!tr) {
-			return;
-		}
+		if (!tr) return;
+
+		m_LocalSize = scale;
+
+		if (!b2Shape_IsValid(m_ShapeId)) return;
 
 		Vec2 center = this->GetCenter();
-		b2Polygon polygon = b2MakeOffsetBox(tr->Scale.x * scale.x * 0.5f, tr->Scale.y * scale.y * 0.5f, b2Vec2(center.x, center.y), tr->GetB2Rotation());
+		b2Polygon polygon = b2MakeOffsetBox(tr->Scale.x * scale.x * 0.5f, tr->Scale.y * scale.y * 0.5f, b2Vec2(center.x, center.y), b2Rot_identity);
 		b2Shape_SetPolygon(m_ShapeId, &polygon);
+		m_LastAppliedScale = tr->Scale;
 	}
 
 	void BoxCollider2DComponent::SetEnabled(bool enabled) {
@@ -75,55 +78,54 @@ namespace Axiom {
 	}
 
 	Vec2 BoxCollider2DComponent::GetLocalScale(const Scene& scene) const {
-		const Transform2DComponent* tr = TryGetTransform(scene, m_EntityHandle, "GetLocalScale");
-		if (!tr) {
-			return Vec2{ 1.0f, 1.0f };
-		}
-
-		b2ShapeType shapeType = b2Shape_GetType(m_ShapeId);
-
-		AIM_ASSERT(shapeType == b2_polygonShape, AxiomErrorCode::Undefined, "This boxshape type isn't type of b2_polygonShape");
-
-		b2Polygon polygon = b2Shape_GetPolygon(m_ShapeId);
-
-		AIM_ASSERT(polygon.count == 4, AxiomErrorCode::Undefined, "This boxshape polygon count equals " + std::to_string(polygon.count) + " instead of 4");
-
-		Vec2 size = Vec2(
-			polygon.vertices[2].x - polygon.vertices[0].x,
-			polygon.vertices[2].y - polygon.vertices[0].y
-		);
-		// Inverse of SetScale's `tr->Scale.x * scale.x * 0.5f` per axis: polygon
-		// edge length equals tr->Scale.<axis> * localScale.<axis>, so divide.
-		// Guard against zero scale to avoid division-by-zero NaN.
-		const float invX = tr->Scale.x != 0.0f ? 1.0f / tr->Scale.x : 0.0f;
-		const float invY = tr->Scale.y != 0.0f ? 1.0f / tr->Scale.y : 0.0f;
-		return Vec2{ size.x * invX, size.y * invY };
+		(void)scene;
+		return m_LocalSize;
 	}
 
-	void BoxCollider2DComponent::UpdateScale(const Scene& scene) {
-		const Transform2DComponent* tr = TryGetTransform(scene, m_EntityHandle, "UpdateScale");
-		if (!tr) {
-			return;
-		}
+	void BoxCollider2DComponent::SyncWithTransform(const Scene& scene) {
+		const Transform2DComponent* tr = TryGetTransform(scene, m_EntityHandle, "SyncWithTransform");
+		if (!tr) return;
+		if (tr->Scale == m_LastAppliedScale) return;
+		if (!b2Shape_IsValid(m_ShapeId)) return;
 
 		Vec2 center = this->GetCenter();
-
-		b2Polygon polygon = b2MakeOffsetBox(tr->Scale.x * 0.5f, tr->Scale.y * 0.5f, b2Vec2(center.x, center.y), tr->GetB2Rotation());
+		b2Polygon polygon = b2MakeOffsetBox(
+			tr->Scale.x * m_LocalSize.x * 0.5f,
+			tr->Scale.y * m_LocalSize.y * 0.5f,
+			b2Vec2(center.x, center.y),
+			b2Rot_identity);
 		b2Shape_SetPolygon(m_ShapeId, &polygon);
+		m_LastAppliedScale = tr->Scale;
 	}
 
 	void BoxCollider2DComponent::SetCenter(const Vec2& center, const Scene& scene) {
 		const Transform2DComponent* tr = TryGetTransform(scene, m_EntityHandle, "SetCenter");
-		if (!tr) {
-			return;
-		}
+		if (!tr) return;
+		if (!b2Shape_IsValid(m_ShapeId)) return;
 
-		b2Polygon polygon = b2MakeOffsetBox(tr->Scale.x * 0.5f, tr->Scale.y * 0.5f, b2Vec2(center.x, center.y), tr->GetB2Rotation());
+		b2Polygon polygon = b2MakeOffsetBox(
+			tr->Scale.x * m_LocalSize.x * 0.5f,
+			tr->Scale.y * m_LocalSize.y * 0.5f,
+			b2Vec2(center.x, center.y),
+			b2Rot_identity);
 		b2Shape_SetPolygon(m_ShapeId, &polygon);
+		m_LastAppliedScale = tr->Scale;
 	}
 
 	Vec2 BoxCollider2DComponent::GetCenter() const {
 		b2Polygon polygon = b2Shape_GetPolygon(m_ShapeId);
 		return Vec2(polygon.centroid.x, polygon.centroid.y);
+	}
+
+	// Idempotent: destroy hooks fire from both Rigidbody2D and this component.
+	void BoxCollider2DComponent::Destroy() {
+		if (b2Shape_IsValid(m_ShapeId)) {
+			DestroyShape(true);
+		}
+		if (b2Body_IsValid(m_BodyId)) {
+			b2DestroyBody(m_BodyId);
+		}
+		m_ShapeId = b2_nullShapeId;
+		m_BodyId = b2_nullBodyId;
 	}
 }

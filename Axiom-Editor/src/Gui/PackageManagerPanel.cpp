@@ -39,9 +39,7 @@ namespace Axiom {
 			return ToLower(haystack).find(ToLower(filter)) != std::string::npos;
 		}
 
-		// NuGet package IDs are case-insensitive by spec. `dotnet add` may write a different
-		// case into the .csproj than what was returned from the search API. Compare both
-		// sides case-folded to avoid the install-flag desync.
+		// NuGet IDs are case-insensitive — dotnet may write different casing than the search API.
 		bool EqualsIgnoreCase(const std::string& a, const std::string& b) {
 			if (a.size() != b.size()) return false;
 			for (size_t i = 0; i < a.size(); ++i) {
@@ -93,16 +91,11 @@ namespace Axiom {
 				m_StatusMessage = result.Message;
 				m_StatusIsError = !result.Success;
 
-				// Refresh installed list IMMEDIATELY (don't rely on the section's lazy
-				// dirty-check, which only fires when the user navigates to that section).
-				// Even if the operation reported failure, dotnet may have partially
-				// modified the .csproj — reading from disk gives ground truth.
+				// Refresh from disk now — dotnet may partially write the .csproj on failure.
 				if (m_Manager) {
 					m_InstalledNuGetPackages = m_Manager->GetInstalledPackages();
 					m_InstalledNuGetDirty = false;
 
-					// Re-cross-reference EVERY search result against the fresh installed
-					// list. Case-insensitive because NuGet IDs are case-insensitive.
 					for (auto& pkg : m_SearchResults) {
 						bool installed = false;
 						std::string installedVersion;
@@ -130,8 +123,7 @@ namespace Axiom {
 		PollDiskInstallTask();
 		RefreshManifestsIfDirty();
 
-		// Progress strip for the async post-install automation (regen + msbuild).
-		// Shown above the tab bar so it's visible regardless of which tab is active.
+		// Progress strip — above tab bar so it's visible from any tab.
 		if (m_AutomationTask && m_AutomationTask->Running.load(std::memory_order_acquire)) {
 			std::string stage;
 			float progress = 0.0f;
@@ -145,9 +137,7 @@ namespace Axiom {
 			ImGui::Separator();
 		}
 
-		// Reserve space at the bottom of the panel for the status strip so the tab
-		// bar remains anchored at the top. Each tab renders into its own scrollable
-		// child so only the body scrolls — the tabs themselves don't move.
+		// Reserve bottom strip; each tab is a scrollable child so the tab bar stays anchored.
 		const float statusHeight = !m_StatusMessage.empty() ? ImGui::GetFrameHeightWithSpacing() : 0.0f;
 
 		if (ImGui::BeginTabBar("##PackageManagerTabs")) {
@@ -225,8 +215,6 @@ namespace Axiom {
 				m_NewPackageLayerNative = true;
 				m_NewPackageLayerStandalone = false;
 				m_NewPackageLayerCsharp = false;
-				// Default the radio to "this project" if a project is open — that's
-				// almost always what the user wants from inside the editor.
 				m_NewPackageTarget = ProjectManager::GetCurrentProject() ? 1 : 0;
 				m_NewPackageError.clear();
 				m_ShowNewPackageWindow = true;
@@ -285,20 +273,18 @@ namespace Axiom {
 			return;
 		}
 
-		// Reset state and spawn a worker. The worker initializes its own STA, runs
-		// the modal IFileOpenDialog::Show, writes the picked path, and signals
-		// Finished. The main thread polls the result in PollDiskInstallTask().
+		// Join prior worker BEFORE clearing state — Running=false doesn't mean the lambda has unwound.
+		if (m_DiskInstallWorker.joinable()) {
+			m_DiskInstallWorker.join();
+		}
+
+		// Worker initializes STA, runs IFileOpenDialog::Show, signals Finished. Main polls in PollDiskInstallTask.
 		{
 			std::scoped_lock lock(m_DiskInstallTask->Mutex);
 			m_DiskInstallTask->Finished = false;
 			m_DiskInstallTask->PickedPath.clear();
 		}
 		m_DiskInstallTask->Running.store(true, std::memory_order_release);
-
-		// Join any prior worker before spawning a new one.
-		if (m_DiskInstallWorker.joinable()) {
-			m_DiskInstallWorker.join();
-		}
 
 		m_StatusMessage = "Choose a package folder...";
 		m_StatusIsError = false;
@@ -343,10 +329,16 @@ namespace Axiom {
 
 			{
 				std::scoped_lock lock(state->Mutex);
+				// Clear Running first, while still holding the mutex that
+				// guards Finished/PickedPath. This way any observer that
+				// sees Running==false is guaranteed to either (a) read
+				// Finished==true on its next mutex-guarded poll, or
+				// (b) be the next HandleDiskInstall caller, which now
+				// joins this thread before mutating state.
+				state->Running.store(false, std::memory_order_release);
 				state->PickedPath = std::move(picked);
 				state->Finished = true;
 			}
-			state->Running.store(false, std::memory_order_release);
 		});
 	}
 
@@ -373,8 +365,7 @@ namespace Axiom {
 			m_DiskInstallWorker.join();
 		}
 
-		// User cancelled the dialog — nothing more to do; clear the transient
-		// "Choose a package folder..." status if it's still up.
+		// User cancelled — clear transient status.
 		if (picked.empty()) {
 			if (m_StatusMessage == "Choose a package folder...") {
 				m_StatusMessage.clear();
@@ -402,13 +393,7 @@ namespace Axiom {
 	}
 
 	// ── New-Package wizard ──────────────────────────────────────────────────────
-	//
-	// The wizard is a thin UI front-end over `scripts/NewPackage.py`. The same
-	// scaffolding code path serves CLI users and editor users; bugs and tweaks
-	// land in one place. We pass `--no-premake` from here because the editor's
-	// existing post-install automation already runs the engine-solution regen
-	// (and a build for project-local packages); doing it twice wastes ~5s.
-
+	// UI front-end over scripts/NewPackage.py. Uses --no-premake — post-install automation regens.
 	void PackageManagerPanel::RenderNewPackageWindow() {
 		if (!m_ShowNewPackageWindow) return;
 
@@ -519,9 +504,7 @@ namespace Axiom {
 			return;
 		}
 
-		// Build the --layers token from the checkboxes. The CLI accepts either
-		// commas or pluses; we use commas because they don't get re-parsed by
-		// the host shell on either Windows or POSIX.
+		// Comma separator — host shells don't re-parse it on either platform.
 		std::vector<std::string> layerTokens;
 		if (m_NewPackageLayerNative)     layerTokens.emplace_back("native");
 		if (m_NewPackageLayerStandalone) layerTokens.emplace_back("standalone");
@@ -559,9 +542,7 @@ namespace Axiom {
 		m_StatusMessage = std::string("Creating package '") + m_NewPackageNameBuffer + "'...";
 		m_StatusIsError = false;
 
-		// Run the scaffolder synchronously. With --no-premake it does only
-		// file I/O and at most a small JSON edit, so this returns in well
-		// under a second — a frame skip is a fair trade for code simplicity.
+		// Synchronous: --no-premake makes this sub-second; one frame skip is fine.
 		Process::Result result = Process::Run(command, std::filesystem::path(engineRoot));
 		m_NewPackageIsCreating = false;
 
@@ -576,11 +557,7 @@ namespace Axiom {
 
 		AIM_INFO_TAG("AxiomPackages", "Created package '{}'.", m_NewPackageNameBuffer);
 
-		// If a project is open, kick off the standard post-install pipeline:
-		// premake regen (with --axiom-project) + targeted MSBuild for the
-		// project's package projects. If no project is open, we leave engine
-		// regen + build to the user — auto-rebuilding the running editor's
-		// own engine.dll is unsafe.
+		// Auto-regen+build only when a project is open — rebuilding the editor's own engine.dll is unsafe.
 		m_ManifestsDirty = true;
 		if (project) {
 			StartPostInstallAutomation();
@@ -652,8 +629,6 @@ namespace Axiom {
 				return;
 			}
 
-			// This window is dedicated to NuGet — the source is always the NuGet source
-			// (registered at index 0 by the editor layer). No selector needed.
 			m_SelectedSource = 0;
 
 			ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.0f);
@@ -755,9 +730,7 @@ namespace Axiom {
 			return;
 		}
 
-		// Project-local Axiom packages — installed via the GitHub / Local flows
-		// AND in the project's allow-list. NuGet PackageReferences live in their
-		// own panel below; they aren't part of the Axiom packages allow-list.
+		// Axiom packages from the allow-list; NuGet PackageReferences are in a separate panel.
 		int shown = 0;
 		for (const auto& manifest : m_AllManifests) {
 			if (manifest.IsEngine) continue;
@@ -817,8 +790,7 @@ namespace Axiom {
 	}
 
 	void PackageManagerPanel::RenderLayerBadges(const AxiomPackageManifest& manifest) {
-		// Small colored chips so the user can tell at a glance which layers a package
-		// declares: engine_core (green) / standalone_cpp (blue) / csharp (purple).
+		// engine_core = green, standalone_cpp = blue, csharp = purple.
 		auto chip = [](const char* label, ImVec4 color) {
 			ImGui::PushStyleColor(ImGuiCol_Button, color);
 			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, color);
@@ -830,14 +802,14 @@ namespace Axiom {
 		};
 
 		bool any = false;
-		if (manifest.HasEngineCoreLayer) {
+		if (manifest.HasNativeLayer) {
 			if (any) ImGui::SameLine();
-			chip("engine_core", ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+			chip("native", ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
 			any = true;
 		}
-		if (manifest.HasStandaloneCppLayer) {
+		if (manifest.HasNativeStandaloneLayer) {
 			if (any) ImGui::SameLine();
-			chip("standalone_cpp", ImVec4(0.20f, 0.40f, 0.65f, 1.0f));
+			chip("native_standalone", ImVec4(0.20f, 0.40f, 0.65f, 1.0f));
 			any = true;
 		}
 		if (manifest.HasCSharpLayer) {
@@ -1049,8 +1021,7 @@ namespace Axiom {
 			m_AutomationWorker.join();
 		}
 
-		// Capture by shared_ptr so the worker holds the state alive even if the panel
-		// shuts down mid-flight.
+		// shared_ptr keeps state alive if panel shuts down mid-flight.
 		auto state = m_AutomationTask;
 		m_AutomationWorker = std::thread([state, projectRoot]() {
 			auto setStage = [&state](const std::string& stage, float progress) {
@@ -1074,9 +1045,7 @@ namespace Axiom {
 				return;
 			}
 
-			// Same constraint as the launcher path: don't rebuild the engine itself
-			// from inside a process that has Axiom-Engine.dll loaded. Build only the
-			// project-local package projects. Empty targets = no MSBuild call at all.
+			// Don't rebuild the engine — the editor has Axiom-Engine.dll loaded. Local packages only.
 			const std::vector<std::string> packageNames =
 				AxiomProject::EnumerateProjectLocalPackages(projectRoot);
 			std::vector<std::string> targets;
@@ -1133,14 +1102,7 @@ namespace Axiom {
 		}
 
 		if (success) {
-			// Hot-load any newly-built package DLLs into the running editor
-			// process. Without this the user has to restart the editor before
-			// the just-installed package's components show up in the Add
-			// Component popup — its OnLoad never ran, so the engine's
-			// ComponentRegistry has no entry for the new types. LoadInstalled
-			// is idempotent against already-loaded packages and honors the
-			// project's `packages` allow-list (which InstallToProject just
-			// wrote to before this automation kicked off).
+			// Hot-load new package DLLs so their components appear in the Add Component popup without a restart.
 			const size_t newlyLoaded = PackageHost::LoadInstalled();
 			if (newlyLoaded > 0) {
 				m_StatusMessage = "Package operation complete; loaded " +

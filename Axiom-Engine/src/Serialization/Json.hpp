@@ -74,6 +74,10 @@ namespace Axiom::Json {
 		Value& AddMember(std::string key, Value value);
 		Value& Append(Value value);
 
+		// Structural equality (Int64(5) == UInt64(5) == Double(5.0)).
+		AXIOM_API friend bool operator==(const Value& a, const Value& b);
+		friend bool operator!=(const Value& a, const Value& b) { return !(a == b); }
+
 	private:
 		void SetType(Type type);
 

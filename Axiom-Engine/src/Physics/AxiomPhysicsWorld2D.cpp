@@ -21,7 +21,6 @@ namespace Axiom {
 		m_ContactCallbacks.clear();
 		m_BodyToEntity.clear();
 
-		// Detach colliders and unregister everything before clearing ownership
 		for (auto& [key, body] : m_Bodies) {
 			m_World.DetachCollider(*body);
 			m_World.UnregisterBody(*body);
@@ -53,8 +52,7 @@ namespace Axiom {
 	void AxiomPhysicsWorld2D::DestroyBody(EntityHandle entity) {
 		uint32_t key = static_cast<uint32_t>(entity);
 
-		// Destroy every collider attached to this entity first; the body's
-		// physical attachments must be torn down before the body itself.
+		// Tear down attached colliders before the body itself.
 		DestroyAllCollidersOnEntity(entity);
 
 		auto it = m_Bodies.find(key);
@@ -76,15 +74,13 @@ namespace Axiom {
 	AxiomPhys::BoxCollider* AxiomPhysicsWorld2D::CreateBoxCollider(EntityHandle entity, const Vec2& halfExtents) {
 		uint32_t key = static_cast<uint32_t>(entity);
 
-		// Replace only the existing BOX collider on this entity, not any
-		// other kind. Keeps a coexisting circle collider's pointer valid.
+		// Replace only the BOX collider — keeps a coexisting circle collider's pointer valid.
 		DestroyCollider(entity, FastColliderKind::Box);
 
 		auto collider = std::make_unique<AxiomPhys::BoxCollider>(AxiomPhys::Vec2(halfExtents.x, halfExtents.y));
 		AxiomPhys::BoxCollider* ptr = collider.get();
 		m_World.RegisterCollider(*ptr);
 
-		// Attach to body if one exists
 		auto bodyIt = m_Bodies.find(key);
 		if (bodyIt != m_Bodies.end()) {
 			m_World.AttachCollider(*bodyIt->second, *ptr);
@@ -119,12 +115,7 @@ namespace Axiom {
 
 		AxiomPhys::Collider* ptr = it->second.get();
 
-		// Detach from body if attached. AxiomPhys's DetachCollider takes the
-		// body and detaches whichever collider is currently attached — fine
-		// when only one kind exists. With two coexisting kinds this becomes
-		// approximate, but the user-facing path (inspector) blocks dual
-		// colliders via DeclareConflict, and the storage cleanup is what we
-		// care about here.
+		// AxiomPhys::DetachCollider drops whichever is attached; inspector blocks dual colliders via DeclareConflict.
 		auto bodyIt = m_Bodies.find(key);
 		if (bodyIt != m_Bodies.end()) {
 			m_World.DetachCollider(*bodyIt->second);
@@ -136,8 +127,6 @@ namespace Axiom {
 
 	void AxiomPhysicsWorld2D::DestroyAllCollidersOnEntity(EntityHandle entity) {
 		const uint32_t key = static_cast<uint32_t>(entity);
-		// Detach once if a body exists; covers however many colliders were
-		// attached.
 		auto bodyIt = m_Bodies.find(key);
 		if (bodyIt != m_Bodies.end()) {
 			m_World.DetachCollider(*bodyIt->second);
@@ -177,7 +166,6 @@ namespace Axiom {
 				contact.penetration
 			};
 
-			// Dispatch to both entities
 			if (entityA != entt::null) {
 				auto cbIt = m_ContactCallbacks.find(static_cast<uint32_t>(entityA));
 				if (cbIt != m_ContactCallbacks.end()) cbIt->second(axiomContact);
