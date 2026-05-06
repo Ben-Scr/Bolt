@@ -73,6 +73,38 @@ namespace Axiom {
         static Entity CreateImageEntity(Scene& scene);
         // Info: Basically calls CreateWith<RectTransform, Image>();
         static Entity CreateImageEntity();
+
+        // ── UI presets ─────────────────────────────────────────────
+        // Each returns the parent entity for the widget. Children
+        // (label entity, slider handle, toggle checkmark) are created
+        // alongside and parented via Entity::SetParent so they show up
+        // nested in the editor's hierarchy panel.
+
+        // Empty UI rect (RectTransform + Image as a transparent panel).
+        static Entity CreateUIPanel(Scene& scene);
+
+        // Clickable button: RectTransform + Image (background, tinted by
+        // UIEventSystem) + UIInteractable + UIButton + a child TextRenderer
+        // for the label.
+        static Entity CreateUIButton(Scene& scene);
+
+        // Horizontal slider: RectTransform + Image (track) + UIInteractable
+        // + UISlider, with a child Image for the handle (referenced by
+        // UISliderComponent::HandleEntity).
+        static Entity CreateUISlider(Scene& scene);
+
+        // Single-line text field: RectTransform + Image (background) +
+        // UIInteractable + UIInputField, with a child TextRenderer for
+        // the entered text / placeholder.
+        static Entity CreateUIInputField(Scene& scene);
+
+        // Dropdown: RectTransform + Image + UIInteractable + UIDropdown
+        // + child TextRenderer showing the current selection.
+        static Entity CreateUIDropdown(Scene& scene);
+
+        // Toggle / checkbox: RectTransform + Image (box) + UIInteractable
+        // + UIToggle, with a child Image for the checkmark.
+        static Entity CreateUIToggle(Scene& scene);
     };
 
 }

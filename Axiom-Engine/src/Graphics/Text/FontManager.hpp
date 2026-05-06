@@ -23,12 +23,6 @@ namespace Axiom {
     // resolved at render time.
     class AXIOM_API FontManager {
     public:
-        // Stable GUID assigned to the engine-shipped DefaultSans-Regular.ttf
-        // so scenes can serialize a reference to it without writing the
-        // .ttf into every project. Top-byte 0xAB tags engine-shipped
-        // built-ins (see AssetRegistry::RegisterBuiltInAsset).
-        static constexpr uint64_t k_DefaultFontAssetId = 0xAB00000000000001ull;
-
         static bool Initialize();
         static void Shutdown();
         static bool IsInitialized() { return s_IsInitialized; }

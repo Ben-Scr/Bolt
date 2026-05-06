@@ -15,9 +15,11 @@
 #include "Components/Physics/BoxCollider2DComponent.hpp"
 #include "Components/Audio/AudioSourceComponent.hpp"
 #include "Components/General/RectTransformComponent.hpp"
+#include "Components/General/HierarchyComponent.hpp"
 #include "Components/Graphics/ImageComponent.hpp"
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 #include "Components/General/UUIDComponent.hpp"
+#include "Scene/Entity.hpp"
 #include "Components/Tags.hpp"
 #include "Scripting/ScriptComponent.hpp"
 #include "Scripting/ScriptEngine.hpp"
@@ -420,12 +422,16 @@ namespace Axiom {
 			if (registry.all_of<RectTransformComponent>(entity)) {
 				const auto& rectTransform = registry.get<RectTransformComponent>(entity);
 				Value rectValue = Value::MakeObject();
-				rectValue.AddMember("posX", Value(rectTransform.Position.x));
-				rectValue.AddMember("posY", Value(rectTransform.Position.y));
+				rectValue.AddMember("anchorMinX", Value(rectTransform.AnchorMin.x));
+				rectValue.AddMember("anchorMinY", Value(rectTransform.AnchorMin.y));
+				rectValue.AddMember("anchorMaxX", Value(rectTransform.AnchorMax.x));
+				rectValue.AddMember("anchorMaxY", Value(rectTransform.AnchorMax.y));
 				rectValue.AddMember("pivotX", Value(rectTransform.Pivot.x));
 				rectValue.AddMember("pivotY", Value(rectTransform.Pivot.y));
-				rectValue.AddMember("width", Value(rectTransform.Width));
-				rectValue.AddMember("height", Value(rectTransform.Height));
+				rectValue.AddMember("posX", Value(rectTransform.AnchoredPosition.x));
+				rectValue.AddMember("posY", Value(rectTransform.AnchoredPosition.y));
+				rectValue.AddMember("sizeX", Value(rectTransform.SizeDelta.x));
+				rectValue.AddMember("sizeY", Value(rectTransform.SizeDelta.y));
 				rectValue.AddMember("rotation", Value(rectTransform.Rotation));
 				rectValue.AddMember("scaleX", Value(rectTransform.Scale.x));
 				rectValue.AddMember("scaleY", Value(rectTransform.Scale.y));
@@ -847,12 +853,28 @@ namespace Axiom {
 			}
 		}
 
+		// Two-pass entity load: first create every entity (so cross-references
+		// resolve), then wire parent-child links from each entity's
+		// `parentUuid` JSON field. Doing it inline doesn't work because a
+		// child can be serialized before its parent.
+		std::vector<std::pair<EntityHandle, uint64_t>> pendingParents;
 		if (const Value* entitiesValue = GetArrayMember(root, "entities")) {
 			for (const Value& entityValue : entitiesValue->GetArray()) {
 				if (!entityValue.IsObject()) {
 					continue;
 				}
-				DeserializeEntity(scene, entityValue);
+				EntityHandle handle = DeserializeEntity(scene, entityValue);
+				if (handle == entt::null) continue;
+
+				const std::string parentUuidStr = GetStringMember(entityValue, "parentUuid", std::string{});
+				if (!parentUuidStr.empty()) {
+					try {
+						const uint64_t parentUuid = std::stoull(parentUuidStr);
+						if (parentUuid != 0) pendingParents.emplace_back(handle, parentUuid);
+					} catch (...) {
+						// Malformed UUID — ignore; entity becomes a root.
+					}
+				}
 			}
 		}
 		else {
@@ -861,6 +883,22 @@ namespace Axiom {
 			}
 			else {
 				AIM_CORE_WARN_TAG("SceneSerializer", "No entities array in scene data");
+			}
+		}
+
+		if (!pendingParents.empty()) {
+			std::unordered_map<uint64_t, EntityHandle> byUuid;
+			byUuid.reserve(pendingParents.size() * 2);
+			for (auto e : scene.GetRegistry().view<UUIDComponent>()) {
+				const uint64_t uuid = static_cast<uint64_t>(scene.GetRegistry().get<UUIDComponent>(e).Id);
+				byUuid[uuid] = e;
+			}
+			for (const auto& [childHandle, parentUuid] : pendingParents) {
+				auto it = byUuid.find(parentUuid);
+				if (it == byUuid.end() || !scene.IsValid(it->second) || !scene.IsValid(childHandle)) continue;
+				Entity child = scene.GetEntity(childHandle);
+				Entity parent = scene.GetEntity(it->second);
+				child.SetParent(parent);
 			}
 		}
 
@@ -1131,15 +1169,22 @@ namespace Axiom {
 
 		if (const Value* rectValue = GetObjectMember(entityValue, "RectTransform")) {
 			auto& rectTransform = scene.AddComponent<RectTransformComponent>(entity);
-			rectTransform.Position.x = GetFloatMember(*rectValue, "posX", 0.0f);
-			rectTransform.Position.y = GetFloatMember(*rectValue, "posY", 0.0f);
-			rectTransform.Pivot.x = GetFloatMember(*rectValue, "pivotX", 0.0f);
-			rectTransform.Pivot.y = GetFloatMember(*rectValue, "pivotY", 0.0f);
-			rectTransform.Width = GetFloatMember(*rectValue, "width", 100.0f);
-			rectTransform.Height = GetFloatMember(*rectValue, "height", 100.0f);
-			rectTransform.Rotation = GetFloatMember(*rectValue, "rotation", 0.0f);
-			rectTransform.Scale.x = GetFloatMember(*rectValue, "scaleX", 1.0f);
-			rectTransform.Scale.y = GetFloatMember(*rectValue, "scaleY", 1.0f);
+			rectTransform.AnchorMin.x        = GetFloatMember(*rectValue, "anchorMinX", 0.5f);
+			rectTransform.AnchorMin.y        = GetFloatMember(*rectValue, "anchorMinY", 0.5f);
+			rectTransform.AnchorMax.x        = GetFloatMember(*rectValue, "anchorMaxX", 0.5f);
+			rectTransform.AnchorMax.y        = GetFloatMember(*rectValue, "anchorMaxY", 0.5f);
+			rectTransform.Pivot.x            = GetFloatMember(*rectValue, "pivotX", 0.5f);
+			rectTransform.Pivot.y            = GetFloatMember(*rectValue, "pivotY", 0.5f);
+			rectTransform.AnchoredPosition.x = GetFloatMember(*rectValue, "posX", 0.0f);
+			rectTransform.AnchoredPosition.y = GetFloatMember(*rectValue, "posY", 0.0f);
+			// Back-compat: pre-anchor saves used "width"/"height" instead of sizeX/sizeY.
+			rectTransform.SizeDelta.x        = GetFloatMember(*rectValue, "sizeX",
+				GetFloatMember(*rectValue, "width", 100.0f));
+			rectTransform.SizeDelta.y        = GetFloatMember(*rectValue, "sizeY",
+				GetFloatMember(*rectValue, "height", 100.0f));
+			rectTransform.Rotation           = GetFloatMember(*rectValue, "rotation", 0.0f);
+			rectTransform.Scale.x            = GetFloatMember(*rectValue, "scaleX", 1.0f);
+			rectTransform.Scale.y            = GetFloatMember(*rectValue, "scaleY", 1.0f);
 		}
 
 		if (const Value* imageValue = GetObjectMember(entityValue, "Image")) {
@@ -1537,15 +1582,21 @@ namespace Axiom {
 			auto& rectTransform = scene.HasComponent<RectTransformComponent>(entity)
 				? scene.GetComponent<RectTransformComponent>(entity)
 				: scene.AddComponent<RectTransformComponent>(entity);
-			rectTransform.Position.x = GetFloatMember(componentValue, "posX", 0.0f);
-			rectTransform.Position.y = GetFloatMember(componentValue, "posY", 0.0f);
-			rectTransform.Pivot.x = GetFloatMember(componentValue, "pivotX", 0.0f);
-			rectTransform.Pivot.y = GetFloatMember(componentValue, "pivotY", 0.0f);
-			rectTransform.Width = GetFloatMember(componentValue, "width", 100.0f);
-			rectTransform.Height = GetFloatMember(componentValue, "height", 100.0f);
-			rectTransform.Rotation = GetFloatMember(componentValue, "rotation", 0.0f);
-			rectTransform.Scale.x = GetFloatMember(componentValue, "scaleX", 1.0f);
-			rectTransform.Scale.y = GetFloatMember(componentValue, "scaleY", 1.0f);
+			rectTransform.AnchorMin.x        = GetFloatMember(componentValue, "anchorMinX", 0.5f);
+			rectTransform.AnchorMin.y        = GetFloatMember(componentValue, "anchorMinY", 0.5f);
+			rectTransform.AnchorMax.x        = GetFloatMember(componentValue, "anchorMaxX", 0.5f);
+			rectTransform.AnchorMax.y        = GetFloatMember(componentValue, "anchorMaxY", 0.5f);
+			rectTransform.Pivot.x            = GetFloatMember(componentValue, "pivotX", 0.5f);
+			rectTransform.Pivot.y            = GetFloatMember(componentValue, "pivotY", 0.5f);
+			rectTransform.AnchoredPosition.x = GetFloatMember(componentValue, "posX", 0.0f);
+			rectTransform.AnchoredPosition.y = GetFloatMember(componentValue, "posY", 0.0f);
+			rectTransform.SizeDelta.x        = GetFloatMember(componentValue, "sizeX",
+				GetFloatMember(componentValue, "width", 100.0f));
+			rectTransform.SizeDelta.y        = GetFloatMember(componentValue, "sizeY",
+				GetFloatMember(componentValue, "height", 100.0f));
+			rectTransform.Rotation           = GetFloatMember(componentValue, "rotation", 0.0f);
+			rectTransform.Scale.x            = GetFloatMember(componentValue, "scaleX", 1.0f);
+			rectTransform.Scale.y            = GetFloatMember(componentValue, "scaleY", 1.0f);
 			return true;
 		}
 

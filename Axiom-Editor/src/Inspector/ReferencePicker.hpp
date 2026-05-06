@@ -46,12 +46,15 @@ namespace Axiom {
 		// SearchKey is the lower-cased text matched against the search field;
 		// Value is the string that comes back via ConsumeSelection — the
 		// caller decodes it back into a PropertyValue using PropertyValue::FromString.
+		// IsBuiltIn marks engine-shipped assets (default font, built-in
+		// shaders) so the picker's eye toggle can hide them from search.
 		struct Entry {
 			std::string Label;
 			std::string Secondary;
 			std::string SearchKey;
 			std::string Value;
 			std::string UniqueId;
+			bool IsBuiltIn = false;
 		};
 
 		// Build entry lists for the standard reference kinds. Each list is

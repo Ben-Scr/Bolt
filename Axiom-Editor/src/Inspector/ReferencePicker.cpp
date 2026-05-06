@@ -3,13 +3,16 @@
 
 #include "Assets/AssetRegistry.hpp"
 #include "Components/General/NameComponent.hpp"
+#include "Graphics/Text/FontHandle.hpp"
 #include "Graphics/Texture2D.hpp"
 #include "Gui/AssetType.hpp"
+#include "Gui/EditorIcons.hpp"
 #include "Gui/ImGuiUtils.hpp"
 #include "Gui/ThumbnailCache.hpp"
 #include "Scene/ComponentRegistry.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
+#include "Serialization/Path.hpp"
 
 #include <imgui.h>
 
@@ -36,6 +39,13 @@ namespace Axiom::ReferencePicker {
 			std::string PendingFieldKey;
 			std::string PendingValue;
 			Style Style = Style::Plain;
+
+			// Eye toggle: when true, engine-shipped (built-in) assets like
+			// the default font appear in the picker list. When false, they
+			// are hidden so the project's own assets are easier to scan.
+			// Persists across opens for the session — the user typically
+			// has a stable preference here.
+			bool IncludeBuiltIns = true;
 
 			// Thumbnail cache lives on the picker (one cache for any kind of
 			// asset preview). The cache LRU-evicts past 256 entries; it's
@@ -77,6 +87,48 @@ namespace Axiom::ReferencePicker {
 			return "Entity " + std::to_string(entityId);
 		}
 
+		// AssetRegistry's static state lives in a header-only inline-static
+		// class with no AXIOM_API export, so each binary that includes the
+		// header gets its own copy of `s_BuiltInById` (Axiom-Engine.dll has
+		// one, Axiom-Editor.exe has another). Engine-side built-in
+		// registrations (FontManager::Initialize, Application::Initialize's
+		// directory scan) populate the DLL's copy; this picker reads the
+		// EXE's copy. Without re-registering in editor context the picker
+		// sees nothing — explaining why the texture/font lists were empty.
+		//
+		// This helper mirrors the engine-side built-in registration into
+		// the editor binary's copy. Idempotent — guarded by a static flag
+		// so the directory walk only runs once per process.
+		//
+		// TODO: convert AssetRegistry to a properly DLL-exported class
+		// (move methods + statics into a .cpp, mark with AXIOM_API) so
+		// this duplicate population isn't necessary.
+		void EnsureBuiltInsRegisteredInEditor() {
+			static bool s_Done = false;
+			if (s_Done) return;
+			s_Done = true;
+
+			// Default font with hand-picked GUID (matches FontManager's own
+			// registration so scenes referencing k_DefaultFontAssetId resolve).
+			const std::string fontDir = Path::ResolveAxiomAssets("Fonts");
+			if (!fontDir.empty()) {
+				const std::string fontPath = Path::Combine(fontDir, "DefaultSans-Regular.ttf");
+				if (std::filesystem::exists(fontPath)) {
+					std::error_code ec;
+					std::string canonical = std::filesystem::weakly_canonical(
+						std::filesystem::path(fontPath), ec).make_preferred().string();
+					if (ec) canonical = fontPath;
+					AssetRegistry::RegisterBuiltInAsset(canonical, k_DefaultFontAssetId, AssetKind::Font);
+				}
+			}
+
+			// Recursive scan of AxiomAssets/ for icons, audio, shaders, etc.
+			const std::string axiomAssetsRoot = Path::ResolveAxiomAssets("");
+			if (!axiomAssetsRoot.empty()) {
+				AssetRegistry::RegisterBuiltInDirectory(axiomAssetsRoot);
+			}
+		}
+
 		const ComponentInfo* FindComponentByDisplayName(const std::string& displayName) {
 			const ComponentInfo* found = nullptr;
 			SceneManager::Get().GetComponentRegistry().ForEachComponentInfo(
@@ -91,6 +143,8 @@ namespace Axiom::ReferencePicker {
 	} // namespace
 
 	std::vector<Entry> CollectAssetsByKind(AssetKind kind) {
+		EnsureBuiltInsRegisteredInEditor();
+
 		// Force a re-scan: AssetRegistry only auto-rebuilds when something
 		// has marked it dirty. Without this, dropping a new asset into
 		// Assets/ won't show up in the picker until a save / reload.
@@ -98,7 +152,7 @@ namespace Axiom::ReferencePicker {
 		AssetRegistry::Sync();
 
 		std::vector<Entry> entries;
-		entries.push_back({ "(None)", "", "(none)", "", "__none__" });
+		entries.push_back({ "(None)", "", "(none)", "", "__none__", false });
 		for (const AssetRegistry::Record& record : AssetRegistry::GetAssetsByKind(kind)) {
 			Entry entry;
 			entry.Label = std::filesystem::path(record.Path).filename().string();
@@ -106,6 +160,7 @@ namespace Axiom::ReferencePicker {
 			entry.SearchKey = ToLowerCopy(entry.Label + " " + entry.Secondary);
 			entry.Value = std::to_string(record.Id);
 			entry.UniqueId = entry.Value;
+			entry.IsBuiltIn = AssetRegistry::IsBuiltIn(record.Id);
 			entries.push_back(std::move(entry));
 		}
 		std::sort(entries.begin() + 1, entries.end(), [](const Entry& a, const Entry& b) {
@@ -252,17 +307,63 @@ namespace Axiom::ReferencePicker {
 			return;
 		}
 
-		ImGui::SetNextItemWidth(-1.0f);
+		// Eye toggle on the right; search bar fills the remainder. Uses
+		// the engine-shipped visibility_eye icon (AxiomAssets/Textures/
+		// Editor/visibility_eye/) at 16 px. Tint mirrors the log panel's
+		// filter pattern: full-white when showing, dim grey when hiding.
+		// If the icon fails to load (icon dir missing on disk), fall
+		// back to an ASCII-labelled button so the toggle stays usable.
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const unsigned int eyeIcon = EditorIcons::Get("visibility_eye", 16);
+		const ImVec2 eyeIconSize(16.0f, 16.0f);
+		const float toggleWidth = (eyeIcon != 0)
+			? eyeIconSize.x + style.FramePadding.x * 2.0f
+			: ImGui::CalcTextSize("(o)").x + style.FramePadding.x * 2.0f;
+		const float searchWidth = std::max(60.0f,
+			ImGui::GetContentRegionAvail().x - toggleWidth - style.ItemSpacing.x);
+		ImGui::SetNextItemWidth(searchWidth);
 		ImGui::InputTextWithHint("##ReferenceSearch", "Search...", s_State.Search, sizeof(s_State.Search));
+		ImGui::SameLine();
+		const bool showingBuiltIns = s_State.IncludeBuiltIns;
+		bool toggleClicked = false;
+		if (eyeIcon != 0) {
+			const ImVec4 tint = showingBuiltIns
+				? ImVec4(1.0f, 1.0f, 1.0f, 1.0f)
+				: ImVec4(0.4f, 0.4f, 0.4f, 0.5f);
+			toggleClicked = ImGui::ImageButton("##BuiltInToggle",
+				static_cast<ImTextureID>(static_cast<intptr_t>(eyeIcon)),
+				eyeIconSize, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f),
+				ImVec4(0.0f, 0.0f, 0.0f, 0.0f), tint);
+		}
+		else {
+			if (showingBuiltIns) {
+				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+			}
+			toggleClicked = ImGui::Button(showingBuiltIns ? "(o)##BuiltInToggle" : "(-)##BuiltInToggle");
+			if (showingBuiltIns) {
+				ImGui::PopStyleColor();
+			}
+		}
+		if (toggleClicked) {
+			s_State.IncludeBuiltIns = !s_State.IncludeBuiltIns;
+		}
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip(showingBuiltIns
+				? "Built-in (engine-shipped) assets are visible.\nClick to hide them."
+				: "Built-in (engine-shipped) assets are hidden.\nClick to show them.");
+		}
 		ImGui::Separator();
 
 		const std::string filter = ToLowerCopy(std::string(s_State.Search));
 
 		// Pre-filter entries once so both layouts share the same visible
-		// set + the empty-state message can be displayed correctly.
+		// set + the empty-state message can be displayed correctly. The
+		// eye toggle hides built-ins; the (None) entry has IsBuiltIn=false
+		// so it always survives the filter.
 		std::vector<const Entry*> visible;
 		visible.reserve(s_State.Entries.size());
 		for (const Entry& entry : s_State.Entries) {
+			if (!s_State.IncludeBuiltIns && entry.IsBuiltIn) continue;
 			if (!filter.empty() && entry.SearchKey.find(filter) == std::string::npos) continue;
 			visible.push_back(&entry);
 		}

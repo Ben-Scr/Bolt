@@ -41,7 +41,14 @@ namespace Axiom {
         // Font reference is the .ttf's stable asset GUID. The runtime
         // FontHandle is resolved by TextRenderer at draw time so scene
         // serialization stays asset-stable across atlas re-bakes.
-        UUID FontAssetId{};
+        //
+        // Defaults to the engine-shipped DefaultSans-Regular.ttf's stable
+        // GUID rather than UUID()'s random default — without this, a
+        // freshly-added TextRenderer rolls a random 64-bit number that
+        // resolves to nothing, and the inspector flags it as "(Missing
+        // Asset)" even though the renderer is happily drawing the default
+        // fallback font.
+        UUID FontAssetId{ k_DefaultFontAssetId };
 
         // Cached resolved handle — populated by the renderer so the
         // FontManager lookup happens at most once per FontAssetId per

@@ -18,6 +18,7 @@
 #include "Components/Physics/BoxCollider2DComponent.hpp"
 #include "Components/Audio/AudioSourceComponent.hpp"
 #include "Components/General/RectTransformComponent.hpp"
+#include "Components/General/HierarchyComponent.hpp"
 #include "Components/Graphics/ImageComponent.hpp"
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 #include "Components/General/UUIDComponent.hpp"
@@ -295,6 +296,21 @@ namespace Axiom {
 					Value(std::to_string(static_cast<uint64_t>(registry.get<UUIDComponent>(entity).Id))));
 			}
 
+			// Parent reference is serialized as the parent's UUID — load
+			// resolves it back into an EntityHandle in a second pass after
+			// all entities exist (entity handles are runtime-local and
+			// can't be persisted directly). Roots have no field at all.
+			if (registry.all_of<HierarchyComponent>(entity)) {
+				const auto& hc = registry.get<HierarchyComponent>(entity);
+				if (hc.Parent != entt::null
+					&& registry.valid(hc.Parent)
+					&& registry.all_of<UUIDComponent>(hc.Parent))
+				{
+					const uint64_t parentUuid = static_cast<uint64_t>(registry.get<UUIDComponent>(hc.Parent).Id);
+					entityValue.AddMember("parentUuid", Value(std::to_string(parentUuid)));
+				}
+			}
+
 			if (const EntityMetaData* metaData = scene.GetEntityMetaData(entity)) {
 				entityValue.AddMember("Origin", Value(EntityOriginToString(metaData->Origin)));
 				if (metaData->Origin == EntityOrigin::Scene && static_cast<uint64_t>(metaData->SceneGUID) != 0) {
@@ -523,12 +539,16 @@ namespace Axiom {
 			if (registry.all_of<RectTransformComponent>(entity)) {
 				const auto& rectTransform = registry.get<RectTransformComponent>(entity);
 				Value rectValue = Value::MakeObject();
-				rectValue.AddMember("posX", Value(rectTransform.Position.x));
-				rectValue.AddMember("posY", Value(rectTransform.Position.y));
+				rectValue.AddMember("anchorMinX", Value(rectTransform.AnchorMin.x));
+				rectValue.AddMember("anchorMinY", Value(rectTransform.AnchorMin.y));
+				rectValue.AddMember("anchorMaxX", Value(rectTransform.AnchorMax.x));
+				rectValue.AddMember("anchorMaxY", Value(rectTransform.AnchorMax.y));
 				rectValue.AddMember("pivotX", Value(rectTransform.Pivot.x));
 				rectValue.AddMember("pivotY", Value(rectTransform.Pivot.y));
-				rectValue.AddMember("width", Value(rectTransform.Width));
-				rectValue.AddMember("height", Value(rectTransform.Height));
+				rectValue.AddMember("posX", Value(rectTransform.AnchoredPosition.x));
+				rectValue.AddMember("posY", Value(rectTransform.AnchoredPosition.y));
+				rectValue.AddMember("sizeX", Value(rectTransform.SizeDelta.x));
+				rectValue.AddMember("sizeY", Value(rectTransform.SizeDelta.y));
 				rectValue.AddMember("rotation", Value(rectTransform.Rotation));
 				rectValue.AddMember("scaleX", Value(rectTransform.Scale.x));
 				rectValue.AddMember("scaleY", Value(rectTransform.Scale.y));

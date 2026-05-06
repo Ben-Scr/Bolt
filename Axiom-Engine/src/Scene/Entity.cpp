@@ -2,6 +2,7 @@
 #include "Scene/Entity.hpp"
 #include "Scene/SceneManager.hpp"
 #include "Scene/Scene.hpp"
+#include "Components/General/HierarchyComponent.hpp"
 #include "Components/General/NameComponent.hpp"
 #include "Components/General/Transform2DComponent.hpp"
 #include "Components/Tags.hpp"
@@ -101,5 +102,100 @@ namespace Axiom {
 	void Entity::SetEnabled(bool enabled) {
 		if (enabled) { if (HasComponent<DisabledTag>()) RemoveComponent<DisabledTag>(); }
 		else { if (!HasComponent<DisabledTag>()) AddComponent<DisabledTag>(); }
+	}
+
+	// ── Parent-child hierarchy ──────────────────────────────────────────
+
+	namespace {
+		// Walk up the parent chain. Returns true if `ancestor` appears as
+		// a (possibly transitive) parent of `descendant`. Used to refuse
+		// cycles in SetParent.
+		bool HierarchyContains(entt::registry& registry, EntityHandle ancestor, EntityHandle descendant) {
+			EntityHandle cursor = descendant;
+			// Hard cap on depth so a corrupted scene can't infinite-loop here.
+			for (int i = 0; i < 10000 && cursor != entt::null; ++i) {
+				if (cursor == ancestor) return true;
+				if (!registry.valid(cursor) || !registry.all_of<HierarchyComponent>(cursor)) {
+					return false;
+				}
+				cursor = registry.get<HierarchyComponent>(cursor).Parent;
+			}
+			return false;
+		}
+
+		// Detach `child` from its current parent's child list, leaving the
+		// child's own HierarchyComponent in place (caller decides what to
+		// set Parent to next).
+		void DetachFromCurrentParent(entt::registry& registry, EntityHandle child) {
+			if (!registry.valid(child) || !registry.all_of<HierarchyComponent>(child)) return;
+			HierarchyComponent& hc = registry.get<HierarchyComponent>(child);
+			const EntityHandle currentParent = hc.Parent;
+			if (currentParent == entt::null) return;
+
+			if (registry.valid(currentParent) && registry.all_of<HierarchyComponent>(currentParent)) {
+				auto& parentHc = registry.get<HierarchyComponent>(currentParent);
+				parentHc.Children.erase(
+					std::remove(parentHc.Children.begin(), parentHc.Children.end(), child),
+					parentHc.Children.end());
+			}
+			hc.Parent = entt::null;
+		}
+	}
+
+	void Entity::SetParent(Entity parent) {
+		if (!m_Registry || m_EntityHandle == entt::null) return;
+
+		const EntityHandle parentHandle = parent.m_EntityHandle;
+		if (parentHandle == m_EntityHandle) return; // can't parent to self
+
+		// Cycle check: refuse if `parent` is a descendant of `this`.
+		if (parentHandle != entt::null && HierarchyContains(*m_Registry, m_EntityHandle, parentHandle)) {
+			AIM_WARN_TAG("Entity", "SetParent refused: would create a cycle");
+			return;
+		}
+
+		// Ensure both ends have a HierarchyComponent.
+		if (!HasComponent<HierarchyComponent>()) {
+			AddComponent<HierarchyComponent>();
+		}
+		DetachFromCurrentParent(*m_Registry, m_EntityHandle);
+
+		HierarchyComponent& myHc = GetComponent<HierarchyComponent>();
+		if (parentHandle == entt::null) {
+			myHc.Parent = entt::null;
+			return;
+		}
+
+		if (!m_Registry->all_of<HierarchyComponent>(parentHandle)) {
+			m_Registry->emplace<HierarchyComponent>(parentHandle);
+		}
+		auto& parentHc = m_Registry->get<HierarchyComponent>(parentHandle);
+		parentHc.Children.push_back(m_EntityHandle);
+		myHc.Parent = parentHandle;
+	}
+
+	Entity Entity::GetParent() const {
+		if (!m_Registry || m_EntityHandle == entt::null) return Entity::Null;
+		if (!HasComponent<HierarchyComponent>()) return Entity::Null;
+		const EntityHandle p = GetComponent<HierarchyComponent>().Parent;
+		if (p == entt::null || !m_Registry->valid(p)) return Entity::Null;
+		return Entity(p, m_Scene);
+	}
+
+	const std::vector<EntityHandle>& Entity::GetChildren() const {
+		static const std::vector<EntityHandle> s_Empty;
+		if (!m_Registry || m_EntityHandle == entt::null) return s_Empty;
+		if (!HasComponent<HierarchyComponent>()) return s_Empty;
+		return GetComponent<HierarchyComponent>().Children;
+	}
+
+	bool Entity::HasParent() const {
+		if (!HasComponent<HierarchyComponent>()) return false;
+		return GetComponent<HierarchyComponent>().Parent != entt::null;
+	}
+
+	bool Entity::IsAncestorOf(Entity other) const {
+		if (!m_Registry || m_EntityHandle == entt::null) return false;
+		return HierarchyContains(*m_Registry, m_EntityHandle, other.m_EntityHandle);
 	}
 }

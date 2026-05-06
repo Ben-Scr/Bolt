@@ -15,6 +15,7 @@
 #include "Scripting/ScriptEngine.hpp"
 #include "Systems/AudioUpdateSystem.hpp"
 #include "Systems/ParticleUpdateSystem.hpp"
+#include "Systems/UIEventSystem.hpp"
 #include "Core/Application.hpp"
 #include "Core/ApplicationConfig.hpp"
 #include "Events/SceneEvents.hpp"
@@ -55,6 +56,12 @@ namespace Axiom {
 			// per-frame Update still walks the entity registry — gate it.
 			if (config.EnableAudio) {
 				definition.AddSystem<AudioUpdateSystem>();
+			}
+
+			// UIEventSystem reads mouse position from the scene's main
+			// camera viewport — only useful when the renderer is up.
+			if (config.EnableRenderer2D) {
+				definition.AddSystem<UIEventSystem>();
 			}
 		}
 	}

@@ -54,6 +54,13 @@ namespace Axiom {
 		// random one — that keeps the GUID stable across installs so a
 		// scene saved with `BuiltIn::DefaultFont` still resolves on every
 		// machine without checking in the .ttf to every project.
+		//
+		// Top-byte convention:
+		//   0xAB - hand-picked GUIDs (e.g. FontManager's default font).
+		//          Stable forever; safe to hard-code in component defaults.
+		//   0xAA - path-hash GUIDs from RegisterBuiltInDirectory. Stable
+		//          while the relative path is stable; if a file is renamed
+		//          or moved within AxiomAssets/, the GUID changes.
 		static void RegisterBuiltInAsset(const std::string& absolutePath, uint64_t guid, AssetKind kind) {
 			if (absolutePath.empty() || guid == 0) {
 				return;
@@ -64,6 +71,89 @@ namespace Axiom {
 			record.Kind = kind;
 			s_BuiltInById[guid] = record;
 			s_BuiltInPathToId[absolutePath] = guid;
+		}
+
+		// Walk `absoluteRoot` recursively and register every file as a
+		// built-in asset with a deterministic path-hash GUID. Used by
+		// engine startup to expose the contents of AxiomAssets/ (icons,
+		// shaders, default audio, etc.) to the inspector's reference
+		// picker. The eye toggle in the picker hides these by default
+		// when the user wants to see only their project's own assets.
+		//
+		// Files whose path is already registered via RegisterBuiltInAsset
+		// are skipped — this lets hand-picked GUIDs (FontManager's default
+		// font) win without producing a duplicate entry. Call AFTER any
+		// hand-picked registrations.
+		static void RegisterBuiltInDirectory(const std::string& absoluteRoot) {
+			if (absoluteRoot.empty()) {
+				return;
+			}
+			std::error_code rootEc;
+			if (!std::filesystem::is_directory(absoluteRoot, rootEc) || rootEc) {
+				return;
+			}
+
+			std::error_code ec;
+			for (std::filesystem::recursive_directory_iterator it(
+				 absoluteRoot,
+				 std::filesystem::directory_options::skip_permission_denied,
+				 ec), end;
+				 it != end;
+				 it.increment(ec))
+			{
+				if (ec) { ec.clear(); continue; }
+				if (!it->is_regular_file(ec) || ec) { ec.clear(); continue; }
+
+				const std::string absPath = NormalizePath(it->path().string());
+				if (absPath.empty() || IsMetaFilePath(absPath)) {
+					continue;
+				}
+				if (s_BuiltInPathToId.find(absPath) != s_BuiltInPathToId.end()) {
+					continue;  // hand-picked or earlier scan already owns this path
+				}
+
+				const AssetKind kind = Classify(absPath);
+				if (kind == AssetKind::Unknown) {
+					continue;
+				}
+
+				// Stable GUID = FNV-1a 64 of the path RELATIVE to the
+				// AxiomAssets root, lowercased and forward-slashed so the
+				// same file gets the same GUID across Windows / Linux and
+				// installs in different exe directories.
+				std::error_code relEc;
+				std::filesystem::path relPath = std::filesystem::relative(
+					std::filesystem::path(absPath),
+					std::filesystem::path(absoluteRoot), relEc);
+				std::string relStr = relEc ? absPath : relPath.generic_string();
+				std::transform(relStr.begin(), relStr.end(), relStr.begin(),
+					[](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+				uint64_t hash = 0xcbf29ce484222325ULL;
+				for (char ch : relStr) {
+					hash ^= static_cast<uint8_t>(ch);
+					hash *= 0x100000001b3ULL;
+				}
+				// Top byte 0xAA tags this as an auto-registered built-in
+				// (vs 0xAB for hand-picked). Bottom 56 bits stay distinct
+				// from FontManager::k_DefaultFontAssetId regardless of
+				// hash output.
+				uint64_t guid = (hash & 0x00FFFFFFFFFFFFFFULL) | 0xAA00000000000000ULL;
+
+				if (s_BuiltInById.find(guid) != s_BuiltInById.end()) {
+					AIM_CORE_WARN_TAG("AssetRegistry",
+						"Built-in path-hash collision: '{}' hashed to GUID {} which is already registered — skipping",
+						absPath, guid);
+					continue;
+				}
+
+				Record record;
+				record.Id = guid;
+				record.Path = absPath;
+				record.Kind = kind;
+				s_BuiltInById[guid] = record;
+				s_BuiltInPathToId[absPath] = guid;
+			}
 		}
 
 		static void Sync() {
@@ -167,6 +257,20 @@ namespace Axiom {
 
 		static bool Exists(uint64_t assetId) {
 			return !ResolvePath(assetId).empty();
+		}
+
+		// Built-ins are engine-shipped assets registered via
+		// `RegisterBuiltInAsset` — they live under <exeDir>/AxiomAssets/
+		// rather than the project's Assets root and have hand-picked stable
+		// GUIDs (top byte 0xAB by convention). Used by the inspector's
+		// reference picker so the user can hide them from search results
+		// when they're cluttering up a project's own asset list.
+		static bool IsBuiltIn(uint64_t assetId) {
+			return s_BuiltInById.find(assetId) != s_BuiltInById.end();
+		}
+
+		static size_t GetBuiltInCount() {
+			return s_BuiltInById.size();
 		}
 
 		static bool IsTexture(uint64_t assetId) {

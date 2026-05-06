@@ -82,6 +82,25 @@ namespace Axiom {
 		void SetStatic(bool isStatic);
 		void SetEnabled(bool enabled);
 
+		// ── Parent-child hierarchy ────────────────────────────────────
+		// Reparent this entity. Pass Entity::Null to detach (make this a
+		// root). Detaches from the previous parent's child list first.
+		// Refuses cycles (passing a descendant of `this`) silently — the
+		// call becomes a no-op so a buggy editor drag-drop can't corrupt
+		// the scene graph.
+		void SetParent(Entity parent);
+
+		// Returns Entity::Null when this is a root.
+		Entity GetParent() const;
+
+		// Direct children only. Modifying the returned vector through the
+		// hierarchy component is unsafe — use SetParent for structural
+		// edits so the parent's child list stays in sync.
+		const std::vector<EntityHandle>& GetChildren() const;
+
+		bool HasParent() const;
+		bool IsAncestorOf(Entity other) const;
+
 	private:
 		explicit Entity(EntityHandle e, Scene& scene);
 		explicit Entity(EntityHandle e, Scene* scene);

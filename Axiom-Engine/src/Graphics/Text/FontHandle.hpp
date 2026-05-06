@@ -5,6 +5,14 @@
 #include <limits>
 
 namespace Axiom {
+    // Stable GUID assigned to the engine-shipped DefaultSans-Regular.ttf so
+    // scenes can serialize a reference to it without writing the .ttf into
+    // every project. Top-byte 0xAB tags engine-shipped built-ins (see
+    // AssetRegistry::RegisterBuiltInAsset). Lives in this lightweight
+    // header so component default-initializers can use it without pulling
+    // in FontManager.hpp (and transitively Font.hpp + stb_truetype).
+    inline constexpr uint64_t k_DefaultFontAssetId = 0xAB00000000000001ULL;
+
     // Stable handle into FontManager's slot table. Mirrors TextureHandle's
     // shape (16-bit slot index + 16-bit generation) so the same patterns
     // (`IsValid`, equality, `Invalid()`) carry over to font references.

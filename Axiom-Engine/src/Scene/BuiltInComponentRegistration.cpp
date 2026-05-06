@@ -109,14 +109,15 @@ namespace Axiom {
 			});
 
 		RegisterComponent<RectTransformComponent>(sceneManager, "Rect Transform",
-			ComponentCategory::Component, "General", "RectTransform",
+			ComponentCategory::Component, "UI", "RectTransform",
 			{
-				Properties::Make("Position", "Position", &RectTransformComponent::Position),
-				Properties::Make("Pivot",    "Pivot",    &RectTransformComponent::Pivot),
-				Properties::Make("Width",    "Width",    &RectTransformComponent::Width),
-				Properties::Make("Height",   "Height",   &RectTransformComponent::Height),
-				Properties::Make("Rotation", "Rotation", &RectTransformComponent::Rotation),
-				Properties::Make("Scale",    "Scale",    &RectTransformComponent::Scale),
+				Properties::Make("AnchorMin",        "Anchor Min",        &RectTransformComponent::AnchorMin),
+				Properties::Make("AnchorMax",        "Anchor Max",        &RectTransformComponent::AnchorMax),
+				Properties::Make("Pivot",            "Pivot",             &RectTransformComponent::Pivot),
+				Properties::Make("AnchoredPosition", "Anchored Position", &RectTransformComponent::AnchoredPosition),
+				Properties::Make("SizeDelta",        "Size",              &RectTransformComponent::SizeDelta),
+				Properties::Make("Rotation",         "Rotation",          &RectTransformComponent::Rotation),
+				Properties::Make("Scale",            "Scale",             &RectTransformComponent::Scale),
 			});
 
 		RegisterComponent<NameComponent>(sceneManager, "Name",
@@ -154,7 +155,7 @@ namespace Axiom {
 			});
 
 		RegisterComponent<ImageComponent>(sceneManager, "Image",
-			ComponentCategory::Component, "Rendering", "Image",
+			ComponentCategory::Component, "UI", "Image",
 			{
 				Properties::Make("Color", "Color", &ImageComponent::Color),
 				MakeTextureRefDirect<ImageComponent>("Texture", "Texture",
@@ -192,7 +193,7 @@ namespace Axiom {
 			ComponentCategory::Component, "Rendering", "ParticleSystem2D");
 
 		RegisterComponent<TextRendererComponent>(sceneManager, "Text Renderer",
-			ComponentCategory::Component, "Rendering", "TextRenderer",
+			ComponentCategory::Component, "UI", "TextRenderer",
 			{
 				Properties::Make("Text", "Text", &TextRendererComponent::Text),
 				Properties::MakeFontRef("Font", "Font",
@@ -439,6 +440,64 @@ namespace Axiom {
 						src.SetAudioHandle(h, UUID(uuid));
 					}),
 			});
+
+		// ── UI widgets ──────────────────────────────────────────────
+		// All show up in the inspector's "UI" tab. The Interactable
+		// component is the input-state primitive; Button/Slider/etc.
+		// are visual presets that read it. They have no inspector
+		// fields beyond what the struct exposes — defaults are sane.
+
+		RegisterComponent<UIInteractableComponent>(sceneManager, "UI Interactable",
+			ComponentCategory::Component, "UI", "UIInteractable",
+			{
+				Properties::Make("Interactable", "Interactable", &UIInteractableComponent::Interactable),
+			});
+
+		RegisterComponent<UIButtonComponent>(sceneManager, "UI Button",
+			ComponentCategory::Component, "UI", "UIButton",
+			{
+				Properties::Make("NormalColor",   "Normal Color",   &UIButtonComponent::NormalColor),
+				Properties::Make("HoveredColor",  "Hovered Color",  &UIButtonComponent::HoveredColor),
+				Properties::Make("PressedColor",  "Pressed Color",  &UIButtonComponent::PressedColor),
+				Properties::Make("DisabledColor", "Disabled Color", &UIButtonComponent::DisabledColor),
+			});
+
+		RegisterComponent<UISliderComponent>(sceneManager, "UI Slider",
+			ComponentCategory::Component, "UI", "UISlider",
+			{
+				Properties::MakeWith<float>("Value", "Value",
+					[](const Entity& e) { return e.GetComponent<UISliderComponent>().Value; },
+					[](Entity& e, float v) { e.GetComponent<UISliderComponent>().Value = v; },
+					[]() { PropertyMetadata m; m.DragSpeed = 0.01f; return m; }()),
+				Properties::Make("MinValue",     "Min Value",     &UISliderComponent::MinValue),
+				Properties::Make("MaxValue",     "Max Value",     &UISliderComponent::MaxValue),
+				Properties::Make("WholeNumbers", "Whole Numbers", &UISliderComponent::WholeNumbers),
+			});
+
+		RegisterComponent<UIInputFieldComponent>(sceneManager, "UI Input Field",
+			ComponentCategory::Component, "UI", "UIInputField",
+			{
+				Properties::Make("Text",            "Text",            &UIInputFieldComponent::Text),
+				Properties::Make("PlaceholderText", "Placeholder",     &UIInputFieldComponent::PlaceholderText),
+				Properties::Make("CharacterLimit",  "Character Limit", &UIInputFieldComponent::CharacterLimit),
+			});
+
+		RegisterComponent<UIDropdownComponent>(sceneManager, "UI Dropdown",
+			ComponentCategory::Component, "UI", "UIDropdown",
+			{
+				Properties::Make("SelectedIndex", "Selected Index", &UIDropdownComponent::SelectedIndex),
+			});
+
+		RegisterComponent<UIToggleComponent>(sceneManager, "UI Toggle",
+			ComponentCategory::Component, "UI", "UIToggle",
+			{
+				Properties::Make("IsOn", "Is On", &UIToggleComponent::IsOn),
+			});
+
+		// HierarchyComponent is real but managed via Entity::SetParent;
+		// users don't add it from the Add Component popup. Tagged so the
+		// inspector hides it from the picker.
+		RegisterComponent<HierarchyComponent>(sceneManager, "Hierarchy", ComponentCategory::Tag);
 
 		// ── Conflicts ───────────────────────────────────────────────
 		// One renderer per entity (Tilemap2D adds its own conflicts in its package init).

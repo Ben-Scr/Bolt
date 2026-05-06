@@ -1008,6 +1008,49 @@ namespace Axiom {
 				SelectEntity(created.GetHandle());
 			}
 
+			if (ImGui::BeginMenu("UI"))
+			{
+				if (ImGui::MenuItem("Panel")) {
+					Entity created = EntityHelper::CreateUIPanel(scene);
+					SelectEntity(created.GetHandle());
+				}
+				if (ImGui::MenuItem("Image")) {
+					Entity created = EntityHelper::CreateImageEntity(scene);
+					if (!created.HasComponent<NameComponent>()) {
+						created.AddComponent<NameComponent>(NameComponent("Image"));
+					}
+					SelectEntity(created.GetHandle());
+				}
+				if (ImGui::MenuItem("Text")) {
+					Entity created = scene.CreateEntity("Text");
+					created.AddComponent<RectTransformComponent>();
+					created.AddComponent<TextRendererComponent>();
+					SelectEntity(created.GetHandle());
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Button")) {
+					Entity created = EntityHelper::CreateUIButton(scene);
+					SelectEntity(created.GetHandle());
+				}
+				if (ImGui::MenuItem("Slider")) {
+					Entity created = EntityHelper::CreateUISlider(scene);
+					SelectEntity(created.GetHandle());
+				}
+				if (ImGui::MenuItem("Input Field")) {
+					Entity created = EntityHelper::CreateUIInputField(scene);
+					SelectEntity(created.GetHandle());
+				}
+				if (ImGui::MenuItem("Dropdown")) {
+					Entity created = EntityHelper::CreateUIDropdown(scene);
+					SelectEntity(created.GetHandle());
+				}
+				if (ImGui::MenuItem("Toggle")) {
+					Entity created = EntityHelper::CreateUIToggle(scene);
+					SelectEntity(created.GetHandle());
+				}
+				ImGui::EndMenu();
+			}
+
 			ImGui::EndPopup();
 		}
 
@@ -1071,11 +1114,76 @@ namespace Axiom {
 					}
 				}
 
+				// DFS reorder so each child appears immediately after its
+				// parent in the flat list — that lets the existing single-
+				// loop renderer show parent-child nesting just by tracking
+				// depth and calling ImGui::Indent. Roots come first in
+				// the user's chosen m_EntityOrder; their subtrees follow
+				// in the order each parent's HierarchyComponent::Children
+				// lists them.
+				std::vector<int> entityDepths;
+				entityDepths.reserve(m_EntityOrder.size());
+				{
+					auto& reg = scene.GetRegistry();
+					std::vector<entt::entity> reordered;
+					reordered.reserve(m_EntityOrder.size());
+					std::unordered_set<uint32_t> emitted;
+
+					std::function<void(EntityHandle, int)> emitSubtree =
+						[&](EntityHandle e, int depth) {
+							if (!reg.valid(e)) return;
+							const uint32_t key = static_cast<uint32_t>(e);
+							if (!emitted.insert(key).second) return; // already in tree
+							reordered.push_back(e);
+							entityDepths.push_back(depth);
+							if (reg.all_of<HierarchyComponent>(e)) {
+								for (EntityHandle child : reg.get<HierarchyComponent>(e).Children) {
+									emitSubtree(child, depth + 1);
+								}
+							}
+						};
+
+					// Pass 1: emit each root-of-subtree from the user-ordered
+					// list. Skip entities that already appeared as a child.
+					for (EntityHandle e : m_EntityOrder) {
+						if (!reg.valid(e)) continue;
+						EntityHandle parent = entt::null;
+						if (reg.all_of<HierarchyComponent>(e)) {
+							parent = reg.get<HierarchyComponent>(e).Parent;
+						}
+						if (parent == entt::null) {
+							emitSubtree(e, 0);
+						}
+					}
+					// Pass 2: anything still missing — orphaned children
+					// whose parent is not in the registry — render flat.
+					for (EntityHandle e : m_EntityOrder) {
+						if (!reg.valid(e)) continue;
+						const uint32_t key = static_cast<uint32_t>(e);
+						if (emitted.contains(key)) continue;
+						emitSubtree(e, 0);
+					}
+					m_EntityOrder = std::move(reordered);
+				}
+
+				int currentIndentDepth = 0;
 				for (int entityIdx = 0; entityIdx < static_cast<int>(m_EntityOrder.size()); entityIdx++) {
 					const EntityHandle entityHandle = m_EntityOrder[entityIdx];
 					if (!scene.IsValid(entityHandle)) continue;
 					Entity entity = scene.GetEntity(entityHandle);
 					const bool selected = IsEntitySelected(entityHandle);
+
+					// Step indent up/down to match this entity's depth.
+					const int targetDepth = entityIdx < static_cast<int>(entityDepths.size())
+						? entityDepths[entityIdx] : 0;
+					while (currentIndentDepth < targetDepth) {
+						ImGui::Indent(14.0f);
+						++currentIndentDepth;
+					}
+					while (currentIndentDepth > targetDepth) {
+						ImGui::Unindent(14.0f);
+						--currentIndentDepth;
+					}
 
 					ImGui::PushID(static_cast<int>(static_cast<uint32_t>(entityHandle)));
 
@@ -1246,6 +1354,13 @@ namespace Axiom {
 						ImGui::PopStyleColor();
 
 					ImGui::PopID();
+				}
+
+				// Pop any remaining indents from nested entities so the
+				// next scene tree node starts cleanly at depth 0.
+				while (currentIndentDepth > 0) {
+					ImGui::Unindent(14.0f);
+					--currentIndentDepth;
 				}
 
 				ImGui::TreePop();

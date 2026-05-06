@@ -1,5 +1,6 @@
 #include "pch.hpp"
 #include "Application.hpp"
+#include "Assets/AssetRegistry.hpp"
 #include "Scene/SceneManager.hpp"
 #include "Core/Window.hpp"
 #include "Graphics/Renderer2D.hpp"
@@ -19,6 +20,7 @@
 #include "Profiling/Profiler.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/ScriptEngine.hpp"
+#include "Serialization/Path.hpp"
 
 #ifdef AIM_PLATFORM_WINDOWS
 // winmm: timeBeginPeriod for 1ms timer resolution (frame-cap accuracy).
@@ -319,6 +321,24 @@ namespace Axiom {
 			timer.Reset();
 			FontManager::Initialize();
 			AIM_INFO_TAG("FontManager", "Initialization took " + StringHelper::ToString(timer));
+		}
+
+		// Register the rest of AxiomAssets/ as built-in assets so the
+		// inspector's reference picker can offer engine-shipped icons,
+		// audio, etc. via its eye toggle. Runs AFTER FontManager so the
+		// default font's hand-picked GUID wins over the auto-scan.
+		{
+			timer.Reset();
+			const std::string axiomAssetsRoot = Path::ResolveAxiomAssets("");
+			AIM_INFO_TAG("AssetRegistry", "AxiomAssets root resolved to: '{}'", axiomAssetsRoot);
+			if (!axiomAssetsRoot.empty()) {
+				const size_t before = AssetRegistry::GetBuiltInCount();
+				AssetRegistry::RegisterBuiltInDirectory(axiomAssetsRoot);
+				const size_t after = AssetRegistry::GetBuiltInCount();
+				AIM_INFO_TAG("AssetRegistry", "Built-in scan registered {} files in {}", after - before, StringHelper::ToString(timer));
+			} else {
+				AIM_WARN_TAG("AssetRegistry", "AxiomAssets root not found - built-in assets won't appear in picker");
+			}
 		}
 
 		if (m_Configuration.EnableAudio) {

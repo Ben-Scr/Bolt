@@ -21,6 +21,7 @@
 #include "Components/Graphics/Camera2DComponent.hpp"
 #include "Components/General/UUIDComponent.hpp"
 #include "Components/General/EntityMetaDataComponent.hpp"
+#include "Components/General/HierarchyComponent.hpp"
 #include "Components/General/PrefabInstanceComponent.hpp"
 #include "Core/Application.hpp"
 #include "Scripting/ScriptComponent.hpp"
@@ -586,6 +587,30 @@ namespace Axiom {
 
 		if (markDirty && !Application::GetIsPlaying()) {
 			m_Dirty = true;
+		}
+
+		// Cascade-destroy any children, and unhook from the parent's
+		// child list, before destroying this entity. Snapshotting the
+		// children vector first so the inner destroy calls don't
+		// invalidate the iterator we're recursing through.
+		if (m_Registry.all_of<HierarchyComponent>(nativeEntity)) {
+			HierarchyComponent& hc = m_Registry.get<HierarchyComponent>(nativeEntity);
+
+			std::vector<EntityHandle> childrenSnapshot = hc.Children;
+			for (EntityHandle child : childrenSnapshot) {
+				DestroyEntityInternal(child, false);
+			}
+
+			const EntityHandle parent = hc.Parent;
+			if (parent != entt::null
+				&& m_Registry.valid(parent)
+				&& m_Registry.all_of<HierarchyComponent>(parent))
+			{
+				auto& parentHc = m_Registry.get<HierarchyComponent>(parent);
+				parentHc.Children.erase(
+					std::remove(parentHc.Children.begin(), parentHc.Children.end(), nativeEntity),
+					parentHc.Children.end());
+			}
 		}
 
 		UnregisterEntityIdentity(nativeEntity);
