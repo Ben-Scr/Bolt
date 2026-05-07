@@ -52,8 +52,7 @@ namespace Axiom {
 		if (m_InstanceId != 0) {
 			auto* instance = AudioManager::GetSoundInstance(m_InstanceId);
 			if (instance && instance->IsValid) {
-				float masterVolume = AudioManager::GetMasterVolume();
-				ma_sound_set_volume(&instance->Sound, m_Volume * masterVolume);
+				ma_sound_set_volume(&instance->Sound, m_Volume);
 			}
 		}
 	}

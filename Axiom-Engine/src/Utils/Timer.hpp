@@ -6,7 +6,7 @@
 
 namespace Axiom {
 	class Timer {
-		using Clock = std::chrono::high_resolution_clock;
+		using Clock = std::chrono::steady_clock;
 		using TimePoint = std::chrono::time_point<Clock>;
 		using Duration = std::chrono::duration<double>;
 

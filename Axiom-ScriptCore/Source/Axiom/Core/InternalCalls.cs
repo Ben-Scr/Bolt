@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Axiom.Interop;
@@ -23,8 +22,64 @@ internal static unsafe class InternalCalls
 
     // ── Log ─────────────────────────────────────────────────────────
 
-    private static void CallStringBinding(delegate* unmanaged<byte*, void> fn, string message)
+    private static byte[] EncodeUtf8Z(string? value)
     {
+        value ??= "";
+        int len = Encoding.UTF8.GetByteCount(value);
+        byte[] buffer = new byte[len + 1];
+        Encoding.UTF8.GetBytes(value, buffer);
+        buffer[len] = 0;
+        return buffer;
+    }
+
+    private static string DecodeNativeString(byte[] buffer, int byteCount)
+    {
+        byteCount = Math.Clamp(byteCount, 0, Math.Max(0, buffer.Length - 1));
+        return byteCount == 0 ? "" : Encoding.UTF8.GetString(buffer, 0, byteCount);
+    }
+
+    private static string ReadNativeString(delegate* unmanaged<byte*, int, int> fn)
+    {
+        int required = fn(null, 0);
+        if (required <= 0) return "";
+
+        byte[] buffer = new byte[required + 1];
+        fixed (byte* ptr = buffer)
+        {
+            int written = fn(ptr, buffer.Length);
+            return DecodeNativeString(buffer, written);
+        }
+    }
+
+    private static string ReadNativeString(delegate* unmanaged<ulong, byte*, int, int> fn, ulong value)
+    {
+        int required = fn(value, null, 0);
+        if (required <= 0) return "";
+
+        byte[] buffer = new byte[required + 1];
+        fixed (byte* ptr = buffer)
+        {
+            int written = fn(value, ptr, buffer.Length);
+            return DecodeNativeString(buffer, written);
+        }
+    }
+
+    private static string ReadNativeString(delegate* unmanaged<int, byte*, int, int> fn, int value)
+    {
+        int required = fn(value, null, 0);
+        if (required <= 0) return "";
+
+        byte[] buffer = new byte[required + 1];
+        fixed (byte* ptr = buffer)
+        {
+            int written = fn(value, ptr, buffer.Length);
+            return DecodeNativeString(buffer, written);
+        }
+    }
+
+    private static void CallStringBinding(delegate* unmanaged<byte*, void> fn, string? message)
+    {
+        message ??= "";
         int len = Encoding.UTF8.GetByteCount(message);
         Span<byte> buf = len <= 512 ? stackalloc byte[len + 1] : new byte[len + 1];
         Encoding.UTF8.GetBytes(message, buf);
@@ -61,93 +116,61 @@ internal static unsafe class InternalCalls
 
     internal static string Scene_GetActiveSceneName()
     {
-        byte* ptr = NativeCallbacks.Bindings.Scene_GetActiveSceneName();
-        return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
+        return ReadNativeString(NativeCallbacks.Bindings.Scene_GetActiveSceneNameBuffer);
     }
     internal static int Scene_GetEntityCount() => NativeCallbacks.Bindings.Scene_GetEntityCount();
 
     internal static int Scene_GetEntityCount(string sceneName)
     {
-        int len = Encoding.UTF8.GetByteCount(sceneName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(sceneName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(sceneName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_GetEntityCountByName(ptr);
     }
 
     internal static string Scene_GetEntityNameByUUID(ulong uuid)
     {
-        byte* ptr = NativeCallbacks.Bindings.Scene_GetEntityNameByUUID(uuid);
-        return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
+        return ReadNativeString(NativeCallbacks.Bindings.Scene_GetEntityNameByUUIDBuffer, uuid);
     }
 
     internal static bool Scene_LoadAdditive(string sceneName)
     {
-        int len = Encoding.UTF8.GetByteCount(sceneName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(sceneName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(sceneName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_LoadAdditive(ptr) != 0;
     }
 
     internal static bool Scene_Load(string sceneName)
     {
-        int len = Encoding.UTF8.GetByteCount(sceneName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(sceneName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(sceneName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_Load(ptr) != 0;
     }
 
     internal static void Scene_Unload(string sceneName)
     {
-        int len = Encoding.UTF8.GetByteCount(sceneName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(sceneName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(sceneName);
         fixed (byte* ptr = buf) NativeCallbacks.Bindings.Scene_Unload(ptr);
     }
 
     internal static bool Scene_SetActive(string sceneName)
     {
-        int len = Encoding.UTF8.GetByteCount(sceneName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(sceneName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(sceneName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_SetActive(ptr) != 0;
     }
 
     internal static bool Scene_Reload(string sceneName)
     {
-        int len = Encoding.UTF8.GetByteCount(sceneName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(sceneName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(sceneName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_Reload(ptr) != 0;
     }
 
     internal static void Scene_SetGlobalSystemEnabled(string className, bool enabled)
     {
-        int len = Encoding.UTF8.GetByteCount(className);
-        Span<byte> buf = len <= 512 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(className, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(className);
         fixed (byte* ptr = buf) NativeCallbacks.Bindings.Scene_SetGlobalSystemEnabled(ptr, enabled ? 1 : 0);
     }
 
     internal static bool Scene_SetGameSystemEnabled(string sceneName, string className, bool enabled)
     {
-        static byte[] EncodeUtf8(string value)
-        {
-            int len = Encoding.UTF8.GetByteCount(value);
-            byte[] buffer = new byte[len + 1];
-            Encoding.UTF8.GetBytes(value, buffer);
-            buffer[len] = 0;
-            return buffer;
-        }
-
-        byte[] sceneBuffer = EncodeUtf8(sceneName);
-        byte[] classBuffer = EncodeUtf8(className);
+        byte[] sceneBuffer = EncodeUtf8Z(sceneName);
+        byte[] classBuffer = EncodeUtf8Z(className);
         fixed (byte* scenePtr = sceneBuffer)
         fixed (byte* classPtr = classBuffer)
         {
@@ -157,10 +180,7 @@ internal static unsafe class InternalCalls
 
     internal static bool Scene_DoesSceneExist(string sceneName)
     {
-        int len = Encoding.UTF8.GetByteCount(sceneName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(sceneName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(sceneName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Scene_DoesSceneExist(ptr) != 0;
     }
 
@@ -168,8 +188,7 @@ internal static unsafe class InternalCalls
 
     internal static string Scene_GetLoadedSceneNameAt(int index)
     {
-        byte* ptr = NativeCallbacks.Bindings.Scene_GetLoadedSceneNameAt(index);
-        return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
+        return ReadNativeString(NativeCallbacks.Bindings.Scene_GetLoadedSceneNameAtBuffer, index);
     }
 
     // ── Entity ──────────────────────────────────────────────────────
@@ -178,10 +197,7 @@ internal static unsafe class InternalCalls
 
     internal static ulong Entity_FindByName(string name)
     {
-        int len = Encoding.UTF8.GetByteCount(name);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(name, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(name);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Entity_FindByName(ptr);
     }
 
@@ -207,41 +223,36 @@ internal static unsafe class InternalCalls
 
     internal static bool Entity_HasComponent(ulong entityID, string componentName)
     {
-        int len = Encoding.UTF8.GetByteCount(componentName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(componentName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(componentName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Entity_HasComponent(entityID, ptr) != 0;
     }
 
     internal static bool Entity_AddComponent(ulong entityID, string componentName)
     {
-        int len = Encoding.UTF8.GetByteCount(componentName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(componentName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(componentName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Entity_AddComponent(entityID, ptr) != 0;
     }
 
     internal static bool Entity_RemoveComponent(ulong entityID, string componentName)
     {
-        int len = Encoding.UTF8.GetByteCount(componentName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(componentName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(componentName);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Entity_RemoveComponent(entityID, ptr) != 0;
     }
 
     internal static string Entity_GetManagedComponentFields(ulong entityID, string componentName)
     {
-        int len = Encoding.UTF8.GetByteCount(componentName);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(componentName, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(componentName);
         fixed (byte* ptr = buf)
         {
-            byte* result = NativeCallbacks.Bindings.Entity_GetManagedComponentFields(entityID, ptr);
-            return Marshal.PtrToStringUTF8((IntPtr)result) ?? "{}";
+            int required = NativeCallbacks.Bindings.Entity_GetManagedComponentFieldsBuffer(entityID, ptr, null, 0);
+            if (required <= 0) return "{}";
+
+            byte[] output = new byte[required + 1];
+            fixed (byte* outPtr = output)
+            {
+                int written = NativeCallbacks.Bindings.Entity_GetManagedComponentFieldsBuffer(entityID, ptr, outPtr, output.Length);
+                return DecodeNativeString(output, written);
+            }
         }
     }
 
@@ -252,10 +263,7 @@ internal static unsafe class InternalCalls
 
     internal static ulong Entity_Create(string name)
     {
-        int len = Encoding.UTF8.GetByteCount(name);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(name, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(name);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Entity_Create(ptr);
     }
 
@@ -263,16 +271,12 @@ internal static unsafe class InternalCalls
 
     internal static string NameComponent_GetName(ulong entityID)
     {
-        byte* ptr = NativeCallbacks.Bindings.NameComponent_GetName(entityID);
-        return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
+        return ReadNativeString(NativeCallbacks.Bindings.NameComponent_GetNameBuffer, entityID);
     }
 
     internal static void NameComponent_SetName(ulong entityID, string name)
     {
-        int len = Encoding.UTF8.GetByteCount(name);
-        Span<byte> buf = len <= 256 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(name, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(name);
         fixed (byte* ptr = buf) NativeCallbacks.Bindings.NameComponent_SetName(entityID, ptr);
     }
 
@@ -300,17 +304,12 @@ internal static unsafe class InternalCalls
 
     internal static string TextRenderer_GetText(ulong entityID)
     {
-        byte* ptr = NativeCallbacks.Bindings.TextRenderer_GetText(entityID);
-        return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
+        return ReadNativeString(NativeCallbacks.Bindings.TextRenderer_GetTextBuffer, entityID);
     }
 
     internal static void TextRenderer_SetText(ulong entityID, string text)
     {
-        text ??= "";
-        int len = Encoding.UTF8.GetByteCount(text);
-        Span<byte> buf = len <= 512 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(text, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(text);
         fixed (byte* ptr = buf) NativeCallbacks.Bindings.TextRenderer_SetText(entityID, ptr);
     }
 
@@ -399,10 +398,7 @@ internal static unsafe class InternalCalls
 
     internal static int Scene_QueryEntities(string componentNames, Span<ulong> outEntityIDs)
     {
-        int len = Encoding.UTF8.GetByteCount(componentNames);
-        Span<byte> buf = len <= 512 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(componentNames, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(componentNames);
         fixed (byte* namePtr = buf)
         fixed (ulong* idPtr = outEntityIDs)
         {
@@ -414,19 +410,9 @@ internal static unsafe class InternalCalls
         string withComponents, string withoutComponents, string mustHaveComponents,
         int enableFilter, Span<ulong> outEntityIDs)
     {
-        static byte[] EncodeUtf8(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return new byte[] { 0 };
-            int len = Encoding.UTF8.GetByteCount(s);
-            byte[] buf = new byte[len + 1];
-            Encoding.UTF8.GetBytes(s, buf);
-            buf[len] = 0;
-            return buf;
-        }
-
-        byte[] withBuf = EncodeUtf8(withComponents);
-        byte[] withoutBuf = EncodeUtf8(withoutComponents);
-        byte[] mustHaveBuf = EncodeUtf8(mustHaveComponents);
+        byte[] withBuf = EncodeUtf8Z(withComponents);
+        byte[] withoutBuf = EncodeUtf8Z(withoutComponents);
+        byte[] mustHaveBuf = EncodeUtf8Z(mustHaveComponents);
 
         fixed (byte* withPtr = withBuf)
         fixed (byte* withoutPtr = withoutBuf)
@@ -440,14 +426,8 @@ internal static unsafe class InternalCalls
 
     internal static int Scene_QueryEntities(string sceneName, string componentNames, Span<ulong> outEntityIDs)
     {
-        int sceneLen = Encoding.UTF8.GetByteCount(sceneName);
-        int namesLen = Encoding.UTF8.GetByteCount(componentNames);
-        Span<byte> sceneBuf = sceneLen <= 256 ? stackalloc byte[sceneLen + 1] : new byte[sceneLen + 1];
-        Span<byte> namesBuf = namesLen <= 512 ? stackalloc byte[namesLen + 1] : new byte[namesLen + 1];
-        Encoding.UTF8.GetBytes(sceneName, sceneBuf);
-        Encoding.UTF8.GetBytes(componentNames, namesBuf);
-        sceneBuf[sceneLen] = 0;
-        namesBuf[namesLen] = 0;
+        byte[] sceneBuf = EncodeUtf8Z(sceneName);
+        byte[] namesBuf = EncodeUtf8Z(componentNames);
         fixed (byte* scenePtr = sceneBuf)
         fixed (byte* namesPtr = namesBuf)
         fixed (ulong* idPtr = outEntityIDs)
@@ -461,20 +441,10 @@ internal static unsafe class InternalCalls
         string sceneName, string withComponents, string withoutComponents,
         string mustHaveComponents, int enableFilter, Span<ulong> outEntityIDs)
     {
-        static byte[] EncodeUtf8(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return new byte[] { 0 };
-            int len = Encoding.UTF8.GetByteCount(s);
-            byte[] buf = new byte[len + 1];
-            Encoding.UTF8.GetBytes(s, buf);
-            buf[len] = 0;
-            return buf;
-        }
-
-        byte[] sceneBuf = EncodeUtf8(sceneName);
-        byte[] withBuf = EncodeUtf8(withComponents);
-        byte[] withoutBuf = EncodeUtf8(withoutComponents);
-        byte[] mustHaveBuf = EncodeUtf8(mustHaveComponents);
+        byte[] sceneBuf = EncodeUtf8Z(sceneName);
+        byte[] withBuf = EncodeUtf8Z(withComponents);
+        byte[] withoutBuf = EncodeUtf8Z(withoutComponents);
+        byte[] mustHaveBuf = EncodeUtf8Z(mustHaveComponents);
 
         fixed (byte* scenePtr = sceneBuf)
         fixed (byte* withPtr = withBuf)
@@ -496,38 +466,36 @@ internal static unsafe class InternalCalls
         if (string.IsNullOrEmpty(path))
             return 0;
 
-        int len = Encoding.UTF8.GetByteCount(path);
-        Span<byte> buf = len <= 512 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(path, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(path);
         fixed (byte* ptr = buf) return NativeCallbacks.Bindings.Asset_GetOrCreateUUIDFromPath(ptr);
     }
 
     internal static string Asset_GetPath(ulong assetId)
     {
-        byte* ptr = NativeCallbacks.Bindings.Asset_GetPath(assetId);
-        return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
+        return ReadNativeString(NativeCallbacks.Bindings.Asset_GetPathBuffer, assetId);
     }
 
     internal static string Asset_GetDisplayName(ulong assetId)
     {
-        byte* ptr = NativeCallbacks.Bindings.Asset_GetDisplayName(assetId);
-        return Marshal.PtrToStringUTF8((IntPtr)ptr) ?? "";
+        return ReadNativeString(NativeCallbacks.Bindings.Asset_GetDisplayNameBuffer, assetId);
     }
 
     internal static int Asset_GetKind(ulong assetId) => NativeCallbacks.Bindings.Asset_GetKind(assetId);
 
     internal static string Asset_FindAll(string pathPrefix, int kind)
     {
-        pathPrefix ??= "";
-        int len = Encoding.UTF8.GetByteCount(pathPrefix);
-        Span<byte> buf = len <= 512 ? stackalloc byte[len + 1] : new byte[len + 1];
-        Encoding.UTF8.GetBytes(pathPrefix, buf);
-        buf[len] = 0;
+        byte[] buf = EncodeUtf8Z(pathPrefix);
         fixed (byte* ptr = buf)
         {
-            byte* result = NativeCallbacks.Bindings.Asset_FindAll(ptr, kind);
-            return Marshal.PtrToStringUTF8((IntPtr)result) ?? "[]";
+            int required = NativeCallbacks.Bindings.Asset_FindAllBuffer(ptr, kind, null, 0);
+            if (required <= 0) return "[]";
+
+            byte[] output = new byte[required + 1];
+            fixed (byte* outPtr = output)
+            {
+                int written = NativeCallbacks.Bindings.Asset_FindAllBuffer(ptr, kind, outPtr, output.Length);
+                return DecodeNativeString(output, written);
+            }
         }
     }
 

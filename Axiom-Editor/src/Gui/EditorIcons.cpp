@@ -6,10 +6,16 @@ namespace Axiom {
 	bool EditorIcons::s_Initialized = false;
 
 	// Must mirror the actual sizes shipped under
-	// AxiomAssets/Textures/Editor/<name>/<name>_<size>.png. Listing a size here
+	// AxiomAssets/Textures/Editor/<group>/<name>/<name>_<size>.png. Listing a size here
 	// that isn't on disk causes `Editor icon not found` warnings every frame for
 	// any callsite whose snap-up lands on the missing size.
 	static constexpr int k_AvailableSizes[] = { 16, 32, 64, 128 };
+
+	static const char* GroupForName(const std::string& name) {
+		if (name.rfind("file_", 0) == 0 || name.rfind("folder_", 0) == 0)
+			return "FileIcons";
+		return "General";
+	}
 
 	void EditorIcons::Initialize() {
 		if (s_Initialized) return;
@@ -44,12 +50,12 @@ namespace Axiom {
 		if (it != s_Icons.end())
 			return it->second.Texture.GetHandle();
 
-		// Lazy-load from AxiomAssets/Textures/Editor/<name>/<name>_<size>.png
+		// Lazy-load from AxiomAssets/Textures/Editor/<group>/<name>/<name>_<size>.png
 		std::string editorDir = Path::ResolveAxiomAssets("Textures");
 		if (editorDir.empty()) return 0;
 
 		std::string filename = name + "_" + std::to_string(snapped) + ".png";
-		std::string fullpath = Path::Combine(editorDir, "Editor", name, filename);
+		std::string fullpath = Path::Combine(editorDir, "Editor", GroupForName(name), name, filename);
 
 		IconEntry entry;
 		entry.Texture = Texture2D(fullpath.c_str(), Filter::Bilinear, Wrap::Clamp, Wrap::Clamp);

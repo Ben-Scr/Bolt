@@ -202,8 +202,13 @@ namespace Axiom {
 						std::size_t totalEntities = 0;
 						if (m_SceneManager) {
 							m_SceneManager->ForeachLoadedScene([&totalEntities](Scene& scene) {
-								auto& entityStorage = scene.GetRegistry().storage<entt::entity>();
-								totalEntities += entityStorage.free_list();
+								auto& registry = scene.GetRegistry();
+								auto& entityStorage = registry.storage<entt::entity>();
+								for (EntityHandle entity : entityStorage) {
+									if (registry.valid(entity)) {
+										++totalEntities;
+									}
+								}
 							});
 						}
 						AXIOM_PROFILE_VALUE("Entity Count", float(totalEntities));

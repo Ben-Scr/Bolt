@@ -54,6 +54,7 @@ namespace Axiom {
 		int      (*Entity_AddComponent)(uint64_t entityID, const char* componentName);
 		int      (*Entity_RemoveComponent)(uint64_t entityID, const char* componentName);
 		const char* (*Entity_GetManagedComponentFields)(uint64_t entityID, const char* componentName);
+		int      (*Entity_GetManagedComponentFieldsBuffer)(uint64_t entityID, const char* componentName, char* outBuffer, int capacity);
 		int      (*Entity_GetIsStatic)(uint64_t entityID);
 		void     (*Entity_SetIsStatic)(uint64_t entityID, int isStatic);
 		int      (*Entity_GetIsEnabled)(uint64_t entityID);
@@ -61,6 +62,7 @@ namespace Axiom {
 
 		// ── NameComponent ────────────────────────────────────────────
 		const char* (*NameComponent_GetName)(uint64_t entityID);
+		int         (*NameComponent_GetNameBuffer)(uint64_t entityID, char* outBuffer, int capacity);
 		void        (*NameComponent_SetName)(uint64_t entityID, const char* name);
 
 		// ── Transform2D ──────────────────────────────────────────────
@@ -83,6 +85,7 @@ namespace Axiom {
 
 		// ── TextRenderer ─────────────────────────────────────────────
 		const char* (*TextRenderer_GetText)(uint64_t entityID);
+		int         (*TextRenderer_GetTextBuffer)(uint64_t entityID, char* outBuffer, int capacity);
 		void        (*TextRenderer_SetText)(uint64_t entityID, const char* text);
 		uint64_t    (*TextRenderer_GetFont)(uint64_t entityID);
 		void        (*TextRenderer_SetFont)(uint64_t entityID, uint64_t assetId);
@@ -167,6 +170,7 @@ namespace Axiom {
 
 		// ── Scene ────────────────────────────────────────────────────
 		const char* (*Scene_GetActiveSceneName)();
+		int         (*Scene_GetActiveSceneNameBuffer)(char* outBuffer, int capacity);
 		int         (*Scene_GetEntityCount)();
 		int         (*Scene_GetEntityCountByName)(const char* sceneName);
 		int         (*Scene_LoadAdditive)(const char* sceneName);
@@ -179,7 +183,9 @@ namespace Axiom {
 		int         (*Scene_DoesSceneExist)(const char* sceneName);
 		int         (*Scene_GetLoadedCount)();
 		const char* (*Scene_GetLoadedSceneNameAt)(int index);
+		int         (*Scene_GetLoadedSceneNameAtBuffer)(int index, char* outBuffer, int capacity);
 		const char* (*Scene_GetEntityNameByUUID)(uint64_t uuid);
+		int         (*Scene_GetEntityNameByUUIDBuffer)(uint64_t uuid, char* outBuffer, int capacity);
 		int         (*Scene_QueryEntities)(const char* componentNames, uint64_t* outEntityIDs, int maxOut);
 		int         (*Scene_QueryEntitiesFiltered)(const char* withComponents, const char* withoutComponents, const char* mustHaveComponents, int enableFilter, uint64_t* outEntityIDs, int maxOut);
 		int         (*Scene_QueryEntitiesInScene)(const char* sceneName, const char* componentNames, uint64_t* outEntityIDs, int maxOut);
@@ -187,9 +193,12 @@ namespace Axiom {
 		int         (*Asset_IsValid)(uint64_t assetId);
 		uint64_t    (*Asset_GetOrCreateUUIDFromPath)(const char* path);
 		const char* (*Asset_GetPath)(uint64_t assetId);
+		int         (*Asset_GetPathBuffer)(uint64_t assetId, char* outBuffer, int capacity);
 		const char* (*Asset_GetDisplayName)(uint64_t assetId);
+		int         (*Asset_GetDisplayNameBuffer)(uint64_t assetId, char* outBuffer, int capacity);
 		int         (*Asset_GetKind)(uint64_t assetId);
 		const char* (*Asset_FindAll)(const char* pathPrefix, int kind);
+		int         (*Asset_FindAllBuffer)(const char* pathPrefix, int kind, char* outBuffer, int capacity);
 		int         (*Texture_LoadAsset)(uint64_t assetId);
 		int         (*Texture_GetWidth)(uint64_t assetId);
 		int         (*Texture_GetHeight)(uint64_t assetId);

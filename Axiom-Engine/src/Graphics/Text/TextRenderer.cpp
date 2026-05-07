@@ -405,6 +405,18 @@ namespace Axiom {
 
         // Standard non-premultiplied blend for the alpha mask.
         GLboolean prevBlend = glIsEnabled(GL_BLEND);
+        GLint prevBlendSrcRgb = GL_ONE;
+        GLint prevBlendDstRgb = GL_ZERO;
+        GLint prevBlendSrcAlpha = GL_ONE;
+        GLint prevBlendDstAlpha = GL_ZERO;
+        GLint prevBlendEquationRgb = GL_FUNC_ADD;
+        GLint prevBlendEquationAlpha = GL_FUNC_ADD;
+        glGetIntegerv(GL_BLEND_SRC_RGB, &prevBlendSrcRgb);
+        glGetIntegerv(GL_BLEND_DST_RGB, &prevBlendDstRgb);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &prevBlendSrcAlpha);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &prevBlendDstAlpha);
+        glGetIntegerv(GL_BLEND_EQUATION_RGB, &prevBlendEquationRgb);
+        glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &prevBlendEquationAlpha);
         if (!prevBlend) glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -417,6 +429,8 @@ namespace Axiom {
             ++m_LastFrameDrawCalls;
         }
 
+        glBlendEquationSeparate(prevBlendEquationRgb, prevBlendEquationAlpha);
+        glBlendFuncSeparate(prevBlendSrcRgb, prevBlendDstRgb, prevBlendSrcAlpha, prevBlendDstAlpha);
         if (!prevBlend) glDisable(GL_BLEND);
         glBindTexture(GL_TEXTURE_2D, 0);
         glBindVertexArray(0);

@@ -25,43 +25,60 @@ namespace Axiom {
 		template<typename TComponent, typename... Args>
 			requires (!std::is_empty_v<TComponent>)
 		TComponent& AddComponent(Args&&... args) {
+			EnsureValid("Cannot add component to invalid entity");
 			return  ComponentUtils::AddComponent<TComponent>(*m_Registry, m_EntityHandle, std::forward<Args>(args)...);
 		}
 
 		template<typename TTag>
 			requires std::is_empty_v<TTag>
 		void AddComponent() {
+			EnsureValid("Cannot add tag component to invalid entity");
 			ComponentUtils::AddComponent<TTag>(*m_Registry, m_EntityHandle);
 		}
 
 		template<typename TComponent>
 		bool HasComponent() const {
+			if (!IsValid()) {
+				return false;
+			}
 			return  ComponentUtils::HasComponent<TComponent>(*m_Registry, m_EntityHandle);
 		}
 
 		template<typename... TComponent>
 		bool HasAnyComponent() const {
+			if (!IsValid()) {
+				return false;
+			}
 			return  ComponentUtils::HasAnyComponent<TComponent...>(*m_Registry, m_EntityHandle);
 		}
 
 		template<typename TComponent>
 		TComponent& GetComponent() {
+			EnsureValid("Cannot get component from invalid entity");
 			return  ComponentUtils::GetComponent<TComponent>(*m_Registry, m_EntityHandle);
 		}
 
 		template<typename TComponent>
 		const TComponent& GetComponent() const {
+			EnsureValid("Cannot get component from invalid entity");
 			return  ComponentUtils::GetComponent<TComponent>(*m_Registry, m_EntityHandle);
 		}
 
 		template<typename TComponent>
 		bool TryGetComponent(TComponent*& out) {
+			if (!IsValid()) {
+				out = nullptr;
+				return false;
+			}
 			out = ComponentUtils::TryGetComponent<TComponent>(*m_Registry, m_EntityHandle);
 			return out != nullptr;
 		}
 
 		template<typename TComponent>
 		void RemoveComponent() {
+			if (!IsValid()) {
+				return;
+			}
 			ComponentUtils::RemoveComponent<TComponent>(*m_Registry, m_EntityHandle);
 		}
 
@@ -78,6 +95,7 @@ namespace Axiom {
 		EntityHandle GetHandle() const;
 		Scene* GetScene() { return m_Scene; }
 		const Scene* GetScene() const { return m_Scene; }
+		bool IsValid() const { return m_Registry && m_EntityHandle != entt::null && m_Registry->valid(m_EntityHandle); }
 
 		void SetStatic(bool isStatic);
 		void SetEnabled(bool enabled);
@@ -102,6 +120,8 @@ namespace Axiom {
 		bool IsAncestorOf(Entity other) const;
 
 	private:
+		void EnsureValid(const char* message) const;
+
 		explicit Entity(EntityHandle e, Scene& scene);
 		explicit Entity(EntityHandle e, Scene* scene);
 		EntityHandle    m_EntityHandle;

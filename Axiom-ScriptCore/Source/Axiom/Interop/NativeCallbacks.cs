@@ -55,6 +55,7 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<ulong, byte*, int> Entity_AddComponent;
     public delegate* unmanaged<ulong, byte*, int> Entity_RemoveComponent;
     public delegate* unmanaged<ulong, byte*, byte*> Entity_GetManagedComponentFields;
+    public delegate* unmanaged<ulong, byte*, byte*, int, int> Entity_GetManagedComponentFieldsBuffer;
     public delegate* unmanaged<ulong, int> Entity_GetIsStatic;
     public delegate* unmanaged<ulong, int, void> Entity_SetIsStatic;
     public delegate* unmanaged<ulong, int> Entity_GetIsEnabled;
@@ -62,6 +63,7 @@ internal unsafe struct NativeBindingsStruct
 
     // ── NameComponent ────────────────────────────────────────────
     public delegate* unmanaged<ulong, byte*> NameComponent_GetName;
+    public delegate* unmanaged<ulong, byte*, int, int> NameComponent_GetNameBuffer;
     public delegate* unmanaged<ulong, byte*, void> NameComponent_SetName;
 
     // ── Transform2D ──────────────────────────────────────────────
@@ -84,6 +86,7 @@ internal unsafe struct NativeBindingsStruct
 
     // ── TextRenderer ─────────────────────────────────────────────
     public delegate* unmanaged<ulong, byte*> TextRenderer_GetText;
+    public delegate* unmanaged<ulong, byte*, int, int> TextRenderer_GetTextBuffer;
     public delegate* unmanaged<ulong, byte*, void> TextRenderer_SetText;
     public delegate* unmanaged<ulong, ulong> TextRenderer_GetFont;
     public delegate* unmanaged<ulong, ulong, void> TextRenderer_SetFont;
@@ -163,6 +166,7 @@ internal unsafe struct NativeBindingsStruct
 
     // ── Scene Query ──────────────────────────────────────────────
     public delegate* unmanaged<byte*> Scene_GetActiveSceneName;
+    public delegate* unmanaged<byte*, int, int> Scene_GetActiveSceneNameBuffer;
     public delegate* unmanaged<int> Scene_GetEntityCount;
     public delegate* unmanaged<byte*, int> Scene_GetEntityCountByName;
     public delegate* unmanaged<byte*, int> Scene_LoadAdditive;
@@ -175,7 +179,9 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<byte*, int> Scene_DoesSceneExist;
     public delegate* unmanaged<int> Scene_GetLoadedCount;
     public delegate* unmanaged<int, byte*> Scene_GetLoadedSceneNameAt;
+    public delegate* unmanaged<int, byte*, int, int> Scene_GetLoadedSceneNameAtBuffer;
     public delegate* unmanaged<ulong, byte*> Scene_GetEntityNameByUUID;
+    public delegate* unmanaged<ulong, byte*, int, int> Scene_GetEntityNameByUUIDBuffer;
     public delegate* unmanaged<byte*, ulong*, int, int> Scene_QueryEntities;
     public delegate* unmanaged<byte*, byte*, byte*, int, ulong*, int, int> Scene_QueryEntitiesFiltered;
     public delegate* unmanaged<byte*, byte*, ulong*, int, int> Scene_QueryEntitiesInScene;
@@ -183,9 +189,12 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<ulong, int> Asset_IsValid;
     public delegate* unmanaged<byte*, ulong> Asset_GetOrCreateUUIDFromPath;
     public delegate* unmanaged<ulong, byte*> Asset_GetPath;
+    public delegate* unmanaged<ulong, byte*, int, int> Asset_GetPathBuffer;
     public delegate* unmanaged<ulong, byte*> Asset_GetDisplayName;
+    public delegate* unmanaged<ulong, byte*, int, int> Asset_GetDisplayNameBuffer;
     public delegate* unmanaged<ulong, int> Asset_GetKind;
     public delegate* unmanaged<byte*, int, byte*> Asset_FindAll;
+    public delegate* unmanaged<byte*, int, byte*, int, int> Asset_FindAllBuffer;
     public delegate* unmanaged<ulong, int> Texture_LoadAsset;
     public delegate* unmanaged<ulong, int> Texture_GetWidth;
     public delegate* unmanaged<ulong, int> Texture_GetHeight;

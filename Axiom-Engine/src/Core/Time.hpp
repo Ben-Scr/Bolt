@@ -32,6 +32,8 @@ namespace Axiom {
 		int GetFrameCount() const { return m_FrameCount; }
 
 	private:
+		using Clock = std::chrono::steady_clock;
+
 		void Update(float deltaTime);
 		void AdvanceFrameCount() { m_FrameCount++; }
 
@@ -43,10 +45,10 @@ namespace Axiom {
 		float m_SimulatedElapsedTime = 0.0f;
 		int m_FrameCount = 0;
 
-		std::chrono::steady_clock::duration m_FrameDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+		Clock::duration m_FrameDuration = std::chrono::duration_cast<Clock::duration>(
 			std::chrono::duration<float>(1.0f / m_TargetFPS)
 		);
-		std::chrono::high_resolution_clock::time_point m_StartTime = std::chrono::high_resolution_clock::now();
+		Clock::time_point m_StartTime = Clock::now();
 
 		friend class Application;
 	};

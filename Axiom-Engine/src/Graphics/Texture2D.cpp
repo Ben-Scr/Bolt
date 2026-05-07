@@ -138,10 +138,12 @@ namespace Axiom {
 
 		std::vector<unsigned char> pixels((size_t)w * (size_t)h * 4);
 
+		GLint savedPackAlign = 4;
+		glGetIntegerv(GL_PACK_ALIGNMENT, &savedPackAlign);
 		glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-		GLsizei bufSize = (GLsizei)pixels.size();
 		glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		glPixelStorei(GL_PACK_ALIGNMENT, savedPackAlign);
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 		return std::make_unique<ImageData>(ImageData(w, h, std::move(pixels)));

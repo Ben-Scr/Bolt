@@ -28,7 +28,7 @@ namespace Axiom {
 	}
 
 	float Time::GetElapsedTime() const {
-		std::chrono::duration<float> elapsed = std::chrono::high_resolution_clock::now() - m_StartTime;
+		std::chrono::duration<float> elapsed = Clock::now() - m_StartTime;
 		return elapsed.count();
 	}
 

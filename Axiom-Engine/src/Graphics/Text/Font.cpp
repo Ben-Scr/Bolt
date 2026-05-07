@@ -174,6 +174,8 @@ namespace Axiom {
         // Upload as GL_RED (single-channel). Linear filter keeps glyphs
         // smooth at non-baked sizes; clamp-to-edge avoids bleeding when
         // a glyph sits at the atlas border.
+        GLint savedUnpackAlign = 4;
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &savedUnpackAlign);
         glGenTextures(1, &m_AtlasTexture);
         glBindTexture(GL_TEXTURE_2D, m_AtlasTexture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -184,7 +186,7 @@ namespace Axiom {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, savedUnpackAlign);
         glBindTexture(GL_TEXTURE_2D, 0);
 
         // Translate stb's packed table into our codepoint→GlyphMetrics map.

@@ -38,6 +38,11 @@
 #include "Graphics/Gizmo.hpp"
 #include "Physics/Physics2D.hpp"
 
+#include <algorithm>
+#include <cstring>
+#include <limits>
+#include <string_view>
+
 namespace Axiom {
 	bool ScriptBindings::IsScriptInputEnabled()
 	{
@@ -130,9 +135,29 @@ namespace Axiom {
 		return nullptr;
 	}
 
-	// HAZARD: returned const char* invalidates on the next binding call. Managed callers MUST copy immediately.
-	// TODO: replace with managed-side buffer ownership.
+	// Legacy string callbacks use this per-thread scratch buffer. Managed callers use
+	// the Buffer variants below so returned strings are copied into caller-owned memory.
 	thread_local std::string s_StringReturnBuffer;
+
+	static int CopyStringToBuffer(std::string_view value, char* outBuffer, int capacity)
+	{
+		const int requiredBytes = static_cast<int>(std::min(
+			value.size(),
+			static_cast<size_t>(std::numeric_limits<int>::max())));
+		if (outBuffer && capacity > 0) {
+			const int bytesToCopy = std::min(requiredBytes, capacity - 1);
+			if (bytesToCopy > 0) {
+				std::memcpy(outBuffer, value.data(), static_cast<size_t>(bytesToCopy));
+			}
+			outBuffer[bytesToCopy] = '\0';
+		}
+		return requiredBytes;
+	}
+
+	static int CopyCStringToBuffer(const char* value, char* outBuffer, int capacity)
+	{
+		return CopyStringToBuffer(value ? std::string_view(value) : std::string_view(), outBuffer, capacity);
+	}
 
 	void PopulateNonComponentBindings(NativeBindings& b);
 
@@ -169,6 +194,10 @@ namespace Axiom {
 			}
 		});
 		return found;
+	}
+
+	static const ComponentInfo* FindComponentByName(const char* name) {
+		return FindComponentByName(std::string(name ? name : ""));
 	}
 
 	static bool HasManagedComponent(Scene& scene, EntityHandle handle, const std::string& className) {
@@ -222,6 +251,11 @@ namespace Axiom {
 
 		s_StringReturnBuffer = Json::Stringify(root, false);
 		return s_StringReturnBuffer.c_str();
+	}
+
+	static int Axiom_Entity_GetManagedComponentFieldsBuffer(uint64_t entityID, const char* componentName, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_Entity_GetManagedComponentFields(entityID, componentName), outBuffer, capacity);
 	}
 
 	static int Axiom_Entity_GetIsStatic(uint64_t entityID)
@@ -422,6 +456,11 @@ namespace Axiom {
 		return s_StringReturnBuffer.c_str();
 	}
 
+	static int Axiom_Scene_GetActiveSceneNameBuffer(char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_Scene_GetActiveSceneName(), outBuffer, capacity);
+	}
+
 	static int CountSceneEntities(const Scene& scene) {
 		int count = 0;
 		auto view = scene.GetRegistry().view<entt::entity>();
@@ -469,6 +508,11 @@ namespace Axiom {
 		}
 		s_StringReturnBuffer.clear();
 		return s_StringReturnBuffer.c_str();
+	}
+
+	static int Axiom_Scene_GetEntityNameByUUIDBuffer(uint64_t uuid, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_Scene_GetEntityNameByUUID(uuid), outBuffer, capacity);
 	}
 
 	static int LoadSceneByName(const char* sceneName, bool additive) {
@@ -551,6 +595,11 @@ namespace Axiom {
 		return s_StringReturnBuffer.c_str();
 	}
 
+	static int Axiom_Scene_GetLoadedSceneNameAtBuffer(int index, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_Scene_GetLoadedSceneNameAt(index), outBuffer, capacity);
+	}
+
 	// ── Scene Query ─────────────────────────────────────────────────────
 
 	static Scene* ResolveLoadedSceneForQuery(const char* sceneName) {
@@ -629,10 +678,20 @@ namespace Axiom {
 		return s_StringReturnBuffer.c_str();
 	}
 
+	static int Axiom_Asset_GetPathBuffer(uint64_t assetId, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_Asset_GetPath(assetId), outBuffer, capacity);
+	}
+
 	static const char* Axiom_Asset_GetDisplayName(uint64_t assetId)
 	{
 		s_StringReturnBuffer = AssetRegistry::GetDisplayName(assetId);
 		return s_StringReturnBuffer.c_str();
+	}
+
+	static int Axiom_Asset_GetDisplayNameBuffer(uint64_t assetId, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_Asset_GetDisplayName(assetId), outBuffer, capacity);
 	}
 
 	static int Axiom_Asset_GetKind(uint64_t assetId)
@@ -651,6 +710,11 @@ namespace Axiom {
 
 		s_StringReturnBuffer = Json::Stringify(ids, false);
 		return s_StringReturnBuffer.c_str();
+	}
+
+	static int Axiom_Asset_FindAllBuffer(const char* pathPrefix, int kind, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_Asset_FindAll(pathPrefix, kind), outBuffer, capacity);
 	}
 
 	static int Axiom_Texture_LoadAsset(uint64_t assetId)
@@ -806,6 +870,11 @@ namespace Axiom {
 		return s_StringReturnBuffer.c_str();
 	}
 
+	static int Axiom_NameComponent_GetNameBuffer(uint64_t entityID, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_NameComponent_GetName(entityID), outBuffer, capacity);
+	}
+
 	static void Axiom_NameComponent_SetName(uint64_t entityID, const char* name)
 	{
 		Scene* scene = nullptr;
@@ -931,6 +1000,11 @@ namespace Axiom {
 		}
 		s_StringReturnBuffer = scene->GetComponent<TextRendererComponent>(handle).Text;
 		return s_StringReturnBuffer.c_str();
+	}
+
+	static int Axiom_TextRenderer_GetTextBuffer(uint64_t entityID, char* outBuffer, int capacity)
+	{
+		return CopyCStringToBuffer(Axiom_TextRenderer_GetText(entityID), outBuffer, capacity);
 	}
 
 	static void Axiom_TextRenderer_SetText(uint64_t entityID, const char* text)
@@ -1353,16 +1427,8 @@ namespace Axiom {
 
 		auto result = Physics2D::Raycast({ originX, originY }, { dirX, dirY }, distance);
 		if (result.has_value()) {
-			Scene* scene = GetScene();
-			if (scene && scene->IsValid(result->entity)) {
-				*hitEntityID = GetEntityScriptId(*scene, result->entity);
-			}
-			else {
-				SceneManager::Get().ForeachLoadedScene([&](const Scene& loadedScene) {
-					if (*hitEntityID == 0 && loadedScene.IsValid(result->entity)) {
-						*hitEntityID = GetEntityScriptId(loadedScene, result->entity);
-					}
-				});
+			if (result->scene && result->scene->IsValid(result->entity)) {
+				*hitEntityID = GetEntityScriptId(*result->scene, result->entity);
 			}
 			*hitX = result->point.x; *hitY = result->point.y;
 			*hitNormalX = result->normal.x; *hitNormalY = result->normal.y;
@@ -1372,21 +1438,11 @@ namespace Axiom {
 		return 0;
 	}
 
-	static uint64_t ToScriptEntityId(EntityHandle handle) {
-		if (handle == entt::null) return 0;
-
-		Scene* scene = GetScene();
-		if (scene && scene->IsValid(handle)) {
-			return GetEntityScriptId(*scene, handle);
+	static uint64_t ToScriptEntityId(const PhysicsBodyRef2D& ref) {
+		if (!ref.scene || ref.entity == entt::null || !ref.scene->IsValid(ref.entity)) {
+			return 0;
 		}
-
-		uint64_t id = 0;
-		SceneManager::Get().ForeachLoadedScene([&](const Scene& loadedScene) {
-			if (id == 0 && loadedScene.IsValid(handle)) {
-				id = GetEntityScriptId(loadedScene, handle);
-			}
-		});
-		return id;
+		return GetEntityScriptId(*ref.scene, ref.entity);
 	}
 
 	static OverlapMode ToOverlapMode(int mode) {
@@ -1407,18 +1463,18 @@ namespace Axiom {
 		return result;
 	}
 
-	static int WriteOverlapResult(std::optional<EntityHandle> result, uint64_t* entityID) {
+	static int WriteOverlapResult(std::optional<PhysicsBodyRef2D> result, uint64_t* entityID) {
 		if (!entityID) return 0;
 		*entityID = result.has_value() ? ToScriptEntityId(*result) : 0;
 		return *entityID != 0 ? 1 : 0;
 	}
 
-	static int WriteOverlapResults(const std::vector<EntityHandle>& handles, uint64_t* outEntityIDs, int maxOut) {
+	static int WriteOverlapResults(const std::vector<PhysicsBodyRef2D>& refs, uint64_t* outEntityIDs, int maxOut) {
 		if (!outEntityIDs || maxOut <= 0) return 0;
 
 		int count = 0;
-		for (EntityHandle handle : handles) {
-			uint64_t id = ToScriptEntityId(handle);
+		for (const PhysicsBodyRef2D& ref : refs) {
+			uint64_t id = ToScriptEntityId(ref);
 			if (id == 0) continue;
 
 			if (count < maxOut) {
@@ -1431,13 +1487,13 @@ namespace Axiom {
 
 	static int Axiom_Physics2D_OverlapCircle(float originX, float originY, float radius, int mode, uint64_t* entityID) {
 		return WriteOverlapResult(
-			Physics2D::OverlapCircle({ originX, originY }, radius, ToOverlapMode(mode)),
+			Physics2D::OverlapCircleRef({ originX, originY }, radius, ToOverlapMode(mode)),
 			entityID);
 	}
 
 	static int Axiom_Physics2D_OverlapBox(float originX, float originY, float halfX, float halfY, float degrees, int mode, uint64_t* entityID) {
 		return WriteOverlapResult(
-			Physics2D::OverlapBox({ originX, originY }, { halfX, halfY }, degrees, ToOverlapMode(mode)),
+			Physics2D::OverlapBoxRef({ originX, originY }, { halfX, halfY }, degrees, ToOverlapMode(mode)),
 			entityID);
 	}
 
@@ -1449,19 +1505,19 @@ namespace Axiom {
 		}
 
 		return WriteOverlapResult(
-			Physics2D::OverlapPolygon({ originX, originY }, polygon, ToOverlapMode(mode)),
+			Physics2D::OverlapPolygonRef({ originX, originY }, polygon, ToOverlapMode(mode)),
 			entityID);
 	}
 
 	static int Axiom_Physics2D_OverlapCircleAll(float originX, float originY, float radius, uint64_t* outEntityIDs, int maxOut) {
 		return WriteOverlapResults(
-			Physics2D::OverlapCircleAll({ originX, originY }, radius),
+			Physics2D::OverlapCircleAllRefs({ originX, originY }, radius),
 			outEntityIDs, maxOut);
 	}
 
 	static int Axiom_Physics2D_OverlapBoxAll(float originX, float originY, float halfX, float halfY, float degrees, uint64_t* outEntityIDs, int maxOut) {
 		return WriteOverlapResults(
-			Physics2D::OverlapBoxAll({ originX, originY }, { halfX, halfY }, degrees),
+			Physics2D::OverlapBoxAllRefs({ originX, originY }, { halfX, halfY }, degrees),
 			outEntityIDs, maxOut);
 	}
 
@@ -1472,19 +1528,19 @@ namespace Axiom {
 		}
 
 		return WriteOverlapResults(
-			Physics2D::OverlapPolygonAll({ originX, originY }, polygon),
+			Physics2D::OverlapPolygonAllRefs({ originX, originY }, polygon),
 			outEntityIDs, maxOut);
 	}
 
 	static int Axiom_Physics2D_ContainsPoint(float originX, float originY, int mode, uint64_t* entityID) {
 		return WriteOverlapResult(
-			Physics2D::ContainsPoint({ originX, originY }, ToOverlapMode(mode)),
+			Physics2D::ContainsPointRef({ originX, originY }, ToOverlapMode(mode)),
 			entityID);
 	}
 
 	static int Axiom_Physics2D_ContainsPointAll(float originX, float originY, uint64_t* outEntityIDs, int maxOut) {
 		return WriteOverlapResults(
-			Physics2D::ContainsPointAll({ originX, originY }),
+			Physics2D::ContainsPointAllRefs({ originX, originY }),
 			outEntityIDs, maxOut);
 	}
 
@@ -1506,12 +1562,14 @@ namespace Axiom {
 		b.Entity_AddComponent = &Axiom_Entity_AddComponent;
 		b.Entity_RemoveComponent = &Axiom_Entity_RemoveComponent;
 		b.Entity_GetManagedComponentFields = &Axiom_Entity_GetManagedComponentFields;
+		b.Entity_GetManagedComponentFieldsBuffer = &Axiom_Entity_GetManagedComponentFieldsBuffer;
 		b.Entity_GetIsStatic = &Axiom_Entity_GetIsStatic;
 		b.Entity_SetIsStatic = &Axiom_Entity_SetIsStatic;
 		b.Entity_GetIsEnabled = &Axiom_Entity_GetIsEnabled;
 		b.Entity_SetIsEnabled = &Axiom_Entity_SetIsEnabled;
 
 		b.NameComponent_GetName = &Axiom_NameComponent_GetName;
+		b.NameComponent_GetNameBuffer = &Axiom_NameComponent_GetNameBuffer;
 		b.NameComponent_SetName = &Axiom_NameComponent_SetName;
 
 		b.Transform2D_GetPosition = &Axiom_Transform2D_GetPosition;
@@ -1531,6 +1589,7 @@ namespace Axiom {
 		b.SpriteRenderer_SetSortingLayer = &Axiom_SpriteRenderer_SetSortingLayer;
 
 		b.TextRenderer_GetText = &Axiom_TextRenderer_GetText;
+		b.TextRenderer_GetTextBuffer = &Axiom_TextRenderer_GetTextBuffer;
 		b.TextRenderer_SetText = &Axiom_TextRenderer_SetText;
 		b.TextRenderer_GetFont = &Axiom_TextRenderer_GetFont;
 		b.TextRenderer_SetFont = &Axiom_TextRenderer_SetFont;
@@ -1604,6 +1663,7 @@ namespace Axiom {
 		b.FastCircleCollider2D_SetRadius = &Axiom_FastCircleCollider2D_SetRadius;
 
 		b.Scene_GetActiveSceneName = &Axiom_Scene_GetActiveSceneName;
+		b.Scene_GetActiveSceneNameBuffer = &Axiom_Scene_GetActiveSceneNameBuffer;
 		b.Scene_GetEntityCount = &Axiom_Scene_GetEntityCount;
 		b.Scene_GetEntityCountByName = &Axiom_Scene_GetEntityCountByName;
 		b.Scene_LoadAdditive = &Axiom_Scene_LoadAdditive;
@@ -1616,7 +1676,9 @@ namespace Axiom {
 		b.Scene_DoesSceneExist = &Axiom_Scene_DoesSceneExist;
 		b.Scene_GetLoadedCount = &Axiom_Scene_GetLoadedCount;
 		b.Scene_GetLoadedSceneNameAt = &Axiom_Scene_GetLoadedSceneNameAt;
+		b.Scene_GetLoadedSceneNameAtBuffer = &Axiom_Scene_GetLoadedSceneNameAtBuffer;
 		b.Scene_GetEntityNameByUUID = &Axiom_Scene_GetEntityNameByUUID;
+		b.Scene_GetEntityNameByUUIDBuffer = &Axiom_Scene_GetEntityNameByUUIDBuffer;
 		b.Scene_QueryEntities = &Axiom_Scene_QueryEntities;
 		b.Scene_QueryEntitiesFiltered = &Axiom_Scene_QueryEntitiesFiltered;
 		b.Scene_QueryEntitiesInScene = &Axiom_Scene_QueryEntitiesInScene;
@@ -1625,9 +1687,12 @@ namespace Axiom {
 		b.Asset_IsValid = &Axiom_Asset_IsValid;
 		b.Asset_GetOrCreateUUIDFromPath = &Axiom_Asset_GetOrCreateUUIDFromPath;
 		b.Asset_GetPath = &Axiom_Asset_GetPath;
+		b.Asset_GetPathBuffer = &Axiom_Asset_GetPathBuffer;
 		b.Asset_GetDisplayName = &Axiom_Asset_GetDisplayName;
+		b.Asset_GetDisplayNameBuffer = &Axiom_Asset_GetDisplayNameBuffer;
 		b.Asset_GetKind = &Axiom_Asset_GetKind;
 		b.Asset_FindAll = &Axiom_Asset_FindAll;
+		b.Asset_FindAllBuffer = &Axiom_Asset_FindAllBuffer;
 		b.Texture_LoadAsset = &Axiom_Texture_LoadAsset;
 		b.Texture_GetWidth = &Axiom_Texture_GetWidth;
 		b.Texture_GetHeight = &Axiom_Texture_GetHeight;

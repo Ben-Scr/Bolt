@@ -218,6 +218,10 @@ namespace Axiom {
 			entry.WrapV = v;
 		}
 		else {
+			if (s_Textures.size() >= TextureHandle::k_InvalidIndex) {
+				AIM_CORE_ERROR("[{}] Texture handle table is full", ErrorCodeToString(AxiomErrorCode::OutOfBounds));
+				return TextureHandle::Invalid();
+			}
 			index = static_cast<uint16_t>(s_Textures.size());
 
 			TextureEntry entry;

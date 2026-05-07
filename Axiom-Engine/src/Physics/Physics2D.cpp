@@ -3,6 +3,7 @@
 #include "Physics/Physics2D.hpp"
 #include "Physics/PhysicsSystem2D.hpp"
 #include "Physics/Box2DWorld.hpp"
+#include "Scene/Scene.hpp"
 
 #include <Collections/Mat2.hpp>
 #include <Math/Common.hpp>
@@ -13,13 +14,35 @@
 
 namespace Axiom {
 	namespace {
-		EntityHandle GetEntityHandleFromShape(b2ShapeId shapeId) {
-			b2BodyId bodyId = b2Shape_GetBody(shapeId);
-			void* userData = b2Body_GetUserData(bodyId);
-			return static_cast<EntityHandle>(reinterpret_cast<uintptr_t>(userData));
+		bool IsValidRef(const PhysicsBodyRef2D& ref) {
+			return ref.scene && ref.entity != entt::null && ref.scene->IsValid(ref.entity);
 		}
 
-		std::optional<EntityHandle> QueryProxy(const Vec2& center, const b2ShapeProxy& proxy, OverlapMode mode) {
+		PhysicsBodyRef2D ResolveBodyRefFromShape(Box2DWorld& phys, b2ShapeId shapeId) {
+			const CollisionBodyRef body = phys.ResolveShape(shapeId);
+			PhysicsBodyRef2D ref{ body.Entity, body.OwningScene };
+			return IsValidRef(ref) ? ref : PhysicsBodyRef2D{};
+		}
+
+		std::optional<EntityHandle> ToEntityHandle(std::optional<PhysicsBodyRef2D> ref) {
+			if (!ref.has_value() || !IsValidRef(*ref)) {
+				return std::nullopt;
+			}
+			return ref->entity;
+		}
+
+		std::vector<EntityHandle> ToEntityHandles(const std::vector<PhysicsBodyRef2D>& refs) {
+			std::vector<EntityHandle> handles;
+			handles.reserve(refs.size());
+			for (const PhysicsBodyRef2D& ref : refs) {
+				if (IsValidRef(ref)) {
+					handles.push_back(ref.entity);
+				}
+			}
+			return handles;
+		}
+
+		std::optional<PhysicsBodyRef2D> QueryProxyRef(const Vec2& center, const b2ShapeProxy& proxy, OverlapMode mode) {
 			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
 				return std::nullopt;
 			}
@@ -31,16 +54,20 @@ namespace Axiom {
 			struct QueryContext {
 				Vec2 center;
 				OverlapMode mode;
-				std::optional<EntityHandle> first;
-				std::optional<EntityHandle> nearest;
+				Box2DWorld* phys = nullptr;
+				std::optional<PhysicsBodyRef2D> first;
+				std::optional<PhysicsBodyRef2D> nearest;
 				float bestDist2 = std::numeric_limits<float>::max();
 
 				static bool Report(b2ShapeId shapeId, void* ctx) {
 					auto* self = static_cast<QueryContext*>(ctx);
-					EntityHandle handle = GetEntityHandleFromShape(shapeId);
+					PhysicsBodyRef2D ref = ResolveBodyRefFromShape(*self->phys, shapeId);
+					if (!IsValidRef(ref)) {
+						return true;
+					}
 
 					if (self->mode == OverlapMode::First) {
-						self->first = handle;
+						self->first = ref;
 						return false;
 					}
 
@@ -51,18 +78,18 @@ namespace Axiom {
 					float d2 = dx * dx + dy * dy;
 					if (d2 < self->bestDist2) {
 						self->bestDist2 = d2;
-						self->nearest = handle;
+						self->nearest = ref;
 					}
 					return true;
 				}
-			} context{ center, mode, std::nullopt, std::nullopt };
+			} context{ center, mode, &phys, std::nullopt, std::nullopt };
 
 			b2World_OverlapShape(world, &proxy, filter, QueryContext::Report, &context);
 			return mode == OverlapMode::First ? context.first : context.nearest;
 		}
 
-		std::vector<EntityHandle> QueryProxyAll(const b2ShapeProxy& proxy) {
-			std::vector<EntityHandle> results;
+		std::vector<PhysicsBodyRef2D> QueryProxyAllRefs(const b2ShapeProxy& proxy) {
+			std::vector<PhysicsBodyRef2D> results;
 			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
 				return results;
 			}
@@ -72,19 +99,23 @@ namespace Axiom {
 			b2QueryFilter filter = b2DefaultQueryFilter();
 
 			struct QueryContext {
-				std::vector<EntityHandle>* out;
+				Box2DWorld* phys = nullptr;
+				std::vector<PhysicsBodyRef2D>* out;
 				static bool Report(b2ShapeId shapeId, void* ctx) {
 					auto* self = static_cast<QueryContext*>(ctx);
-					self->out->push_back(GetEntityHandleFromShape(shapeId));
+					PhysicsBodyRef2D ref = ResolveBodyRefFromShape(*self->phys, shapeId);
+					if (IsValidRef(ref)) {
+						self->out->push_back(ref);
+					}
 					return true;
 				}
-			} context{ &results };
+			} context{ &phys, &results };
 
 			b2World_OverlapShape(world, &proxy, filter, QueryContext::Report, &context);
 			return results;
 		}
 
-		std::optional<EntityHandle> QueryPoint(const Vec2& point, OverlapMode mode) {
+		std::optional<PhysicsBodyRef2D> QueryPointRef(const Vec2& point, OverlapMode mode) {
 			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
 				return std::nullopt;
 			}
@@ -101,8 +132,9 @@ namespace Axiom {
 			struct QueryContext {
 				Vec2 point;
 				OverlapMode mode;
-				std::optional<EntityHandle> first;
-				std::optional<EntityHandle> nearest;
+				Box2DWorld* phys = nullptr;
+				std::optional<PhysicsBodyRef2D> first;
+				std::optional<PhysicsBodyRef2D> nearest;
 				float bestDist2 = std::numeric_limits<float>::max();
 
 				static bool Report(b2ShapeId shapeId, void* ctx) {
@@ -111,9 +143,12 @@ namespace Axiom {
 						return true;
 					}
 
-					EntityHandle handle = GetEntityHandleFromShape(shapeId);
+					PhysicsBodyRef2D ref = ResolveBodyRefFromShape(*self->phys, shapeId);
+					if (!IsValidRef(ref)) {
+						return true;
+					}
 					if (self->mode == OverlapMode::First) {
-						self->first = handle;
+						self->first = ref;
 						return false;
 					}
 
@@ -124,18 +159,18 @@ namespace Axiom {
 					float d2 = dx * dx + dy * dy;
 					if (d2 < self->bestDist2) {
 						self->bestDist2 = d2;
-						self->nearest = handle;
+						self->nearest = ref;
 					}
 					return true;
 				}
-			} context{ point, mode, std::nullopt, std::nullopt };
+			} context{ point, mode, &phys, std::nullopt, std::nullopt };
 
 			b2World_OverlapAABB(world, aabb, filter, QueryContext::Report, &context);
 			return mode == OverlapMode::First ? context.first : context.nearest;
 		}
 
-		std::vector<EntityHandle> QueryPointAll(const Vec2& point) {
-			std::vector<EntityHandle> results;
+		std::vector<PhysicsBodyRef2D> QueryPointAllRefs(const Vec2& point) {
+			std::vector<PhysicsBodyRef2D> results;
 			if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled()) {
 				return results;
 			}
@@ -151,16 +186,20 @@ namespace Axiom {
 
 			struct QueryContext {
 				Vec2 point;
-				std::vector<EntityHandle>* out;
+				Box2DWorld* phys = nullptr;
+				std::vector<PhysicsBodyRef2D>* out;
 
 				static bool Report(b2ShapeId shapeId, void* ctx) {
 					auto* self = static_cast<QueryContext*>(ctx);
 					if (b2Shape_TestPoint(shapeId, { self->point.x, self->point.y })) {
-						self->out->push_back(GetEntityHandleFromShape(shapeId));
+						PhysicsBodyRef2D ref = ResolveBodyRefFromShape(*self->phys, shapeId);
+						if (IsValidRef(ref)) {
+							self->out->push_back(ref);
+						}
 					}
 					return true;
 				}
-			} context{ point, &results };
+			} context{ point, &phys, &results };
 
 			b2World_OverlapAABB(world, aabb, filter, QueryContext::Report, &context);
 			return results;
@@ -168,14 +207,20 @@ namespace Axiom {
 	}
 
 	std::optional<EntityHandle> Physics2D::OverlapCircle(const Vec2& center, float radius, OverlapMode mode) {
+		return ToEntityHandle(OverlapCircleRef(center, radius, mode));
+	}
+	std::optional<PhysicsBodyRef2D> Physics2D::OverlapCircleRef(const Vec2& center, float radius, OverlapMode mode) {
 		b2ShapeProxy proxy{};
 		proxy.count = 1;
 		proxy.points[0] = { center.x, center.y };
 		proxy.radius = radius;
 
-		return QueryProxy(center, proxy, mode);
+		return QueryProxyRef(center, proxy, mode);
 	}
 	std::optional<EntityHandle> Physics2D::OverlapBox(const Vec2& center, const Vec2& halfExtents, float degrees, OverlapMode mode) {
+		return ToEntityHandle(OverlapBoxRef(center, halfExtents, degrees, mode));
+	}
+	std::optional<PhysicsBodyRef2D> Physics2D::OverlapBoxRef(const Vec2& center, const Vec2& halfExtents, float degrees, OverlapMode mode) {
 		float radians = Radians<float>(degrees);
 
 		Vec2 corners[4] = {
@@ -197,9 +242,12 @@ namespace Axiom {
 			proxy.points[i] = { w.x, w.y };
 		}
 
-		return QueryProxy(center, proxy, mode);
+		return QueryProxyRef(center, proxy, mode);
 	}
 	std::optional<EntityHandle> Physics2D::OverlapPolygon(const Vec2& center, const std::vector<Vec2>& points, OverlapMode mode) {
+		return ToEntityHandle(OverlapPolygonRef(center, points, mode));
+	}
+	std::optional<PhysicsBodyRef2D> Physics2D::OverlapPolygonRef(const Vec2& center, const std::vector<Vec2>& points, OverlapMode mode) {
 		if (points.size() < 3 || points.size() > B2_MAX_POLYGON_VERTICES) {
 			return std::nullopt;
 		}
@@ -211,10 +259,13 @@ namespace Axiom {
 			proxy.points[i] = { center.x + points[static_cast<size_t>(i)].x, center.y + points[static_cast<size_t>(i)].y };
 		}
 
-		return QueryProxy(center, proxy, mode);
+		return QueryProxyRef(center, proxy, mode);
 	}
 	std::optional<EntityHandle> Physics2D::ContainsPoint(const Vec2& point, OverlapMode mode) {
-		return QueryPoint(point, mode);
+		return ToEntityHandle(ContainsPointRef(point, mode));
+	}
+	std::optional<PhysicsBodyRef2D> Physics2D::ContainsPointRef(const Vec2& point, OverlapMode mode) {
+		return QueryPointRef(point, mode);
 	}
 	std::optional<RaycastHit2D> Physics2D::Raycast(const Vec2& origin,const Vec2& direction, float maxDistance) {
 		if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled() || maxDistance <= 0.0f) {
@@ -241,13 +292,14 @@ namespace Axiom {
 		if (!b2Shape_IsValid(r.shapeId))
 			return std::nullopt;
 
-		b2BodyId   bId = b2Shape_GetBody(r.shapeId);
-		void* ud = b2Body_GetUserData(bId);
-		uintptr_t i = reinterpret_cast<uintptr_t>(ud);
-		EntityHandle e = static_cast<EntityHandle>(i);
+		PhysicsBodyRef2D ref = ResolveBodyRefFromShape(phys, r.shapeId);
+		if (!IsValidRef(ref)) {
+			return std::nullopt;
+		}
 
 		RaycastHit2D hit;
-		hit.entity = e;
+		hit.entity = ref.entity;
+		hit.scene = ref.scene;
 		hit.point = { r.point.x, r.point.y };
 		hit.normal = { r.normal.x, r.normal.y };
 		hit.distance = r.fraction * maxDistance;
@@ -255,14 +307,20 @@ namespace Axiom {
 	}
 
 	std::vector<EntityHandle> Physics2D::OverlapCircleAll(const Vec2& center, float radius) {
+		return ToEntityHandles(OverlapCircleAllRefs(center, radius));
+	}
+	std::vector<PhysicsBodyRef2D> Physics2D::OverlapCircleAllRefs(const Vec2& center, float radius) {
 		b2ShapeProxy proxy{};
 		proxy.count = 1;
 		proxy.points[0] = { center.x, center.y };
 		proxy.radius = radius;
 
-		return QueryProxyAll(proxy);
+		return QueryProxyAllRefs(proxy);
 	}
 	std::vector<EntityHandle> Physics2D::OverlapBoxAll(const Vec2& center, const Vec2& halfExtents, float degrees) {
+		return ToEntityHandles(OverlapBoxAllRefs(center, halfExtents, degrees));
+	}
+	std::vector<PhysicsBodyRef2D> Physics2D::OverlapBoxAllRefs(const Vec2& center, const Vec2& halfExtents, float degrees) {
 		float radians = Radians<float>(degrees);
 
 		Vec2 corners[4] = {
@@ -284,9 +342,12 @@ namespace Axiom {
 			proxy.points[i] = { w.x, w.y };
 		}
 
-		return QueryProxyAll(proxy);
+		return QueryProxyAllRefs(proxy);
 	}
 	std::vector<EntityHandle> Physics2D::OverlapPolygonAll(const Vec2& center, const std::vector<Vec2>& points) {
+		return ToEntityHandles(OverlapPolygonAllRefs(center, points));
+	}
+	std::vector<PhysicsBodyRef2D> Physics2D::OverlapPolygonAllRefs(const Vec2& center, const std::vector<Vec2>& points) {
 		if (points.size() < 3 || points.size() > B2_MAX_POLYGON_VERTICES) {
 			return {};
 		}
@@ -298,9 +359,12 @@ namespace Axiom {
 			proxy.points[i] = { center.x + points[static_cast<size_t>(i)].x, center.y + points[static_cast<size_t>(i)].y };
 		}
 
-		return QueryProxyAll(proxy);
+		return QueryProxyAllRefs(proxy);
 	}
 	std::vector<EntityHandle> Physics2D::ContainsPointAll(const Vec2& point) {
-		return QueryPointAll(point);
+		return ToEntityHandles(ContainsPointAllRefs(point));
+	}
+	std::vector<PhysicsBodyRef2D> Physics2D::ContainsPointAllRefs(const Vec2& point) {
+		return QueryPointAllRefs(point);
 	}
 }

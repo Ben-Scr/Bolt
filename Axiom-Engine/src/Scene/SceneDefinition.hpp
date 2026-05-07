@@ -5,6 +5,8 @@
 #include <functional>
 #include <typeindex>
 #include <algorithm>
+#include <tuple>
+#include <type_traits>
 #include "Core/Export.hpp"
 #include "Core/Log.hpp"
 
@@ -33,8 +35,9 @@ namespace Axiom {
                 return *this;
             }
 
+            using CapturedArgs = std::tuple<std::decay_t<Args>...>;
             m_SystemFactories.emplace_back(
-                [capturedArgs = std::tuple<Args...>(std::forward<Args>(args)...)]() mutable {
+                [capturedArgs = CapturedArgs(std::forward<Args>(args)...)]() mutable {
                     return std::apply(
                         [](auto&&... a) {
                             return std::make_unique<TSystem>(std::forward<decltype(a)>(a)...);

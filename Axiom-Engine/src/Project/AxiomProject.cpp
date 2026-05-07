@@ -941,7 +941,14 @@ endforeach()
 				std::filesystem::copy(engineAssets, project.AxiomAssetsDirectory,
 					std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing);
 			}
-			catch (...) {}
+			catch (const std::exception& ex) {
+				AIM_CORE_WARN_TAG("AxiomProject", "Failed to copy Axiom assets from '{}' to '{}': {}",
+					engineAssets, project.AxiomAssetsDirectory, ex.what());
+			}
+			catch (...) {
+				AIM_CORE_WARN_TAG("AxiomProject", "Failed to copy Axiom assets from '{}' to '{}': unknown error",
+					engineAssets, project.AxiomAssetsDirectory);
+			}
 		}
 
 		if (project.BuildSceneList.empty()) {

@@ -58,6 +58,9 @@ namespace Axiom {
 	void Collider2D::Destroy() {
 		DestroyShape(true);
 		if (b2Body_IsValid(m_BodyId)) {
+			if (PhysicsSystem2D::IsInitialized()) {
+				PhysicsSystem2D::GetMainPhysicsWorld().UnregisterBodyBinding(m_BodyId);
+			}
 			b2DestroyBody(m_BodyId);
 		}
 

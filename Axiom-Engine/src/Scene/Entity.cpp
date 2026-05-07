@@ -6,6 +6,7 @@
 #include "Components/General/NameComponent.hpp"
 #include "Components/General/Transform2DComponent.hpp"
 #include "Components/Tags.hpp"
+#include "Core/Exceptions.hpp"
 #include "Core/Log.hpp"
 
 
@@ -21,6 +22,12 @@ namespace Axiom {
 
 	Entity::Entity(EntityHandle e, Scene* scene)
 		: m_EntityHandle(e), m_Registry(scene ? &scene->GetRegistry() : nullptr), m_Scene(scene) {}
+
+	void Entity::EnsureValid(const char* message) const {
+		if (!IsValid()) {
+			AIM_THROW(AxiomErrorCode::InvalidHandle, message);
+		}
+	}
 
 	Entity Entity::Create() {
 		Scene* activeScene = SceneManager::Get().GetActiveScene();

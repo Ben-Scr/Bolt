@@ -196,7 +196,7 @@ namespace Axiom {
 	static uint64_t Axiom_Entity_FindByName(const char* name)
 	{
 		Scene* scene = GetScene();
-		if (!scene) return 0;
+		if (!scene || !name) return 0;
 		std::string targetName(name);
 		auto& registry = scene->GetRegistry();
 		auto view = registry.view<NameComponent>();

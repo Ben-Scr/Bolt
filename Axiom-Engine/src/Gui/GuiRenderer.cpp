@@ -112,6 +112,22 @@ namespace Axiom {
 				return a.SortingOrder < b.SortingOrder;
 			});
 
+		const GLboolean wasScissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+		const GLboolean wasDepthEnabled = glIsEnabled(GL_DEPTH_TEST);
+		const GLboolean wasBlendEnabled = glIsEnabled(GL_BLEND);
+		GLint previousBlendSrcRgb = GL_ONE;
+		GLint previousBlendDstRgb = GL_ZERO;
+		GLint previousBlendSrcAlpha = GL_ONE;
+		GLint previousBlendDstAlpha = GL_ZERO;
+		GLint previousBlendEquationRgb = GL_FUNC_ADD;
+		GLint previousBlendEquationAlpha = GL_FUNC_ADD;
+		glGetIntegerv(GL_BLEND_SRC_RGB, &previousBlendSrcRgb);
+		glGetIntegerv(GL_BLEND_DST_RGB, &previousBlendDstRgb);
+		glGetIntegerv(GL_BLEND_SRC_ALPHA, &previousBlendSrcAlpha);
+		glGetIntegerv(GL_BLEND_DST_ALPHA, &previousBlendDstAlpha);
+		glGetIntegerv(GL_BLEND_EQUATION_RGB, &previousBlendEquationRgb);
+		glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &previousBlendEquationAlpha);
+
 		glDisable(GL_SCISSOR_TEST);
 		glDisable(GL_DEPTH_TEST);
 		glEnable(GL_BLEND);
@@ -144,5 +160,11 @@ namespace Axiom {
 
 		m_QuadMesh.Unbind();
 		m_SpriteShader.Unbind();
+
+		glBlendEquationSeparate(previousBlendEquationRgb, previousBlendEquationAlpha);
+		glBlendFuncSeparate(previousBlendSrcRgb, previousBlendDstRgb, previousBlendSrcAlpha, previousBlendDstAlpha);
+		wasScissorEnabled ? glEnable(GL_SCISSOR_TEST) : glDisable(GL_SCISSOR_TEST);
+		wasDepthEnabled ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
+		wasBlendEnabled ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
 	}
 }

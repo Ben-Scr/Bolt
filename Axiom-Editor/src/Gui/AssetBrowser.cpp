@@ -141,14 +141,17 @@ namespace Axiom {
 		std::string ext = extension;
 		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-		if (ext == ".cs")                                                    return "asset_cs";
-		if (ext == ".cpp" || ext == ".c" || ext == ".h" || ext == ".hpp")    return "asset_cpp";
-		if (ext == ".scene" || ext == ".axiom")                               return "asset_scene";
-		if (ext == ".prefab")                                                return "asset_prefab";
+		if (ext == ".cs")                                                    return "file_cs";
+		if (ext == ".cpp" || ext == ".c" || ext == ".h" || ext == ".hpp")    return "file_fallback";
+		if (ext == ".scene" || ext == ".axiom")                               return "file_scene";
+		if (ext == ".prefab")                                                return "file_fallback";
+		if (ext == ".json")                                                  return "file_json";
+		if (ext == ".xml")                                                   return "file_xml";
+		if (ext == ".bin")                                                   return "file_bin";
+		if (ext == ".zip")                                                   return "folder_zip";
 		if (ext == ".txt" || ext == ".cfg" || ext == ".ini" ||
-			ext == ".yaml" || ext == ".toml" || ext == ".xml" ||
-			ext == ".json" || ext == ".lua")                                 return "asset_txt";
-		if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".flac") return "asset_audio";
+			ext == ".yaml" || ext == ".toml" || ext == ".lua")               return "file_txt";
+		if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".flac") return "file_audio";
 
 		return nullptr;
 	}
@@ -807,7 +810,7 @@ namespace Axiom {
 			}
 			else if (!entry.IsDirectory) {
 				iconName = GetFileTypeIconName(std::filesystem::path(entry.Path).extension().string());
-				if (!iconName) iconName = "asset_bin";
+				if (!iconName) iconName = "file_fallback";
 			}
 
 			if (iconName) {

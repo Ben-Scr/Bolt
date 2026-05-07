@@ -53,13 +53,16 @@ namespace Axiom {
 
 	void Rigidbody2DComponent::SetMass(float mass) {
 		auto massData = b2Body_GetMassData(m_BodyId);
-		massData.mass = mass;
+		const float previousMass = massData.mass;
+		const float newMass = mass > 0.0f ? mass : 0.0f;
+		if (previousMass > 0.0f) {
+			massData.rotationalInertia *= newMass / previousMass;
+		}
+		else {
+			massData.rotationalInertia = 0.0f;
+		}
+		massData.mass = newMass;
 		b2Body_SetMassData(m_BodyId, massData);
-		// Recompute inertia from attached shapes' geometry+density so rotational
-		// dynamics match the new mass. Without this, mass was overwritten while
-		// rotationalInertia stayed at its old value (computed for the previous
-		// mass), producing visually wrong rotation under torque.
-		b2Body_ApplyMassFromShapes(m_BodyId);
 	}
 	float Rigidbody2DComponent::GetMass() const { return b2Body_GetMass(m_BodyId); }
 
@@ -125,7 +128,9 @@ namespace Axiom {
 					for (int i = 0; i < count; ++i) dispatcher.UnregisterShape(heap[i]);
 				}
 			}
-			PhysicsSystem2D::GetMainPhysicsWorld().UnregisterBodyBinding(m_BodyId);
+			if (PhysicsSystem2D::IsInitialized()) {
+				PhysicsSystem2D::GetMainPhysicsWorld().UnregisterBodyBinding(m_BodyId);
+			}
 			b2DestroyBody(m_BodyId);
 		}
 

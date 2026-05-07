@@ -35,8 +35,8 @@ namespace Axiom {
 		friend class ApplicationEditorAccess;
 		friend class ScriptBindings;
 
-		using DurationChrono = std::chrono::high_resolution_clock::duration;
-		using Clock = std::chrono::high_resolution_clock;
+		using Clock = std::chrono::steady_clock;
+		using DurationChrono = Clock::duration;
 
 	public:
 		struct CommandLineArgs {
@@ -195,9 +195,9 @@ namespace Axiom {
 
 		std::vector<std::string> m_PendingFileDrops;
 		double m_FixedUpdateAccumulator;
-		std::chrono::steady_clock::time_point m_LastFrameTime = Clock::now();
+		Clock::time_point m_LastFrameTime = Clock::now();
 		// Stamped at end of frame; next frame reads it to compute the VSync bucket.
-		std::chrono::steady_clock::time_point m_LastFrameEndTime{};
+		Clock::time_point m_LastFrameEndTime{};
 		LayerStack m_LayerStack;
 		EventBus m_EventBus;
 

@@ -375,7 +375,7 @@ namespace Axiom {
 		SoundInstance* instance = GetSoundInstance(instanceId);
 
 		if (instance) {
-			ma_sound_set_volume(&instance->Sound, source.GetVolume() * s_masterVolume);
+			ma_sound_set_volume(&instance->Sound, source.GetVolume());
 			ma_sound_set_pitch(&instance->Sound, source.GetPitch());
 			ma_sound_set_looping(&instance->Sound, source.IsLooping());
 			ma_sound_set_positioning(&instance->Sound, ma_positioning_relative);
@@ -452,6 +452,7 @@ namespace Axiom {
 
 		if (StartOneShotInstance(audioHandle, volume)) {
 			s_soundsPlayedThisFrame++;
+			s_activeSoundCount++;
 			ThrottleSound(audioHandle);
 		}
 	}
@@ -717,7 +718,7 @@ namespace Axiom {
 			return false;
 		}
 
-		ma_sound_set_volume(&instance->Sound, volume * s_masterVolume);
+		ma_sound_set_volume(&instance->Sound, volume);
 		const ma_result result = ma_sound_start(&instance->Sound);
 		if (result != MA_SUCCESS) {
 			AIM_CORE_WARN("[{}] Failed to start one-shot sound. Error: {}", ErrorCodeToString(AxiomErrorCode::LoadFailed), static_cast<int>(result));
