@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 
@@ -14,8 +15,11 @@
 namespace Axiom {
 
 	namespace {
-		// Vector + index map: O(1) lookup, registration-order iteration. Modules are never removed.
-		std::vector<ProfilerModule> g_Modules;
+		// unique_ptr storage so the addresses returned by Register/Find stay
+		// stable across subsequent push_back calls — vector<ProfilerModule>
+		// would invalidate raw pointers on grow, which the AXIOM_PROFILE_*
+		// caching path can hold on to.
+		std::vector<std::unique_ptr<ProfilerModule>> g_Modules;
 		std::unordered_map<std::string, size_t> g_Index;
 
 		// Brief per-call lock; held to allow future worker-thread pushes without a rewrite.
@@ -147,9 +151,9 @@ namespace Axiom {
 			"GPU"
 		};
 		for (const char* name : names) {
-			ProfilerModule m;
-			m.Name = name;
-			m.Samples.assign(g_TrackingSpan, 0.0f);
+			auto m = std::make_unique<ProfilerModule>();
+			m->Name = name;
+			m->Samples.assign(g_TrackingSpan, 0.0f);
 			g_Index[name] = g_Modules.size();
 			g_Modules.push_back(std::move(m));
 		}
@@ -166,40 +170,58 @@ namespace Axiom {
 	ProfilerModule* Profiler::Register(const std::string& name) {
 		std::scoped_lock lock(g_Mutex);
 		auto it = g_Index.find(name);
-		if (it != g_Index.end()) return &g_Modules[it->second];
+		if (it != g_Index.end()) return g_Modules[it->second].get();
 
-		ProfilerModule m;
-		m.Name = name;
-		m.Samples.assign(g_TrackingSpan, 0.0f);
+		auto m = std::make_unique<ProfilerModule>();
+		m->Name = name;
+		m->Samples.assign(g_TrackingSpan, 0.0f);
+		ProfilerModule* raw = m.get();
 		g_Index[name] = g_Modules.size();
 		g_Modules.push_back(std::move(m));
-		return &g_Modules.back();
+		return raw;
 	}
 
 	ProfilerModule* Profiler::Find(const std::string& name) {
 		std::scoped_lock lock(g_Mutex);
 		auto it = g_Index.find(name);
 		if (it == g_Index.end()) return nullptr;
-		return &g_Modules[it->second];
+		return g_Modules[it->second].get();
 	}
 
 	std::vector<ProfilerModule> Profiler::AllModules() {
 		std::scoped_lock lock(g_Mutex);
-		return g_Modules;
+		std::vector<ProfilerModule> snapshot;
+		snapshot.reserve(g_Modules.size());
+		for (const auto& mod : g_Modules) {
+			snapshot.push_back(*mod);
+		}
+		return snapshot;
+	}
+
+	void Profiler::AllModules(std::vector<ProfilerModule>& outBuffer) {
+		// Buffer-fill overload — lets the editor reuse storage across frames
+		// instead of allocating a fresh vector + per-module sample buffers
+		// on every panel render.
+		std::scoped_lock lock(g_Mutex);
+		outBuffer.clear();
+		outBuffer.reserve(g_Modules.size());
+		for (const auto& mod : g_Modules) {
+			outBuffer.push_back(*mod);
+		}
 	}
 
 	float Profiler::GetCurrentValue(const std::string& name) {
 		std::scoped_lock lock(g_Mutex);
 		auto it = g_Index.find(name);
 		if (it == g_Index.end()) return 0.0f;
-		return g_Modules[it->second].CurrentValue;
+		return g_Modules[it->second]->CurrentValue;
 	}
 
 	void Profiler::PushValue(const std::string& name, float value) {
 		std::scoped_lock lock(g_Mutex);
 		auto it = g_Index.find(name);
 		if (it == g_Index.end()) return;
-		ProfilerModule& m = g_Modules[it->second];
+		ProfilerModule& m = *g_Modules[it->second];
 		if (!m.Enabled) return;
 		if (!ShouldAcceptModuleSample(m)) return;
 		RecordSample(m, value);
@@ -218,7 +240,7 @@ namespace Axiom {
 
 		std::scoped_lock lock(g_Mutex);
 		if (auto it = g_Index.find("Frame Time"); it != g_Index.end()) {
-			ProfilerModule& m = g_Modules[it->second];
+			ProfilerModule& m = *g_Modules[it->second];
 			if (m.Enabled && ShouldAcceptModuleSample(m)) RecordSample(m, frameMs);
 		}
 	}
@@ -253,8 +275,8 @@ namespace Axiom {
 		g_TrackingSpan = std::max(1, span);
 		// Eager resize keeps the panel from showing a partial buffer at the wrong scale.
 		for (auto& m : g_Modules) {
-			ClearRingBuffer(m);
-			m.Samples.assign(g_TrackingSpan, 0.0f);
+			ClearRingBuffer(*m);
+			m->Samples.assign(g_TrackingSpan, 0.0f);
 		}
 	}
 
@@ -272,7 +294,7 @@ namespace Axiom {
 		std::scoped_lock lock(g_Mutex);
 		auto it = g_Index.find(name);
 		if (it == g_Index.end()) return;
-		ProfilerModule& m = g_Modules[it->second];
+		ProfilerModule& m = *g_Modules[it->second];
 		if (m.Enabled == enabled) return;
 		m.Enabled = enabled;
 		if (!enabled) {

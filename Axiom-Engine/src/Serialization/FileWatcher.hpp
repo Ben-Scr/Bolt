@@ -40,7 +40,24 @@ namespace Axiom {
 			bool Recursive = true;
 		};
 
-		using Snapshot = std::unordered_map<std::string, std::filesystem::file_time_type>;
+		// Per-file metadata used for change detection. We record (mtime, size) instead of just
+		// mtime so the save-via-rename pattern (write to temp + rename over original) — which
+		// can produce identical mtimes when timer resolution is coarser than the operation —
+		// still trips a snapshot diff once the size differs.
+		struct FileFingerprint {
+			std::filesystem::file_time_type WriteTime{};
+			std::uintmax_t Size{ 0 };
+
+			bool operator==(const FileFingerprint& other) const {
+				return WriteTime == other.WriteTime && Size == other.Size;
+			}
+
+			bool operator!=(const FileFingerprint& other) const {
+				return !(*this == other);
+			}
+		};
+
+		using Snapshot = std::unordered_map<std::string, FileFingerprint>;
 
 		void WorkerMain();
 		bool WaitForNativeChanges();

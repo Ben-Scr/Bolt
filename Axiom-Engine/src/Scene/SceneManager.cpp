@@ -15,6 +15,7 @@
 #include "Scripting/ScriptEngine.hpp"
 #include "Systems/AudioUpdateSystem.hpp"
 #include "Systems/ParticleUpdateSystem.hpp"
+#include "Systems/TransformHierarchySystem.hpp"
 #include "Systems/UIEventSystem.hpp"
 #include "Core/Application.hpp"
 #include "Core/ApplicationConfig.hpp"
@@ -39,6 +40,11 @@ namespace Axiom {
 
 		void AddStandardSceneSystems(SceneDefinition& definition) {
 			const ApplicationConfig config = GetActiveAppConfig();
+
+			// First so every other system in the frame (scripts, particles,
+			// UI, rendering) sees up-to-date world transforms composed from
+			// each entity's Local* offsets and its parent's world transform.
+			definition.AddSystem<TransformHierarchySystem>();
 
 			// ParticleUpdateSystem only does useful work when there's a renderer
 			// to issue draws — skip it for headless / non-rendering apps.

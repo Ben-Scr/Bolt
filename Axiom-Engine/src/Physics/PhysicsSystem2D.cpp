@@ -10,6 +10,7 @@
 #include "Physics/Box2DWorld.hpp"
 #include "Physics/Collision2D.hpp"
 
+#include "Core/Application.hpp"
 #include "Profiling/Profiler.hpp"
 #include "Scene/SceneManager.hpp"
 #include "Scene/Scene.hpp"
@@ -64,6 +65,13 @@ namespace Axiom {
 
 	void PhysicsSystem2D::Update() {
 		if (!s_IsEnabled) return;
+		// FixedUpdate already runs the same per-scene sync during play mode, so
+		// repeating it from Update doubles the dirty-flag walk every frame for
+		// no gain. Editor mode still needs Update to drive the sync because
+		// FixedUpdate is gated off.
+		if (Application::GetIsPlaying() && !Application::IsPaused()) {
+			return;
+		}
 		SyncTransformsToPhysics();
 	}
 

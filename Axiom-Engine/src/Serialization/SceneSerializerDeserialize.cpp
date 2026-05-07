@@ -1,4 +1,4 @@
-#include "pch.hpp"
+﻿#include "pch.hpp"
 #include "Assets/AssetRegistry.hpp"
 #include "Serialization/SceneSerializer.hpp"
 #include "Serialization/SceneSerializerShared.hpp"
@@ -14,8 +14,9 @@
 #include "Components/Physics/Rigidbody2DComponent.hpp"
 #include "Components/Physics/BoxCollider2DComponent.hpp"
 #include "Components/Audio/AudioSourceComponent.hpp"
-#include "Components/General/RectTransformComponent.hpp"
+#include "Components/General/RectTransform2DComponent.hpp"
 #include "Components/General/HierarchyComponent.hpp"
+#include "Components/General/PrefabInstanceComponent.hpp"
 #include "Components/Graphics/ImageComponent.hpp"
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 #include "Components/General/UUIDComponent.hpp"
@@ -29,6 +30,7 @@
 #include "Graphics/TextureManager.hpp"
 #include "Audio/AudioManager.hpp"
 #include "Physics/PhysicsTypes.hpp"
+#include "Core/Application.hpp"
 #include "Core/Log.hpp"
 #include "Scene/SceneManager.hpp"
 #include "Scene/ComponentRegistry.hpp"
@@ -38,7 +40,10 @@
 #include <cctype>
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Axiom {
@@ -176,351 +181,11 @@ namespace Axiom {
 			return fieldsByClass;
 		}
 
-		Value SerializeEntity(Scene& scene, EntityHandle entity) {
-			auto& registry = scene.GetRegistry();
-			Value entityValue = Value::MakeObject();
-
-			std::string name = "Entity";
-			if (registry.all_of<NameComponent>(entity)) {
-				name = registry.get<NameComponent>(entity).Name;
-			}
-			entityValue.AddMember("name", Value(name));
-
-			if (registry.all_of<UUIDComponent>(entity)) {
-				entityValue.AddMember(
-					"uuid",
-					Value(std::to_string(static_cast<uint64_t>(registry.get<UUIDComponent>(entity).Id))));
-			}
-
-			if (registry.all_of<Transform2DComponent>(entity)) {
-				const auto& transform = registry.get<Transform2DComponent>(entity);
-				Value transformValue = Value::MakeObject();
-				transformValue.AddMember("posX", Value(transform.Position.x));
-				transformValue.AddMember("posY", Value(transform.Position.y));
-				transformValue.AddMember("rotation", Value(transform.Rotation));
-				transformValue.AddMember("scaleX", Value(transform.Scale.x));
-				transformValue.AddMember("scaleY", Value(transform.Scale.y));
-				entityValue.AddMember("Transform2D", std::move(transformValue));
-			}
-
-			if (registry.all_of<SpriteRendererComponent>(entity)) {
-				auto& spriteRenderer = registry.get<SpriteRendererComponent>(entity);
-				Value spriteValue = Value::MakeObject();
-				spriteValue.AddMember("r", Value(spriteRenderer.Color.r));
-				spriteValue.AddMember("g", Value(spriteRenderer.Color.g));
-				spriteValue.AddMember("b", Value(spriteRenderer.Color.b));
-				spriteValue.AddMember("a", Value(spriteRenderer.Color.a));
-				spriteValue.AddMember("sortOrder", Value(static_cast<int>(spriteRenderer.SortingOrder)));
-				spriteValue.AddMember("sortLayer", Value(static_cast<int>(spriteRenderer.SortingLayer)));
-
-				uint64_t textureAssetId = static_cast<uint64_t>(spriteRenderer.TextureAssetId);
-				if (textureAssetId == 0) {
-					textureAssetId = TextureManager::GetTextureAssetUUID(spriteRenderer.TextureHandle);
-					if (textureAssetId != 0) {
-						spriteRenderer.TextureAssetId = UUID(textureAssetId);
-					}
-				}
-
-				const std::string textureName = TextureManager::GetTextureName(spriteRenderer.TextureHandle);
-				if (!textureName.empty()) {
-					spriteValue.AddMember("texture", Value(textureName));
-					Texture2D* texture = TextureManager::GetTexture(spriteRenderer.TextureHandle);
-					if (texture) {
-						spriteValue.AddMember("filter", Value(static_cast<int>(texture->GetFilter())));
-						spriteValue.AddMember("wrapU", Value(static_cast<int>(texture->GetWrapU())));
-						spriteValue.AddMember("wrapV", Value(static_cast<int>(texture->GetWrapV())));
-					}
-				}
-				if (textureAssetId != 0) {
-					spriteValue.AddMember("textureAsset", Value(std::to_string(textureAssetId)));
-				}
-
-				entityValue.AddMember("SpriteRenderer", std::move(spriteValue));
-			}
-
-			if (registry.all_of<TextRendererComponent>(entity)) {
-				const auto& text = registry.get<TextRendererComponent>(entity);
-				Value textValue = Value::MakeObject();
-				textValue.AddMember("text", Value(text.Text));
-				textValue.AddMember("fontAsset", Value(std::to_string(static_cast<uint64_t>(text.FontAssetId))));
-				textValue.AddMember("fontSize", Value(text.FontSize));
-				textValue.AddMember("r", Value(text.Color.r));
-				textValue.AddMember("g", Value(text.Color.g));
-				textValue.AddMember("b", Value(text.Color.b));
-				textValue.AddMember("a", Value(text.Color.a));
-				textValue.AddMember("alignment", Value(static_cast<int>(text.HAlign)));
-				textValue.AddMember("letterSpacing", Value(text.LetterSpacing));
-				textValue.AddMember("sortOrder", Value(static_cast<int>(text.SortingOrder)));
-				textValue.AddMember("sortLayer", Value(static_cast<int>(text.SortingLayer)));
-				entityValue.AddMember("TextRenderer", std::move(textValue));
-			}
-
-			if (registry.all_of<Rigidbody2DComponent>(entity)) {
-				auto& rigidbody = registry.get<Rigidbody2DComponent>(entity);
-				Value rigidbodyValue = Value::MakeObject();
-				rigidbodyValue.AddMember("bodyType", Value(static_cast<int>(rigidbody.GetBodyType())));
-				rigidbodyValue.AddMember("gravityScale", Value(rigidbody.GetGravityScale()));
-				rigidbodyValue.AddMember("mass", Value(rigidbody.GetMass()));
-				entityValue.AddMember("Rigidbody2D", std::move(rigidbodyValue));
-			}
-
-			if (registry.all_of<BoxCollider2DComponent>(entity)) {
-				auto& collider = registry.get<BoxCollider2DComponent>(entity);
-				const Vec2 scale = collider.GetScale();
-				const Vec2 center = collider.GetCenter();
-				Value colliderValue = Value::MakeObject();
-				colliderValue.AddMember("scaleX", Value(scale.x));
-				colliderValue.AddMember("scaleY", Value(scale.y));
-				colliderValue.AddMember("centerX", Value(center.x));
-				colliderValue.AddMember("centerY", Value(center.y));
-				colliderValue.AddMember("friction", Value(collider.GetFriction()));
-				colliderValue.AddMember("bounciness", Value(collider.GetBounciness()));
-				colliderValue.AddMember("layer", Value(collider.GetLayer()));
-				colliderValue.AddMember("registerContacts", Value(collider.CanRegisterContacts()));
-				colliderValue.AddMember("sensor", Value(collider.IsSensor()));
-				entityValue.AddMember("BoxCollider2D", std::move(colliderValue));
-			}
-
-			if (registry.all_of<AudioSourceComponent>(entity)) {
-				auto& audioSource = registry.get<AudioSourceComponent>(entity);
-				Value audioValue = Value::MakeObject();
-				audioValue.AddMember("volume", Value(audioSource.GetVolume()));
-				audioValue.AddMember("pitch", Value(audioSource.GetPitch()));
-				audioValue.AddMember("loop", Value(audioSource.IsLooping()));
-				audioValue.AddMember("playOnAwake", Value(audioSource.GetPlayOnAwake()));
-
-				uint64_t audioAssetId = static_cast<uint64_t>(audioSource.GetAudioAssetId());
-				if (audioAssetId == 0) {
-					audioAssetId = AudioManager::GetAudioAssetUUID(audioSource.GetAudioHandle());
-					if (audioAssetId != 0) {
-						audioSource.SetAudioAssetId(UUID(audioAssetId));
-					}
-				}
-
-				const std::string audioPath = AudioManager::GetAudioName(audioSource.GetAudioHandle());
-				if (!audioPath.empty()) {
-					audioValue.AddMember("clip", Value(audioPath));
-				}
-				if (audioAssetId != 0) {
-					audioValue.AddMember("clipAsset", Value(std::to_string(audioAssetId)));
-				}
-
-				entityValue.AddMember("AudioSource", std::move(audioValue));
-			}
-
-			if (registry.all_of<StaticTag>(entity)) {
-				entityValue.AddMember("static", Value(true));
-			}
-			if (registry.all_of<DisabledTag>(entity)) {
-				entityValue.AddMember("disabled", Value(true));
-			}
-			if (registry.all_of<DeadlyTag>(entity)) {
-				entityValue.AddMember("deadly", Value(true));
-			}
-
-			if (registry.all_of<Camera2DComponent>(entity)) {
-				auto& camera = registry.get<Camera2DComponent>(entity);
-				const Color clearColor = camera.GetClearColor();
-				Value cameraValue = Value::MakeObject();
-				cameraValue.AddMember("orthoSize", Value(camera.GetOrthographicSize()));
-				cameraValue.AddMember("zoom", Value(camera.GetZoom()));
-				cameraValue.AddMember("clearR", Value(clearColor.r));
-				cameraValue.AddMember("clearG", Value(clearColor.g));
-				cameraValue.AddMember("clearB", Value(clearColor.b));
-				cameraValue.AddMember("clearA", Value(clearColor.a));
-				entityValue.AddMember("Camera2D", std::move(cameraValue));
-			}
-
-			if (registry.all_of<FastBody2DComponent>(entity)) {
-				const auto& axiomBody = registry.get<FastBody2DComponent>(entity);
-				Value bodyValue = Value::MakeObject();
-				bodyValue.AddMember("type", Value(static_cast<int>(axiomBody.Type)));
-				bodyValue.AddMember("mass", Value(axiomBody.Mass));
-				bodyValue.AddMember("useGravity", Value(axiomBody.UseGravity));
-				bodyValue.AddMember("boundaryCheck", Value(axiomBody.BoundaryCheck));
-				entityValue.AddMember("FastBody2D", std::move(bodyValue));
-			}
-
-			if (registry.all_of<FastBoxCollider2DComponent>(entity)) {
-				const auto& collider = registry.get<FastBoxCollider2DComponent>(entity);
-				Value colliderValue = Value::MakeObject();
-				colliderValue.AddMember("halfX", Value(collider.HalfExtents.x));
-				colliderValue.AddMember("halfY", Value(collider.HalfExtents.y));
-				entityValue.AddMember("FastBoxCollider2D", std::move(colliderValue));
-			}
-
-			if (registry.all_of<FastCircleCollider2DComponent>(entity)) {
-				const auto& collider = registry.get<FastCircleCollider2DComponent>(entity);
-				Value colliderValue = Value::MakeObject();
-				colliderValue.AddMember("radius", Value(collider.Radius));
-				entityValue.AddMember("FastCircleCollider2D", std::move(colliderValue));
-			}
-
-			if (registry.all_of<ParticleSystem2DComponent>(entity)) {
-				auto& particleSystem = registry.get<ParticleSystem2DComponent>(entity);
-				Value particleValue = Value::MakeObject();
-				const int shapeType =
-					std::holds_alternative<ParticleSystem2DComponent::CircleParams>(particleSystem.Shape) ? 0 : 1;
-
-				particleValue.AddMember("playOnAwake", Value(particleSystem.PlayOnAwake));
-				particleValue.AddMember("lifetime", Value(particleSystem.ParticleSettings.LifeTime));
-				particleValue.AddMember("speed", Value(particleSystem.ParticleSettings.Speed));
-				particleValue.AddMember("scale", Value(particleSystem.ParticleSettings.Scale));
-				particleValue.AddMember("gravityX", Value(particleSystem.ParticleSettings.Gravity.x));
-				particleValue.AddMember("gravityY", Value(particleSystem.ParticleSettings.Gravity.y));
-				particleValue.AddMember("useGravity", Value(particleSystem.ParticleSettings.UseGravity));
-				particleValue.AddMember("useRandomColors", Value(particleSystem.ParticleSettings.UseRandomColors));
-				particleValue.AddMember("moveDirectionX", Value(particleSystem.ParticleSettings.MoveDirection.x));
-				particleValue.AddMember("moveDirectionY", Value(particleSystem.ParticleSettings.MoveDirection.y));
-				particleValue.AddMember("emitOverTime", Value(static_cast<int>(particleSystem.EmissionSettings.EmitOverTime)));
-				particleValue.AddMember(
-					"rateOverDistance",
-					Value(static_cast<int>(particleSystem.EmissionSettings.RateOverDistance)));
-				particleValue.AddMember(
-					"emissionSpace",
-					Value(static_cast<int>(particleSystem.EmissionSettings.EmissionSpace)));
-				particleValue.AddMember("shapeType", Value(shapeType));
-
-				if (shapeType == 0) {
-					const auto& circle = std::get<ParticleSystem2DComponent::CircleParams>(particleSystem.Shape);
-					particleValue.AddMember("radius", Value(circle.Radius));
-					particleValue.AddMember("isOnCircle", Value(circle.IsOnCircle));
-				}
-				else {
-					const auto& square = std::get<ParticleSystem2DComponent::SquareParams>(particleSystem.Shape);
-					particleValue.AddMember("halfExtendsX", Value(square.HalfExtends.x));
-					particleValue.AddMember("halfExtendsY", Value(square.HalfExtends.y));
-				}
-
-				particleValue.AddMember("maxParticles", Value(static_cast<int64_t>(particleSystem.RenderingSettings.MaxParticles)));
-				particleValue.AddMember("colorR", Value(particleSystem.RenderingSettings.Color.r));
-				particleValue.AddMember("colorG", Value(particleSystem.RenderingSettings.Color.g));
-				particleValue.AddMember("colorB", Value(particleSystem.RenderingSettings.Color.b));
-				particleValue.AddMember("colorA", Value(particleSystem.RenderingSettings.Color.a));
-				particleValue.AddMember("sortOrder", Value(static_cast<int>(particleSystem.RenderingSettings.SortingOrder)));
-				particleValue.AddMember("sortLayer", Value(static_cast<int>(particleSystem.RenderingSettings.SortingLayer)));
-
-				uint64_t textureAssetId = static_cast<uint64_t>(particleSystem.GetTextureAssetId());
-				if (textureAssetId == 0) {
-					textureAssetId = TextureManager::GetTextureAssetUUID(particleSystem.GetTextureHandle());
-					if (textureAssetId != 0) {
-						particleSystem.SetTexture(particleSystem.GetTextureHandle(), UUID(textureAssetId));
-					}
-				}
-
-				const std::string textureName = TextureManager::GetTextureName(particleSystem.GetTextureHandle());
-				if (!textureName.empty()) {
-					particleValue.AddMember("texture", Value(textureName));
-				}
-				if (textureAssetId != 0) {
-					particleValue.AddMember("textureAsset", Value(std::to_string(textureAssetId)));
-				}
-
-				entityValue.AddMember("ParticleSystem2D", std::move(particleValue));
-			}
-
-			if (registry.all_of<RectTransformComponent>(entity)) {
-				const auto& rectTransform = registry.get<RectTransformComponent>(entity);
-				Value rectValue = Value::MakeObject();
-				rectValue.AddMember("anchorMinX", Value(rectTransform.AnchorMin.x));
-				rectValue.AddMember("anchorMinY", Value(rectTransform.AnchorMin.y));
-				rectValue.AddMember("anchorMaxX", Value(rectTransform.AnchorMax.x));
-				rectValue.AddMember("anchorMaxY", Value(rectTransform.AnchorMax.y));
-				rectValue.AddMember("pivotX", Value(rectTransform.Pivot.x));
-				rectValue.AddMember("pivotY", Value(rectTransform.Pivot.y));
-				rectValue.AddMember("posX", Value(rectTransform.AnchoredPosition.x));
-				rectValue.AddMember("posY", Value(rectTransform.AnchoredPosition.y));
-				rectValue.AddMember("sizeX", Value(rectTransform.SizeDelta.x));
-				rectValue.AddMember("sizeY", Value(rectTransform.SizeDelta.y));
-				rectValue.AddMember("rotation", Value(rectTransform.Rotation));
-				rectValue.AddMember("scaleX", Value(rectTransform.Scale.x));
-				rectValue.AddMember("scaleY", Value(rectTransform.Scale.y));
-				entityValue.AddMember("RectTransform", std::move(rectValue));
-			}
-
-			if (registry.all_of<ImageComponent>(entity)) {
-				auto& image = registry.get<ImageComponent>(entity);
-				Value imageValue = Value::MakeObject();
-				imageValue.AddMember("r", Value(image.Color.r));
-				imageValue.AddMember("g", Value(image.Color.g));
-				imageValue.AddMember("b", Value(image.Color.b));
-				imageValue.AddMember("a", Value(image.Color.a));
-
-				uint64_t textureAssetId = static_cast<uint64_t>(image.TextureAssetId);
-				if (textureAssetId == 0) {
-					textureAssetId = TextureManager::GetTextureAssetUUID(image.TextureHandle);
-					if (textureAssetId != 0) {
-						image.TextureAssetId = UUID(textureAssetId);
-					}
-				}
-
-				const std::string textureName = TextureManager::GetTextureName(image.TextureHandle);
-				if (!textureName.empty()) {
-					imageValue.AddMember("texture", Value(textureName));
-				}
-				if (textureAssetId != 0) {
-					imageValue.AddMember("textureAsset", Value(std::to_string(textureAssetId)));
-				}
-
-				entityValue.AddMember("Image", std::move(imageValue));
-			}
-
-			if (registry.all_of<ScriptComponent>(entity)) {
-				const auto& scriptComponent = registry.get<ScriptComponent>(entity);
-				if (!scriptComponent.Scripts.empty()) {
-					Value scriptsValue = Value::MakeArray();
-					for (const ScriptInstance& instance : scriptComponent.Scripts) {
-						Value scriptValue = Value::MakeObject();
-						scriptValue.AddMember("className", Value(instance.GetClassName()));
-						scriptValue.AddMember("type", Value(ScriptTypeToString(instance.GetType())));
-						scriptsValue.Append(std::move(scriptValue));
-					}
-					entityValue.AddMember("Scripts", std::move(scriptsValue));
-				}
-				if (!scriptComponent.ManagedComponents.empty()) {
-					Value componentsValue = Value::MakeArray();
-					for (const std::string& className : scriptComponent.ManagedComponents) {
-						componentsValue.Append(Value(className));
-					}
-					entityValue.AddMember("ManagedComponents", std::move(componentsValue));
-				}
-
-				if (!scriptComponent.Scripts.empty() || !scriptComponent.ManagedComponents.empty()) {
-					Value scriptFields = SerializeScriptFields(scriptComponent);
-					if (!scriptFields.GetObject().empty()) {
-						entityValue.AddMember("ScriptFields", std::move(scriptFields));
-					}
-				}
-			}
-
-			// Registry-driven serialize; skips names already in entityValue to avoid double-write.
-			{
-				Entity entityWrapper = scene.GetEntity(entity);
-				SceneManager* sceneManager = &SceneManager::Get();
-				if (sceneManager) {
-					sceneManager->GetComponentRegistry().ForEachComponentInfo(
-						[&](const std::type_index&, const ComponentInfo& info) {
-							if (!info.serialize || !info.has || info.serializedName.empty()) return;
-							if (!info.has(entityWrapper)) return;
-							if (entityValue.FindMember(info.serializedName.c_str())) return;
-							try {
-								Value v = info.serialize(entityWrapper);
-								entityValue.AddMember(info.serializedName, std::move(v));
-							} catch (const std::exception& e) {
-								AIM_CORE_ERROR_TAG("SceneSerializer",
-									"Package component '{}' serialize threw: {}",
-									info.serializedName, e.what());
-							} catch (...) {
-								AIM_CORE_ERROR_TAG("SceneSerializer",
-									"Package component '{}' serialize threw an unknown exception",
-									info.serializedName);
-							}
-						});
-				}
-			}
-
-			return entityValue;
-		}
+		// NOTE: A divergent copy of SerializeEntity used to live here; it omitted
+		// parentUuid (and emitted legacy keys the canonical writer dropped),
+		// causing prefab override-diff to flag spurious deletions on every save.
+		// All callers in this TU now use Detail::SerializeEntity (defined in
+		// SceneSerializer.cpp) so the diff sees the same JSON shape the writer wrote.
 
 		EntityOrigin EntityOriginFromString(const std::string& value) {
 			if (value == "Scene" || value == "scene") {
@@ -554,8 +219,25 @@ namespace Axiom {
 			RemoveObjectMember(value, "uuid");
 		}
 
+		void RemovePrefabRuntimeIdentityMembers(Value& value) {
+			RemoveObjectMember(value, "Origin");
+			RemoveObjectMember(value, "RuntimeID");
+			RemoveObjectMember(value, "EntityID");
+			RemoveObjectMember(value, "SceneGUID");
+			RemoveObjectMember(value, "PrefabGUID");
+		}
+
+		void RemoveEntityComparisonIdentityMembers(Value& value) {
+			RemoveEntityIdentityMembers(value);
+			RemoveObjectMember(value, "parentUuid");
+		}
+
 		bool JsonEquivalent(const Value& left, const Value& right) {
-			return Json::Stringify(left, false) == Json::Stringify(right, false);
+			// Structural equality via Json::operator==, matching the canonical impl in
+			// SceneSerializer.cpp. Per-leaf Stringify+compare was a real hot-path cost
+			// (called O(N) per ComputeInstanceOverrides, which the inspector calls per
+			// frame on every prefab instance).
+			return left == right;
 		}
 
 		// Recursive diff; duplicated from SceneSerializer.cpp to keep ApplyOverrides internals private.
@@ -694,7 +376,250 @@ namespace Axiom {
 
 		void ApplyOverrides(Value& prefabEntityValue, const Value& instanceValue);
 
+		struct PrefabDefinition {
+			std::vector<Value> Entities;
+		};
+
+		uint64_t GetPrefabSourceId(const Value& entityValue) {
+			return GetUInt64Member(entityValue, "uuid", 0);
+		}
+
+		bool ReadPrefabDefinitionFromRoot(const Value& root, PrefabDefinition& outDefinition) {
+			outDefinition.Entities.clear();
+			if (!root.IsObject()) {
+				return false;
+			}
+
+			if (const Value* entities = GetArrayMember(root, "Entities")) {
+				for (const Value& entityValue : entities->GetArray()) {
+					if (entityValue.IsObject()) {
+						outDefinition.Entities.push_back(entityValue);
+					}
+				}
+				if (!outDefinition.Entities.empty()) {
+					return true;
+				}
+			}
+
+			if (const Value* entityValue = GetObjectMember(root, "Entity")) {
+				outDefinition.Entities.push_back(*entityValue);
+				return true;
+			}
+			if (const Value* entityValue = GetObjectMember(root, "prefab")) {
+				outDefinition.Entities.push_back(*entityValue);
+				return true;
+			}
+
+			if (root.FindMember("Transform2D") || root.FindMember("Scripts") || root.FindMember("Name")) {
+				outDefinition.Entities.push_back(root);
+				return true;
+			}
+
+			return false;
+		}
+
+		bool LoadPrefabDefinition(uint64_t prefabGuid, PrefabDefinition& outDefinition);
+
+		void ApplyEntityOverrides(PrefabDefinition& definition, const Value& instanceValue) {
+			if (definition.Entities.empty()) {
+				return;
+			}
+
+			// Backwards-compatible root override payload.
+			ApplyOverrides(definition.Entities.front(), instanceValue);
+
+			const Value* entityOverrides = GetObjectMember(instanceValue, "EntityOverrides");
+			if (!entityOverrides) {
+				return;
+			}
+
+			std::unordered_map<uint64_t, Value*> entitiesBySourceId;
+			entitiesBySourceId.reserve(definition.Entities.size());
+			for (Value& entityValue : definition.Entities) {
+				const uint64_t sourceId = GetPrefabSourceId(entityValue);
+				if (sourceId != 0) {
+					entitiesBySourceId[sourceId] = &entityValue;
+				}
+			}
+
+			for (const auto& [sourceIdText, overrides] : entityOverrides->GetObject()) {
+				uint64_t sourceId = 0;
+				try {
+					sourceId = static_cast<uint64_t>(std::stoull(sourceIdText));
+				}
+				catch (...) {
+					continue;
+				}
+
+				auto targetIt = entitiesBySourceId.find(sourceId);
+				if (targetIt == entitiesBySourceId.end() || !overrides.IsObject()) {
+					continue;
+				}
+
+				Value wrapper = Value::MakeObject();
+				wrapper.AddMember("Overrides", overrides);
+				ApplyOverrides(*targetIt->second, wrapper);
+			}
+		}
+
+		std::unordered_map<uint64_t, const Value*> BuildSourceEntityMap(const PrefabDefinition& definition) {
+			std::unordered_map<uint64_t, const Value*> bySourceId;
+			bySourceId.reserve(definition.Entities.size());
+			for (const Value& entityValue : definition.Entities) {
+				const uint64_t sourceId = GetPrefabSourceId(entityValue);
+				if (sourceId != 0) {
+					bySourceId[sourceId] = &entityValue;
+				}
+			}
+			return bySourceId;
+		}
+
+		uint64_t GetPrefabInstanceSourceId(Scene& scene, EntityHandle entity) {
+			auto& registry = scene.GetRegistry();
+			if (registry.all_of<PrefabInstanceComponent>(entity)) {
+				const auto& instance = registry.get<PrefabInstanceComponent>(entity);
+				if (instance.SourceEntityId != 0) {
+					return instance.SourceEntityId;
+				}
+			}
+			if (registry.all_of<UUIDComponent>(entity)) {
+				return static_cast<uint64_t>(registry.get<UUIDComponent>(entity).Id);
+			}
+			return 0;
+		}
+
+		std::vector<EntityHandle> CollectPrefabInstanceSubtree(Scene& scene, EntityHandle root, uint64_t prefabGuid) {
+			std::vector<EntityHandle> entities;
+			auto& registry = scene.GetRegistry();
+			std::unordered_set<uint32_t> visited;
+
+			std::function<void(EntityHandle)> visit = [&](EntityHandle entity) {
+				if (entity == entt::null || !registry.valid(entity)) {
+					return;
+				}
+
+				const uint32_t key = static_cast<uint32_t>(entity);
+				if (!visited.insert(key).second) {
+					return;
+				}
+
+				if (entity != root
+					&& (scene.GetEntityOrigin(entity) != EntityOrigin::Prefab
+						|| static_cast<uint64_t>(scene.GetPrefabGUID(entity)) != prefabGuid)) {
+					return;
+				}
+
+				entities.push_back(entity);
+				if (!registry.all_of<HierarchyComponent>(entity)) {
+					return;
+				}
+
+				const auto children = registry.get<HierarchyComponent>(entity).Children;
+				for (EntityHandle child : children) {
+					visit(child);
+				}
+			};
+
+			visit(root);
+			return entities;
+		}
+
+		Value SerializePrefabComparableEntity(
+			Scene& scene,
+			EntityHandle entity,
+			const std::unordered_map<uint32_t, uint64_t>& sourceIds) {
+			Value entityValue = Detail::SerializeEntity(scene, entity);
+			RemovePrefabRuntimeIdentityMembers(entityValue);
+
+			const auto sourceIt = sourceIds.find(static_cast<uint32_t>(entity));
+			const uint64_t sourceId = sourceIt != sourceIds.end() ? sourceIt->second : 0;
+			if (sourceId != 0) {
+				entityValue.AddMember("uuid", Value(std::to_string(sourceId)));
+			}
+
+			auto& registry = scene.GetRegistry();
+			EntityHandle parent = entt::null;
+			if (registry.all_of<HierarchyComponent>(entity)) {
+				parent = registry.get<HierarchyComponent>(entity).Parent;
+			}
+
+			const auto parentIt = sourceIds.find(static_cast<uint32_t>(parent));
+			if (parentIt != sourceIds.end() && parentIt->second != 0) {
+				entityValue.AddMember("parentUuid", Value(std::to_string(parentIt->second)));
+			}
+			else {
+				RemoveObjectMember(entityValue, "parentUuid");
+			}
+
+			return entityValue;
+		}
+
+		void BuildPrefabInstanceOverrideSet(
+			Scene& scene,
+			EntityHandle root,
+			const PrefabDefinition& sourceDefinition,
+			Value& outRootOverrides,
+			Value& outEntityOverrides) {
+			outRootOverrides = Value::MakeObject();
+			outEntityOverrides = Value::MakeObject();
+			if (sourceDefinition.Entities.empty()) {
+				return;
+			}
+
+			const uint64_t prefabGuid = static_cast<uint64_t>(scene.GetPrefabGUID(root));
+			const std::vector<EntityHandle> instanceEntities = CollectPrefabInstanceSubtree(scene, root, prefabGuid);
+			if (instanceEntities.empty()) {
+				return;
+			}
+
+			std::unordered_map<uint32_t, uint64_t> sourceIds;
+			sourceIds.reserve(instanceEntities.size());
+			for (EntityHandle entity : instanceEntities) {
+				sourceIds[static_cast<uint32_t>(entity)] = GetPrefabInstanceSourceId(scene, entity);
+			}
+
+			Value currentRoot = SerializePrefabComparableEntity(scene, root, sourceIds);
+			Value sourceRoot = sourceDefinition.Entities.front();
+			RemoveEntityComparisonIdentityMembers(currentRoot);
+			RemoveEntityComparisonIdentityMembers(sourceRoot);
+			BuildOverridePatch(sourceRoot, currentRoot, {}, outRootOverrides);
+
+			const auto sourceById = BuildSourceEntityMap(sourceDefinition);
+			for (EntityHandle entity : instanceEntities) {
+				const uint64_t sourceId = sourceIds[static_cast<uint32_t>(entity)];
+				if (sourceId == 0) {
+					continue;
+				}
+
+				const auto sourceIt = sourceById.find(sourceId);
+				if (sourceIt == sourceById.end() || !sourceIt->second) {
+					continue;
+				}
+
+				Value currentValue = SerializePrefabComparableEntity(scene, entity, sourceIds);
+				Value sourceValue = *sourceIt->second;
+				RemoveEntityComparisonIdentityMembers(currentValue);
+				RemoveEntityComparisonIdentityMembers(sourceValue);
+
+				Value entityOverrides = Value::MakeObject();
+				BuildOverridePatch(sourceValue, currentValue, {}, entityOverrides);
+				if (!entityOverrides.GetObject().empty()) {
+					outEntityOverrides.AddMember(std::to_string(sourceId), std::move(entityOverrides));
+				}
+			}
+		}
+
 		bool LoadPrefabEntityValue(uint64_t prefabGuid, Value& outEntityValue) {
+			PrefabDefinition definition;
+			if (!LoadPrefabDefinition(prefabGuid, definition) || definition.Entities.empty()) {
+				return false;
+			}
+
+			outEntityValue = definition.Entities.front();
+			return true;
+		}
+
+		bool LoadPrefabDefinition(uint64_t prefabGuid, PrefabDefinition& outDefinition) {
 			const std::string prefabPath = AssetRegistry::ResolvePath(prefabGuid);
 			if (prefabPath.empty() || !File::Exists(prefabPath)) {
 				return false;
@@ -707,12 +632,7 @@ namespace Axiom {
 				return false;
 			}
 
-			if (const Value* entityValue = GetObjectMember(root, "Entity")) {
-				outEntityValue = *entityValue;
-				return true;
-			}
-			if (const Value* entityValue = GetObjectMember(root, "prefab")) {
-				outEntityValue = *entityValue;
+			if (ReadPrefabDefinitionFromRoot(root, outDefinition)) {
 				return true;
 			}
 
@@ -731,8 +651,8 @@ namespace Axiom {
 					basePrefabGuid = prefabRefValue->AsUInt64Or(0);
 				}
 
-				if (basePrefabGuid != 0 && LoadPrefabEntityValue(basePrefabGuid, outEntityValue)) {
-					ApplyOverrides(outEntityValue, root);
+				if (basePrefabGuid != 0 && LoadPrefabDefinition(basePrefabGuid, outDefinition)) {
+					ApplyEntityOverrides(outDefinition, root);
 					return true;
 				}
 			}
@@ -826,7 +746,7 @@ namespace Axiom {
 
 		const std::string sourcePath(source);
 		const std::string serializedName = GetStringMember(root, "name");
-		// Prefer the serialized name when present — file-stem fallback is only for
+		// Prefer the serialized name when present â€” file-stem fallback is only for
 		// legacy scenes that never wrote a "name" field. Previously the file stem
 		// always won, making the serialized "name" a write-only field.
 		if (!serializedName.empty()) {
@@ -872,7 +792,7 @@ namespace Axiom {
 						const uint64_t parentUuid = std::stoull(parentUuidStr);
 						if (parentUuid != 0) pendingParents.emplace_back(handle, parentUuid);
 					} catch (...) {
-						// Malformed UUID — ignore; entity becomes a root.
+						// Malformed UUID â€” ignore; entity becomes a root.
 					}
 				}
 			}
@@ -945,7 +865,9 @@ namespace Axiom {
 		if (savedSceneGuid == 0) {
 			savedSceneGuid = GetUInt64Member(entityValue, "uuid", 0);
 		}
-		const uint64_t savedRuntimeId = GetUInt64Member(entityValue, "RuntimeID", 0);
+		const uint64_t savedRuntimeId = origin == EntityOrigin::Prefab
+			? 0
+			: GetUInt64Member(entityValue, "RuntimeID", 0);
 		scene.SetEntityMetaData(
 			entity,
 			origin,
@@ -953,13 +875,29 @@ namespace Axiom {
 			AssetGUID(savedSceneGuid),
 			savedRuntimeId);
 
+		if (origin == EntityOrigin::Prefab && scene.HasComponent<PrefabInstanceComponent>(entity)) {
+			scene.GetComponent<PrefabInstanceComponent>(entity).SourceEntityId = savedSceneGuid;
+		}
+
 		if (const Value* transformValue = GetObjectMember(entityValue, "Transform2D")) {
 			auto& transform = scene.GetComponent<Transform2DComponent>(entity);
-			transform.Position.x = GetFloatMember(*transformValue, "posX", 0.0f);
-			transform.Position.y = GetFloatMember(*transformValue, "posY", 0.0f);
-			transform.Rotation = GetFloatMember(*transformValue, "rotation", 0.0f);
-			transform.Scale.x = GetFloatMember(*transformValue, "scaleX", 1.0f);
-			transform.Scale.y = GetFloatMember(*transformValue, "scaleY", 1.0f);
+			// Local* are the authored fields; "posX/posY/rotation/scaleX
+			// /scaleY" is the legacy on-disk schema. Old scenes only have the
+			// legacy keys, so we treat them as Local for unparented entities
+			// (the case before hierarchy existed) â€” TransformHierarchySystem
+			// composes the World snapshot from there on the next pass.
+			transform.LocalPosition.x = GetFloatMember(*transformValue, "posX", 0.0f);
+			transform.LocalPosition.y = GetFloatMember(*transformValue, "posY", 0.0f);
+			transform.LocalRotation = GetFloatMember(*transformValue, "rotation", 0.0f);
+			transform.LocalScale.x = GetFloatMember(*transformValue, "scaleX", 1.0f);
+			transform.LocalScale.y = GetFloatMember(*transformValue, "scaleY", 1.0f);
+			// Seed Position/Scale/Rotation with the same values so anything
+			// that reads them before TransformHierarchySystem runs (e.g. the
+			// physics body construct hooks fired during deserialization)
+			// observes the authored placement, not the default identity.
+			transform.Position = transform.LocalPosition;
+			transform.Scale = transform.LocalScale;
+			transform.Rotation = transform.LocalRotation;
 		}
 
 		if (GetBoolMember(entityValue, "static", false)) {
@@ -1167,8 +1105,8 @@ namespace Axiom {
 			}
 		}
 
-		if (const Value* rectValue = GetObjectMember(entityValue, "RectTransform")) {
-			auto& rectTransform = scene.AddComponent<RectTransformComponent>(entity);
+		if (const Value* rectValue = GetObjectMember(entityValue, "RectTransform2D")) {
+			auto& rectTransform = scene.AddComponent<RectTransform2DComponent>(entity);
 			rectTransform.AnchorMin.x        = GetFloatMember(*rectValue, "anchorMinX", 0.5f);
 			rectTransform.AnchorMin.y        = GetFloatMember(*rectValue, "anchorMinY", 0.5f);
 			rectTransform.AnchorMax.x        = GetFloatMember(*rectValue, "anchorMaxX", 0.5f);
@@ -1297,39 +1235,109 @@ namespace Axiom {
 		}
 
 		// Registry-driven deserialize for package components.
-		{
+		if (Application* app = Application::GetInstance(); app && app->GetSceneManager()) {
 			Entity entityWrapper = scene.GetEntity(entity);
-			SceneManager* sceneManager = &SceneManager::Get();
-			if (sceneManager) {
-				sceneManager->GetComponentRegistry().ForEachComponentInfo(
-					[&](const std::type_index&, const ComponentInfo& info) {
-						if (!info.deserialize || !info.has || !info.add || info.serializedName.empty()) return;
-						const Value* compValue = entityValue.FindMember(info.serializedName.c_str());
-						if (!compValue) return;
-						try {
-							if (!info.has(entityWrapper)) {
-								info.add(entityWrapper);
-							}
-							info.deserialize(entityWrapper, *compValue);
-						} catch (const std::exception& e) {
-							AIM_CORE_ERROR_TAG("SceneSerializer",
-								"Package component '{}' deserialize threw: {}",
-								info.serializedName, e.what());
-						} catch (...) {
-							AIM_CORE_ERROR_TAG("SceneSerializer",
-								"Package component '{}' deserialize threw an unknown exception",
-								info.serializedName);
+			app->GetSceneManager()->GetComponentRegistry().ForEachComponentInfo(
+				[&](const std::type_index&, const ComponentInfo& info) {
+					if (!info.deserialize || !info.has || !info.add || info.serializedName.empty()) return;
+					const Value* compValue = entityValue.FindMember(info.serializedName.c_str());
+					if (!compValue) return;
+					try {
+						if (!info.has(entityWrapper)) {
+							info.add(entityWrapper);
 						}
-					});
-			}
+						info.deserialize(entityWrapper, *compValue);
+					} catch (const std::exception& e) {
+						AIM_CORE_ERROR_TAG("SceneSerializer",
+							"Package component '{}' deserialize threw: {}",
+							info.serializedName, e.what());
+					} catch (...) {
+						AIM_CORE_ERROR_TAG("SceneSerializer",
+							"Package component '{}' deserialize threw an unknown exception",
+							info.serializedName);
+					}
+				});
 		}
 
 		return entity;
 	}
 
+	EntityHandle SceneSerializer::DeserializeEntityTree(
+		Scene& scene,
+		const std::vector<Json::Value>& entityValues,
+		EntityOrigin origin,
+		uint64_t prefabGuid,
+		bool preserveSerializedIdentity) {
+		if (entityValues.empty()) {
+			return entt::null;
+		}
+
+		std::vector<std::pair<EntityHandle, uint64_t>> pendingParents;
+		std::unordered_map<uint64_t, EntityHandle> entitiesBySourceId;
+		pendingParents.reserve(entityValues.size());
+		entitiesBySourceId.reserve(entityValues.size());
+
+		EntityHandle root = entt::null;
+		for (const Value& sourceEntityValue : entityValues) {
+			if (!sourceEntityValue.IsObject()) {
+				continue;
+			}
+
+			const uint64_t sourceId = GetPrefabSourceId(sourceEntityValue);
+			const uint64_t parentId = GetUInt64Member(sourceEntityValue, "parentUuid", 0);
+
+			Value entityValue = sourceEntityValue;
+			if (preserveSerializedIdentity) {
+				RemovePrefabRuntimeIdentityMembers(entityValue);
+			}
+			else {
+				RemoveEntityIdentityMembers(entityValue);
+			}
+
+			EntityHandle handle = DeserializeFullEntity(scene, entityValue, origin, prefabGuid);
+			if (handle == entt::null) {
+				continue;
+			}
+
+			if (root == entt::null) {
+				root = handle;
+			}
+
+			if (sourceId != 0) {
+				entitiesBySourceId[sourceId] = handle;
+			}
+
+			if (parentId != 0) {
+				pendingParents.emplace_back(handle, parentId);
+			}
+		}
+
+		for (const auto& [childHandle, parentId] : pendingParents) {
+			auto parentIt = entitiesBySourceId.find(parentId);
+			if (parentIt == entitiesBySourceId.end()) {
+				continue;
+			}
+			if (!scene.IsValid(childHandle) || !scene.IsValid(parentIt->second)) {
+				continue;
+			}
+
+			scene.GetEntity(childHandle).SetParent(scene.GetEntity(parentIt->second));
+		}
+
+		return root;
+	}
+
 	EntityHandle SceneSerializer::DeserializeEntityFromValue(Scene& scene, const Json::Value& entityValue) {
 		if (!entityValue.IsObject()) {
 			return entt::null;
+		}
+
+		PrefabDefinition definition;
+		if (ReadPrefabDefinitionFromRoot(entityValue, definition)
+			&& (entityValue.FindMember("Entity") || entityValue.FindMember("prefab") || entityValue.FindMember("Entities"))) {
+			const bool isClipboardEntity = GetBoolMember(entityValue, "ClipboardEntity", false)
+				|| GetBoolMember(entityValue, "Clipboard", false);
+			return DeserializeEntityTree(scene, definition.Entities, EntityOrigin::Scene, 0, !isClipboardEntity);
 		}
 
 		Value entityCopy = entityValue;
@@ -1348,11 +1356,17 @@ namespace Axiom {
 			auto& transform = scene.HasComponent<Transform2DComponent>(entity)
 				? scene.GetComponent<Transform2DComponent>(entity)
 				: scene.AddComponent<Transform2DComponent>(entity);
-			transform.Position.x = GetFloatMember(componentValue, "posX", 0.0f);
-			transform.Position.y = GetFloatMember(componentValue, "posY", 0.0f);
-			transform.Rotation = GetFloatMember(componentValue, "rotation", 0.0f);
-			transform.Scale.x = GetFloatMember(componentValue, "scaleX", 1.0f);
-			transform.Scale.y = GetFloatMember(componentValue, "scaleY", 1.0f);
+			// Same dual-write as the full-entity deserialize: load into Local*
+			// (authored values) and seed World cache so anything reading
+			// transform before TransformHierarchySystem ticks gets a sane value.
+			transform.LocalPosition.x = GetFloatMember(componentValue, "posX", 0.0f);
+			transform.LocalPosition.y = GetFloatMember(componentValue, "posY", 0.0f);
+			transform.LocalRotation = GetFloatMember(componentValue, "rotation", 0.0f);
+			transform.LocalScale.x = GetFloatMember(componentValue, "scaleX", 1.0f);
+			transform.LocalScale.y = GetFloatMember(componentValue, "scaleY", 1.0f);
+			transform.Position = transform.LocalPosition;
+			transform.Scale = transform.LocalScale;
+			transform.Rotation = transform.LocalRotation;
 			transform.MarkDirty();
 			return true;
 		}
@@ -1578,10 +1592,10 @@ namespace Axiom {
 			return true;
 		}
 
-		if (component == "RectTransform") {
-			auto& rectTransform = scene.HasComponent<RectTransformComponent>(entity)
-				? scene.GetComponent<RectTransformComponent>(entity)
-				: scene.AddComponent<RectTransformComponent>(entity);
+		if (component == "RectTransform2D") {
+			auto& rectTransform = scene.HasComponent<RectTransform2DComponent>(entity)
+				? scene.GetComponent<RectTransform2DComponent>(entity)
+				: scene.AddComponent<RectTransform2DComponent>(entity);
 			rectTransform.AnchorMin.x        = GetFloatMember(componentValue, "anchorMinX", 0.5f);
 			rectTransform.AnchorMin.y        = GetFloatMember(componentValue, "anchorMinY", 0.5f);
 			rectTransform.AnchorMax.x        = GetFloatMember(componentValue, "anchorMaxX", 0.5f);
@@ -1621,34 +1635,31 @@ namespace Axiom {
 		}
 
 		// Unknown built-in: try registry for a package component with matching serializedName.
-		{
+		if (Application* app = Application::GetInstance(); app && app->GetSceneManager()) {
 			Entity entityWrapper = scene.GetEntity(entity);
-			SceneManager* sceneManager = &SceneManager::Get();
-			if (sceneManager) {
-				bool handled = false;
-				sceneManager->GetComponentRegistry().ForEachComponentInfo(
-					[&](const std::type_index&, const ComponentInfo& info) {
-						if (handled) return;
-						if (!info.deserialize || !info.has || !info.add) return;
-						if (info.serializedName != componentName) return;
-						try {
-							if (!info.has(entityWrapper)) {
-								info.add(entityWrapper);
-							}
-							info.deserialize(entityWrapper, componentValue);
-							handled = true;
-						} catch (const std::exception& e) {
-							AIM_CORE_ERROR_TAG("SceneSerializer",
-								"Package component '{}' deserialize (single) threw: {}",
-								info.serializedName, e.what());
-						} catch (...) {
-							AIM_CORE_ERROR_TAG("SceneSerializer",
-								"Package component '{}' deserialize (single) threw an unknown exception",
-								info.serializedName);
+			bool handled = false;
+			app->GetSceneManager()->GetComponentRegistry().ForEachComponentInfo(
+				[&](const std::type_index&, const ComponentInfo& info) {
+					if (handled) return;
+					if (!info.deserialize || !info.has || !info.add) return;
+					if (info.serializedName != componentName) return;
+					try {
+						if (!info.has(entityWrapper)) {
+							info.add(entityWrapper);
 						}
-					});
-				if (handled) return true;
-			}
+						info.deserialize(entityWrapper, componentValue);
+						handled = true;
+					} catch (const std::exception& e) {
+						AIM_CORE_ERROR_TAG("SceneSerializer",
+							"Package component '{}' deserialize (single) threw: {}",
+							info.serializedName, e.what());
+					} catch (...) {
+						AIM_CORE_ERROR_TAG("SceneSerializer",
+							"Package component '{}' deserialize (single) threw an unknown exception",
+							info.serializedName);
+					}
+				});
+			if (handled) return true;
 		}
 
 		return false;
@@ -1666,14 +1677,19 @@ namespace Axiom {
 			return entt::null;
 		}
 
-		Value prefabEntityValue;
-		if (!LoadPrefabEntityValue(prefabGuid, prefabEntityValue)) {
+		PrefabDefinition definition;
+		if (!LoadPrefabDefinition(prefabGuid, definition)) {
 			AIM_CORE_WARN_TAG("SceneSerializer", "Could not load prefab {}", prefabGuid);
 			return entt::null;
 		}
 
-		ApplyOverrides(prefabEntityValue, entityValue);
-		return DeserializeFullEntity(scene, prefabEntityValue, EntityOrigin::Prefab, prefabGuid);
+		ApplyEntityOverrides(definition, entityValue);
+		const EntityHandle root = DeserializeEntityTree(scene, definition.Entities, EntityOrigin::Prefab, prefabGuid);
+		const uint64_t instanceUuid = GetUInt64Member(entityValue, "uuid", 0);
+		if (root != entt::null && instanceUuid != 0 && scene.HasComponent<UUIDComponent>(root)) {
+			scene.GetComponent<UUIDComponent>(root).Id = UUID(instanceUuid);
+		}
+		return root;
 	}
 
 	EntityHandle SceneSerializer::InstantiatePrefab(Scene& scene, uint64_t prefabGuid) {
@@ -1681,13 +1697,12 @@ namespace Axiom {
 			return entt::null;
 		}
 
-		Value prefabEntityValue;
-		if (!LoadPrefabEntityValue(prefabGuid, prefabEntityValue)) {
+		PrefabDefinition definition;
+		if (!LoadPrefabDefinition(prefabGuid, definition)) {
 			return entt::null;
 		}
 
-		RemoveEntityIdentityMembers(prefabEntityValue);
-		return DeserializeFullEntity(scene, prefabEntityValue, EntityOrigin::Prefab, prefabGuid);
+		return DeserializeEntityTree(scene, definition.Entities, EntityOrigin::Prefab, prefabGuid);
 	}
 
 	bool SceneSerializer::ApplyPrefabInstanceOverrides(Scene& scene, EntityHandle entity) {
@@ -1701,18 +1716,10 @@ namespace Axiom {
 			return false;
 		}
 
-		Value prefabEntity = SerializeEntityFull(scene, entity);
-		RemoveEntityIdentityMembers(prefabEntity);
-
-		Value root = Value::MakeObject();
-		root.AddMember("version", Value(SCENE_FORMAT_VERSION));
-		root.AddMember("type", Value("Prefab"));
-		root.AddMember("AssetGUID", Value(std::to_string(prefabGuid)));
-		root.AddMember("Entity", prefabEntity);
-		root.AddMember("prefab", prefabEntity);
-
 		try {
-			File::WriteAllText(prefabPath, Json::Stringify(root, true));
+			if (!SaveEntityToFile(scene, entity, prefabPath)) {
+				return false;
+			}
 			AssetRegistry::MarkDirty();
 			AssetRegistry::Sync();
 			scene.MarkDirty();
@@ -1772,31 +1779,32 @@ namespace Axiom {
 		if (prefabGuid == 0) return entt::null;
 
 		// Orphaned prefab: leave instance untouched rather than corrupting it.
-		Value newSourceValue;
-		if (!LoadPrefabEntityValue(prefabGuid, newSourceValue)) {
+		PrefabDefinition newSource;
+		if (!LoadPrefabDefinition(prefabGuid, newSource)) {
 			return existing;
 		}
-		RemoveEntityIdentityMembers(newSourceValue);
 
 		// Diff against OLD source to capture per-field overrides the user kept across the edit.
-		Value oldSource = previousSourceEntityValue;
-		RemoveEntityIdentityMembers(oldSource);
+		PrefabDefinition oldSource;
+		if (!ReadPrefabDefinitionFromRoot(previousSourceEntityValue, oldSource)) {
+			oldSource.Entities.push_back(previousSourceEntityValue);
+		}
 
-		Value currentInstance = SerializeEntity(scene, existing);
-		RemoveEntityIdentityMembers(currentInstance);
+		Value overrides;
+		Value entityOverrides;
+		BuildPrefabInstanceOverrideSet(scene, existing, oldSource, overrides, entityOverrides);
 
-		Value overrides = Value::MakeObject();
-		BuildOverridePatch(oldSource, currentInstance, {}, overrides);
-
-		// Wrapper shape matches ApplyOverrides — object with "Overrides" member keyed by dot-path.
-		Value finalValue = newSourceValue;
+		// Wrapper shape matches ApplyOverrides â€” object with "Overrides" member keyed by dot-path.
 		Value overridesWrapper = Value::MakeObject();
 		overridesWrapper.AddMember("Overrides", std::move(overrides));
-		ApplyOverrides(finalValue, overridesWrapper);
+		if (!entityOverrides.GetObject().empty()) {
+			overridesWrapper.AddMember("EntityOverrides", std::move(entityOverrides));
+		}
+		ApplyEntityOverrides(newSource, overridesWrapper);
 
-		// DeserializeFullEntity preserves Origin and PrefabGUID via the explicit args.
+		// DeserializeEntityTree preserves Origin and PrefabGUID via the explicit args.
 		scene.DestroyEntity(existing);
-		return DeserializeFullEntity(scene, finalValue, EntityOrigin::Prefab, prefabGuid);
+		return DeserializeEntityTree(scene, newSource.Entities, EntityOrigin::Prefab, prefabGuid);
 	}
 
 	bool SceneSerializer::ComputeInstanceOverrides(Scene& scene, EntityHandle entity, Json::Value& outOverrides) {
@@ -1807,14 +1815,30 @@ namespace Axiom {
 		const uint64_t prefabGuid = static_cast<uint64_t>(scene.GetPrefabGUID(entity));
 		if (prefabGuid == 0) return false;
 
-		Value sourceValue;
-		if (!LoadPrefabEntityValue(prefabGuid, sourceValue)) return false;
-		RemoveEntityIdentityMembers(sourceValue);
+		PrefabDefinition sourceDefinition;
+		if (!LoadPrefabDefinition(prefabGuid, sourceDefinition) || sourceDefinition.Entities.empty()) return false;
 
-		Value currentInstance = SerializeEntity(scene, entity);
-		RemoveEntityIdentityMembers(currentInstance);
+		const uint64_t sourceId = GetPrefabInstanceSourceId(scene, entity);
+		const Value* sourceValue = nullptr;
+		if (sourceId != 0) {
+			const auto sourceById = BuildSourceEntityMap(sourceDefinition);
+			const auto sourceIt = sourceById.find(sourceId);
+			if (sourceIt != sourceById.end()) {
+				sourceValue = sourceIt->second;
+			}
+		}
+		if (!sourceValue) {
+			sourceValue = &sourceDefinition.Entities.front();
+		}
 
-		BuildOverridePatch(sourceValue, currentInstance, {}, outOverrides);
+		std::unordered_map<uint32_t, uint64_t> sourceIds;
+		sourceIds[static_cast<uint32_t>(entity)] = sourceId;
+		Value currentInstance = SerializePrefabComparableEntity(scene, entity, sourceIds);
+		Value sourceComparable = *sourceValue;
+		RemoveEntityComparisonIdentityMembers(sourceComparable);
+		RemoveEntityComparisonIdentityMembers(currentInstance);
+
+		BuildOverridePatch(sourceComparable, currentInstance, {}, outOverrides);
 		return true;
 	}
 
@@ -1846,16 +1870,13 @@ namespace Axiom {
 				return entt::null;
 			}
 
-			const Value* prefabValue = GetObjectMember(root, "Entity");
-			if (!prefabValue) {
-				prefabValue = GetObjectMember(root, "prefab");
-			}
-			if (!prefabValue) {
+			PrefabDefinition definition;
+			if (!ReadPrefabDefinitionFromRoot(root, definition)) {
 				AIM_CORE_WARN_TAG("SceneSerializer", "No prefab block in file: {}", path);
 				return entt::null;
 			}
 
-			return DeserializeFullEntity(scene, *prefabValue, EntityOrigin::Prefab, prefabGuid);
+			return DeserializeEntityTree(scene, definition.Entities, EntityOrigin::Prefab, prefabGuid);
 		}
 		catch (const std::exception& exception) {
 			AIM_CORE_ERROR_TAG("SceneSerializer", "LoadEntityFromFile failed: {}", exception.what());

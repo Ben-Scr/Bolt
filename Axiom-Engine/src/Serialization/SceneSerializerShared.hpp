@@ -41,6 +41,12 @@ namespace Axiom::Detail {
 		const Json::Value& instanceValue,
 		const std::string& prefix,
 		Json::Value& overrides);
+
+	// Strip identity / origin / asset-GUID fields from a serialized entity. Used by
+	// SceneSerializer (clipboard/prefab save) and SceneSerializerDeserialize (prefab
+	// override diff) to compare structurally. Previously duplicated across both TUs.
+	void RemoveObjectMember(Json::Value& value, std::string_view key);
+	void RemoveEntityIdentityMembers(Json::Value& value);
 }
 
 namespace Axiom::SceneSerializerShared {

@@ -312,6 +312,11 @@ internal static class ScriptInstanceManager
         if (s_UserLoadContext == null)
             return;
 
+        // Drop cached managed Component instances *before* unloading: each entry in
+        // Entity.s_ManagedComponentStore references a user-defined type, which roots
+        // the AssemblyLoadContext and would prevent it from unloading on hot reload.
+        Entity.ClearManagedComponentStore();
+
         var weakContext = new WeakReference(s_UserLoadContext, trackResurrection: false);
         s_UserLoadContext.Unload();
         s_UserLoadContext = null;

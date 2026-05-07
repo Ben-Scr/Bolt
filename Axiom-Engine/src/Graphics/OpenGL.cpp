@@ -31,12 +31,14 @@ namespace Axiom {
 	}
 
 	void OpenGL::CullFace(GLCullingMode cullingMode) {
-		if (cullingMode == GLCullingMode::GLNone) {
+		// Scoped enum: explicit cast to GLenum is required since the underlying
+		// integer is no longer implicitly convertible.
+		if (cullingMode == GLCullingMode::None) {
 			glDisable(GL_CULL_FACE);
 		}
 		else {
 			glEnable(GL_CULL_FACE);
-			glCullFace(cullingMode);
+			glCullFace(static_cast<GLenum>(cullingMode));
 		}
 	}
 

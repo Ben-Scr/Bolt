@@ -73,6 +73,18 @@ internal unsafe struct NativeBindingsStruct
     public delegate* unmanaged<ulong, float, void> Transform2D_SetRotation;
     public delegate* unmanaged<ulong, float*, float*, void> Transform2D_GetScale;
     public delegate* unmanaged<ulong, float, float, void> Transform2D_SetScale;
+    public delegate* unmanaged<ulong, ulong> Transform2D_GetEntity;
+    public delegate* unmanaged<ulong, float*, float*, void> Transform2D_GetLocalPosition;
+    public delegate* unmanaged<ulong, float, float, void> Transform2D_SetLocalPosition;
+    public delegate* unmanaged<ulong, float> Transform2D_GetLocalRotation;
+    public delegate* unmanaged<ulong, float, void> Transform2D_SetLocalRotation;
+    public delegate* unmanaged<ulong, float*, float*, void> Transform2D_GetLocalScale;
+    public delegate* unmanaged<ulong, float, float, void> Transform2D_SetLocalScale;
+    public delegate* unmanaged<ulong, ulong> Transform2D_GetParent;
+    public delegate* unmanaged<ulong, ulong, int> Transform2D_SetParent;
+    public delegate* unmanaged<ulong, int> Transform2D_GetChildCount;
+    public delegate* unmanaged<ulong, int, ulong> Transform2D_GetChildAt;
+    public delegate* unmanaged<ulong, ulong*, int, int> Transform2D_GetChildren;
 
     // ── SpriteRenderer ───────────────────────────────────────────
     public delegate* unmanaged<ulong, float*, float*, float*, float*, void> SpriteRenderer_GetColor;

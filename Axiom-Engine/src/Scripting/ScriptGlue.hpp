@@ -72,6 +72,18 @@ namespace Axiom {
 		void  (*Transform2D_SetRotation)(uint64_t entityID, float rotation);
 		void  (*Transform2D_GetScale)(uint64_t entityID, float* outX, float* outY);
 		void  (*Transform2D_SetScale)(uint64_t entityID, float x, float y);
+		uint64_t (*Transform2D_GetEntity)(uint64_t entityID);
+		void  (*Transform2D_GetLocalPosition)(uint64_t entityID, float* outX, float* outY);
+		void  (*Transform2D_SetLocalPosition)(uint64_t entityID, float x, float y);
+		float (*Transform2D_GetLocalRotation)(uint64_t entityID);
+		void  (*Transform2D_SetLocalRotation)(uint64_t entityID, float rotation);
+		void  (*Transform2D_GetLocalScale)(uint64_t entityID, float* outX, float* outY);
+		void  (*Transform2D_SetLocalScale)(uint64_t entityID, float x, float y);
+		uint64_t (*Transform2D_GetParent)(uint64_t entityID);
+		int   (*Transform2D_SetParent)(uint64_t entityID, uint64_t parentEntityID);
+		int   (*Transform2D_GetChildCount)(uint64_t entityID);
+		uint64_t (*Transform2D_GetChildAt)(uint64_t entityID, int index);
+		int   (*Transform2D_GetChildren)(uint64_t entityID, uint64_t* outIDs, int maxOut);
 
 		// ── SpriteRenderer ───────────────────────────────────────────
 		void (*SpriteRenderer_GetColor)(uint64_t entityID, float* r, float* g, float* b, float* a);

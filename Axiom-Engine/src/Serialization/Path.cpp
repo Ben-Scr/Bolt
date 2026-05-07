@@ -34,6 +34,12 @@ namespace Axiom {
         AIM_ASSERT(!FAILED(hr), AxiomErrorCode::Undefined, "Failed to get folder path");
 
         const int size = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+        // size==0 means WideCharToMultiByte failed; without a guard, std::string(size-1,...)
+        // becomes std::string(SIZE_MAX, 0) and crashes the process.
+        if (size <= 0) {
+            CoTaskMemFree(path);
+            return {};
+        }
         std::string result(size - 1, 0);
         WideCharToMultiByte(CP_UTF8, 0, path, -1, &result[0], size, nullptr, nullptr);
 

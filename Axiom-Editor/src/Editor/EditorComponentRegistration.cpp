@@ -33,9 +33,7 @@ namespace Axiom {
 		// component. The component itself (display name, category, serializedName,
 		// has/add/remove/copyTo) MUST be registered by the engine in
 		// BuiltInComponentRegistration.cpp first; this file only paints in the UI
-		// behavior on top. ScriptComponent is the one exception: it is registered
-		// here because its inspector is the only thing the editor needs from it
-		// and the engine never instantiates a ComponentInfo for it.
+		// behavior on top.
 		void AttachInspector(SceneManager& sceneManager, std::type_index type, InspectorFn inspector) {
 			bool attached = false;
 			sceneManager.GetComponentRegistry().ForEachComponentInfo([&](const std::type_index& id, ComponentInfo& info) {
@@ -64,15 +62,6 @@ namespace Axiom {
 	}
 
 	void RegisterEditorComponentInspectors(SceneManager& sceneManager) {
-		// ScriptComponent is editor-only as far as registration goes: register it
-		// here (it isn't part of BuiltInComponentRegistration) before attaching
-		// its inspector below.
-		{
-			ComponentInfo scriptInfo{ "Scripts", "Scripting", ComponentCategory::Component };
-			scriptInfo.serializedName = "Scripts";
-			sceneManager.RegisterComponentType<ScriptComponent>(scriptInfo);
-		}
-
 		// Inspector-only attachments. The component metadata itself lives in
 		// Axiom-Engine/src/Scene/BuiltInComponentRegistration.cpp — do not
 		// re-declare display names, categories, or serialized names here.
@@ -95,6 +84,11 @@ namespace Axiom {
 
 			// Custom-only: variant types + per-shape branches don't map cleanly.
 			Bind<ParticleSystem2DComponent>(DrawParticleSystem2DInspector),
+
+			// Custom-only: Unity-style RectTransform layout — column-header
+			// rows for Position / Size and inline axis-labeled rows for the
+			// rest don't fit the declarative property model.
+			Bind<RectTransform2DComponent>(DrawRectTransform2DInspector),
 
 			// Custom-only: per-script field rendering goes through its own
 			// PropertyDrawer-driven path (see ScriptComponentInspector.cpp).

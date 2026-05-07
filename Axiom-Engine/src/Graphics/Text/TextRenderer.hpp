@@ -72,6 +72,22 @@ namespace Axiom {
             size_t VertexCount = 0;
         };
 
+        // Per-text scratch entry. Kept as a member type so the working buffer
+        // can be reused across frames (see m_Pending) instead of reallocating
+        // every RenderScene call.
+        struct PendingText {
+            Font* FontPtr = nullptr;
+            const std::string* Text = nullptr;
+            float WorldX = 0.0f;
+            float WorldY = 0.0f;
+            float Scale = 1.0f;
+            float LetterSpacing = 0.0f;
+            Color Tint{};
+            TextAlignment Align = TextAlignment::Left;
+            int16_t SortingOrder = 0;
+            uint8_t SortingLayer = 0;
+        };
+
         void EnsureGpuCapacity(size_t requiredBytes);
         void EmitText(Font& font, const std::string& text,
             float worldX, float worldY,
@@ -87,6 +103,7 @@ namespace Axiom {
         // Reused across frames so we don't allocate in the hot path.
         std::vector<TextVertex> m_Vertices;
         std::vector<GlyphRun> m_Runs;
+        std::vector<PendingText> m_Pending;
 
         std::unique_ptr<Shader> m_Shader;
         int m_uMVP = -1;

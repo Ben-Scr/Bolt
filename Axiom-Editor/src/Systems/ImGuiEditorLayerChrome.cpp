@@ -116,7 +116,20 @@ namespace Axiom {
 					auto exePath = std::filesystem::path(outputDir) / (project->Name + ".exe");
 					if (std::filesystem::exists(exePath)) {
 						std::string cmd = "\"" + std::filesystem::canonical(exePath).string() + "\"";
-						std::wstring wcmd(cmd.begin(), cmd.end());
+						// Proper UTF-8 → wide conversion. The previous byte-wise iterator
+						// construction corrupted any path containing non-ASCII bytes
+						// (Unicode user folders, accented project names), causing
+						// CreateProcessW to fail silently on those systems.
+						std::wstring wcmd;
+						{
+							const int needed = MultiByteToWideChar(CP_UTF8, 0,
+								cmd.c_str(), static_cast<int>(cmd.size()), nullptr, 0);
+							if (needed > 0) {
+								wcmd.resize(static_cast<size_t>(needed));
+								MultiByteToWideChar(CP_UTF8, 0, cmd.c_str(),
+									static_cast<int>(cmd.size()), wcmd.data(), needed);
+							}
+						}
 						std::vector<wchar_t> buf(wcmd.begin(), wcmd.end());
 						buf.push_back(L'\0');
 						STARTUPINFOW si{}; si.cb = sizeof(si);
@@ -201,8 +214,21 @@ namespace Axiom {
 			}
 		}
 
+		// Intercept Asset Browser prefab double-click → enter prefab-edit
+		// mode. Blocked during Play Mode (same as scene load) — editing
+		// a prefab while a game is running would corrupt running scripts'
+		// view of selection.
+		if (!Application::GetIsPlaying()) {
+			std::string pendingPrefabEdit = m_AssetBrowser.TakePendingPrefabEdit();
+			if (!pendingPrefabEdit.empty()) {
+				OpenPrefabForEditing(pendingPrefabEdit);
+			}
+		}
+
 		// Ctrl+S: routes to prefab inspector if open, else saves active scene. Blocked in playmode.
-		if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && !Application::GetIsPlaying()) {
+		// Pass `repeat=false` so holding the key down doesn't re-fire Save every frame
+		// (which would hammer disk + scene serialization at the OS key-repeat rate).
+		if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !Application::GetIsPlaying()) {
 			if (m_PrefabInspector.IsOpen() && m_PrefabInspector.HasUnsavedChanges()) {
 				m_PrefabInspector.Save();
 			}
@@ -365,8 +391,13 @@ namespace Axiom {
 
 		RenderToolbar();
 		RenderEntitiesPanel();
-		RenderInspectorPanel(scene);
-		RenderEditorView(scene);
+		// Inspector + editor view follow the prefab-edit override when
+		// active so component edits and viewport rendering both target
+		// the detached prefab scene. Game View intentionally stays on
+		// the real active scene so the user can still preview play.
+		Scene* contextScene = GetContextScene();
+		RenderInspectorPanel(contextScene ? *contextScene : scene);
+		RenderEditorView(contextScene ? *contextScene : scene);
 		RenderGameView(scene);
 		RenderProjectPanel();
 		RenderLogPanel();

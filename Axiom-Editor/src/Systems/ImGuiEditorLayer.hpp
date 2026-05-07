@@ -23,6 +23,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <chrono>
 
@@ -105,16 +106,50 @@ namespace Axiom {
 		void UnpackSelectedPrefabs(Scene& scene);
 		void CopySelectedEntities(Scene& scene);
 		void PasteEntities(Scene& scene);
+		EntityHandle RenderCreateEntityMenu(Scene& scene, Entity parent);
+		bool SetEntityParentPreservingWorld(Scene& scene, EntityHandle child, Entity parent);
+		// Reorders `dragged` so it becomes the immediate previous (insertAfter=false)
+		// or next (insertAfter=true) sibling of `target`. Reparents across
+		// branches when needed. Mutates HierarchyComponent::Children for
+		// non-root targets and m_EntityOrder for root-level targets so the
+		// hierarchy panel reflects the new order. Returns true on a real
+		// reorder (caller should mark scene dirty).
+		bool MoveSiblingNextTo(Scene& scene, EntityHandle dragged, EntityHandle target, bool insertAfter);
+
+		// ── Prefab edit mode ──────────────────────────────────────────
+		// Loads `path` into a detached scene and switches the editor's
+		// hierarchy panel + viewport to that scene. The main scene stays
+		// loaded but is hidden until ClosePrefabEditing runs. Returns
+		// false when the file can't be read or parsed; the editor stays
+		// in scene-edit mode in that case.
+		bool OpenPrefabForEditing(const std::string& path);
+		// `save=true` writes the detached scene back to its source path
+		// before tearing the prefab scene down. Either way, returns the
+		// editor to scene-edit mode and clears the prefab selection.
+		void ClosePrefabEditing(bool save);
+		// True while a detached prefab scene is the editor's focus. The
+		// hierarchy / viewport / inspector all consult this to decide
+		// whether to operate on the detached scene or the active scene.
+		bool IsInPrefabEditMode() const { return m_PrefabEditScene != nullptr; }
+		// Returns the scene the editor is currently driving — the prefab
+		// edit scene when in prefab mode, otherwise the active scene.
+		Scene* GetContextScene() const;
+
 		bool HasEntityShortcutFocus() const;
 		void DrawEditorComponentGizmos(Scene& scene);
 		const Texture2D* GetPreviewTexture(const std::filesystem::path& path);
 		void TrimPreviewTextureCache();
 		void ClearPreviewTextureCache();
 
+		// `onlyPassedScene` skips the SceneManager loop and renders only
+		// the explicit `scene` argument. Used by prefab-edit mode so the
+		// detached prefab scene doesn't get its visuals composited with
+		// the still-loaded "real" scene underneath.
 		void RenderSceneIntoFBO(ViewportFBO& fbo, Scene& scene,
 			const glm::mat4& vp, const AABB& viewportAABB,
 			bool withGizmos, bool sharedGizmosOnly = false,
-			const Color& clearColor = Color::Background());
+			const Color& clearColor = Color::Background(),
+			bool onlyPassedScene = false);
 
 		EntityHandle m_SelectedEntity = entt::null;
 		EntityHandle m_PressedEntity = entt::null;
@@ -134,6 +169,28 @@ namespace Axiom {
 
 		// Entity ordering for hierarchy drag-reorder
 		std::vector<entt::entity> m_EntityOrder;
+
+		// ── Prefab edit mode ──────────────────────────────────────────
+		// Owned detached scene that contains the entity tree of the
+		// .prefab being edited. `nullptr` when the editor is in normal
+		// scene-edit mode. Built via Scene::CreateDetachedScene so the
+		// physics/audio/script subsystems aren't touched by it.
+		std::unique_ptr<Scene> m_PrefabEditScene;
+		std::string m_PrefabEditPath;
+		EntityHandle m_PrefabEditRootEntity = entt::null;
+		bool m_PrefabEditDirty = false;
+		// Override clear color for the editor viewport while in prefab-
+		// edit mode. The blue tint matches the user-supplied palette and
+		// clearly differentiates prefab editing from scene editing.
+		static constexpr float k_PrefabEditClearR = 0.13f;
+		static constexpr float k_PrefabEditClearG = 0.21f;
+		static constexpr float k_PrefabEditClearB = 0.32f;
+
+		// Hierarchy panel: entities whose subtrees are folded shut. Stored as
+		// raw uint32 keys so destroyed entities don't dangle as enttity handles;
+		// stale entries are harmless (they never match a live id) and only
+		// risk a freshly-recycled id starting collapsed.
+		std::unordered_set<uint32_t> m_CollapsedHierarchyEntities;
 
 		EntityHandle m_RenamingEntity = entt::null;
 		char m_EntityRenameBuffer[256]{};

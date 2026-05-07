@@ -627,17 +627,25 @@ namespace Axiom {
 
 		void TeardownManagedScriptInstance(Scene& scene, ScriptInstance& instance)
 		{
-			if (!instance.HasManagedInstance() || !ScriptEngine::IsInitialized()) {
+			if (!instance.HasManagedInstance()) {
 				return;
 			}
 
-			ScriptSceneScope sceneScope(scene);
-			if (instance.HasEnabled()) {
-				ScriptEngine::InvokeOnDisable(instance.GetGCHandle());
-				instance.MarkDisabled();
+			// Always Unbind() so a managed handle never outlives its assembly: if
+			// ScriptEngine::IsInitialized() flips to false during teardown (hot
+			// reload, host shutdown), we still drop the GCHandle to keep the
+			// engine-side ScriptInstance from referencing a now-stale managed
+			// object on the next frame. Only the actual managed callbacks are
+			// gated on IsInitialized — the bookkeeping must not be.
+			if (ScriptEngine::IsInitialized()) {
+				ScriptSceneScope sceneScope(scene);
+				if (instance.HasEnabled()) {
+					ScriptEngine::InvokeOnDisable(instance.GetGCHandle());
+					instance.MarkDisabled();
+				}
+				ScriptEngine::InvokeOnDestroy(instance.GetGCHandle());
+				ScriptEngine::DestroyScriptInstance(instance.GetGCHandle());
 			}
-			ScriptEngine::InvokeOnDestroy(instance.GetGCHandle());
-			ScriptEngine::DestroyScriptInstance(instance.GetGCHandle());
 			instance.Unbind();
 		}
 
@@ -1215,12 +1223,26 @@ namespace Axiom {
 
 		ScriptSceneScope sceneScope(scene);
 
+		// Snapshot the entity list BEFORE invoking any user OnDisable/OnDestroy. The
+		// rest of this engine carefully uses CollectScriptEntities + index-based
+		// re-fetch precisely because user callbacks can add/remove ScriptComponent,
+		// destroy entities, or even add scripts to OTHER entities — any of which
+		// would invalidate a live entt::view iterator. Hot reload routes through
+		// here, so the iteration safety is load-bearing.
+		std::vector<EntityHandle> entities;
 		auto view = scene.GetRegistry().view<ScriptComponent>();
-		for (auto [entity, scriptComp] : view.each())
-		{
-			for (auto& instance : scriptComp.Scripts)
-			{
-				TeardownManagedScriptInstance(scene, instance);
+		// Single-component views expose size(); multi-component / excluded views
+		// expose size_hint(). Stick to size() here so reserve is exact, not a hint.
+		entities.reserve(view.size());
+		for (auto entity : view) entities.push_back(entity);
+
+		for (EntityHandle entity : entities) {
+			if (!scene.GetRegistry().valid(entity)) continue;
+			if (!scene.GetRegistry().all_of<ScriptComponent>(entity)) continue;
+			auto& scriptComp = scene.GetRegistry().get<ScriptComponent>(entity);
+			// Index-based inner loop: a callback may push to or shrink Scripts.
+			for (size_t i = 0; i < scriptComp.Scripts.size(); ++i) {
+				TeardownManagedScriptInstance(scene, scriptComp.Scripts[i]);
 			}
 		}
 	}
@@ -1229,15 +1251,23 @@ namespace Axiom {
 	{
 		ScriptSceneScope sceneScope(scene);
 
+		// Same snapshot pattern as TeardownManagedScripts above. Native OnDestroy
+		// can re-enter and destroy sibling entities; iterating an entt::view live
+		// would corrupt iteration mid-call.
+		std::vector<EntityHandle> entities;
 		auto view = scene.GetRegistry().view<ScriptComponent>();
-		for (auto [entity, scriptComp] : view.each())
-		{
-			for (auto& instance : scriptComp.Scripts)
-			{
-				if (!instance.HasNativeInstance()) {
-					continue;
-				}
+		// Single-component views expose size(); multi-component / excluded views
+		// expose size_hint(). Stick to size() here so reserve is exact, not a hint.
+		entities.reserve(view.size());
+		for (auto entity : view) entities.push_back(entity);
 
+		for (EntityHandle entity : entities) {
+			if (!scene.GetRegistry().valid(entity)) continue;
+			if (!scene.GetRegistry().all_of<ScriptComponent>(entity)) continue;
+			auto& scriptComp = scene.GetRegistry().get<ScriptComponent>(entity);
+			for (size_t i = 0; i < scriptComp.Scripts.size(); ++i) {
+				auto& instance = scriptComp.Scripts[i];
+				if (!instance.HasNativeInstance()) continue;
 				TeardownNativeScriptInstance(scene, instance, m_NativeHost);
 			}
 		}

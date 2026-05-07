@@ -217,9 +217,27 @@ namespace Axiom::Process {
 		}
 		CloseHandle(readPipe);
 
-		// Final wait — bounded if we just terminated, INFINITE if we exited
-		// the read loop because the child closed its end normally.
-		WaitForSingleObject(processInfo.hProcess, result.TimedOut ? 5000 : INFINITE);
+		// Final wait — bounded by whatever's left of the caller-supplied timeout
+		// instead of INFINITE: the read loop can break on PeekNamedPipe failing
+		// (broken pipe, e.g. the child closed stdout but is still running), so
+		// an unbounded wait here would hang the editor on a misbehaving child.
+		DWORD finalWaitMs = INFINITE;
+		if (result.TimedOut) {
+			finalWaitMs = 5000;
+		}
+		else if (hasTimeout) {
+			const auto remaining = deadline - std::chrono::steady_clock::now();
+			const long long remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(remaining).count();
+			finalWaitMs = remainingMs > 0 ? static_cast<DWORD>(std::min<long long>(remainingMs, 0x7FFFFFFF)) : 0;
+		}
+		const DWORD finalWaitResult = WaitForSingleObject(processInfo.hProcess, finalWaitMs);
+		if (finalWaitResult != WAIT_OBJECT_0 && hasTimeout) {
+			// Remaining timeout elapsed before the process exited — terminate so
+			// we don't leak a zombie child handle past the caller's deadline.
+			result.TimedOut = true;
+			TerminateProcess(processInfo.hProcess, static_cast<UINT>(-1));
+			WaitForSingleObject(processInfo.hProcess, 5000);
+		}
 		DWORD exitCode = static_cast<DWORD>(-1);
 		GetExitCodeProcess(processInfo.hProcess, &exitCode);
 		result.ExitCode = static_cast<int>(exitCode);

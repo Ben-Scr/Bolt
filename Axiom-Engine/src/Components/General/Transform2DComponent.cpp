@@ -6,11 +6,13 @@ namespace Axiom {
 	Transform2DComponent Transform2DComponent::FromPosition(const Vec2& pos) {
 		Transform2DComponent tr;
 		tr.Position = pos;
+		tr.LocalPosition = pos;
 		return tr;
 	}
 	Transform2DComponent Transform2DComponent::FromScale(const Vec2& scale) {
 		Transform2DComponent tr;
 		tr.Scale = scale;
+		tr.LocalScale = scale;
 		return tr;
 	}
 

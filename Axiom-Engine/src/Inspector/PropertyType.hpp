@@ -225,6 +225,7 @@ namespace Axiom {
 		if (text == "audio")       return PropertyType::AudioRef;
 		if (text == "asset")       return PropertyType::AssetRef;
 		if (text == "scene")       return PropertyType::SceneRef;
+		if (text == "font")        return PropertyType::FontRef;
 		if (text == "entity")      return PropertyType::EntityRef;
 		if (text == "prefab")      return PropertyType::PrefabRef;
 		if (text == "component")   return PropertyType::ComponentRef;

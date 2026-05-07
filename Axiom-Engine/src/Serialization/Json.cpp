@@ -318,9 +318,14 @@ namespace Axiom::Json {
 					}
 				}
 
-				char* endPtr = nullptr;
-				const double parsed = std::strtod(numericText.c_str(), &endPtr);
-				if (endPtr != numericText.c_str() + numericText.size()) {
+				// Use std::from_chars for locale-independent parsing — std::strtod honors LC_NUMERIC,
+				// so a German locale would treat "3.14" as invalid (expects "3,14"), corrupting any
+				// JSON read on those systems.
+				const char* first = numericText.data();
+				const char* last = first + numericText.size();
+				double parsed = 0.0;
+				auto [ptr, ec] = std::from_chars(first, last, parsed);
+				if (ec != std::errc{} || ptr != last) {
 					SetError(outError, "Failed to parse JSON number");
 					return false;
 				}
@@ -723,7 +728,15 @@ namespace Axiom::Json {
 	}
 
 	Value::Object& Value::GetObject() {
-		SetType(Type::Object);
+		// Non-const read used to silently retype the value via SetType, which
+		// nuked any previously-stored payload. Now match the const overload's
+		// behavior and return a static empty so a stray read doesn't lose data.
+		static Object emptyObject;
+		if (!IsObject()) {
+			AIM_CORE_WARN_TAG("Serialization", "Json::GetObject called on non-object value; returning empty container. Use EnsureObject to convert.");
+			emptyObject.clear();
+			return emptyObject;
+		}
 		return m_Object;
 	}
 
@@ -733,13 +746,32 @@ namespace Axiom::Json {
 	}
 
 	Value::Array& Value::GetArray() {
-		SetType(Type::Array);
+		// See GetObject — same trap on the array side.
+		static Array emptyArray;
+		if (!IsArray()) {
+			AIM_CORE_WARN_TAG("Serialization", "Json::GetArray called on non-array value; returning empty container. Use EnsureArray to convert.");
+			emptyArray.clear();
+			return emptyArray;
+		}
 		return m_Array;
 	}
 
 	const Value::Array& Value::GetArray() const {
 		static const Array emptyArray;
 		return IsArray() ? m_Array : emptyArray;
+	}
+
+	Value::Object& Value::EnsureObject() {
+		// Explicit make-or-get path. Callers that want to convert the value
+		// into Object kind opt-in via this name so the conversion can't happen
+		// by accident.
+		SetType(Type::Object);
+		return m_Object;
+	}
+
+	Value::Array& Value::EnsureArray() {
+		SetType(Type::Array);
+		return m_Array;
 	}
 
 	Value* Value::FindMember(std::string_view key) {

@@ -15,7 +15,12 @@ namespace Axiom {
 
 		static bool Exists(const std::string& path);
 
-		static void WriteAllText(const std::string& path, const std::string& text);
+		// Writes `text` to `path` atomically: stages to `path + ".tmp"` then renames over
+		// the destination. Returns true on success. Returns false (without modifying the
+		// original file) if the staging open fails, the write fails, the rename fails, or
+		// the target volume is full. Callers MUST check the return value before treating
+		// data as persisted (e.g. before clearing a dirty flag).
+		[[nodiscard]] static bool WriteAllText(const std::string& path, const std::string& text);
 
 		template<size_t Size>
 		static void WriteAllLines(const std::string& path, const std::array<std::string, Size> lines) {

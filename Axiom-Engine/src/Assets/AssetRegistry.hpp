@@ -645,7 +645,7 @@ namespace Axiom {
 			meta.AddMember("AssetGUID", Json::Value(std::to_string(id)));
 			meta.AddMember("uuid", Json::Value(std::to_string(id)));
 			meta.AddMember("kind", Json::Value(ToString(kind)));
-			File::WriteAllText(GetMetaPath(assetPath), Json::Stringify(meta, true));
+			(void)File::WriteAllText(GetMetaPath(assetPath), Json::Stringify(meta, true));
 		}
 
 		static std::string ToString(AssetKind kind) {

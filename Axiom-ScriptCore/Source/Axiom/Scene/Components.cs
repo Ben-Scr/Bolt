@@ -50,6 +50,87 @@ public class Transform2D : Component
         set => InternalCalls.Transform2D_SetScale(RequireComponent<Transform2D>(), value.X, value.Y);
     }
 
+    public Vector2 LocalTransform
+    {
+        get
+        {
+            ulong entityId = RequireComponent<Transform2D>();
+            InternalCalls.Transform2D_GetLocalPosition(entityId, out float x, out float y);
+            return new Vector2(x, y);
+        }
+        set => InternalCalls.Transform2D_SetLocalPosition(RequireComponent<Transform2D>(), value.X, value.Y);
+    }
+    public float LocalRotation
+    {
+        get => InternalCalls.Transform2D_GetLocalRotation(RequireComponent<Transform2D>());
+        set => InternalCalls.Transform2D_SetLocalRotation(RequireComponent<Transform2D>(), value);
+    }
+    public Vector2 LocalScale
+    {
+        get
+        {
+            ulong entityId = RequireComponent<Transform2D>();
+            InternalCalls.Transform2D_GetLocalScale(entityId, out float x, out float y);
+            return new Vector2(x, y);
+        }
+        set => InternalCalls.Transform2D_SetLocalScale(RequireComponent<Transform2D>(), value.X, value.Y);
+    }
+
+    public new Entity? Entity
+    {
+        get
+        {
+            ulong entityId = InternalCalls.Transform2D_GetEntity(RequireComponent<Transform2D>());
+            return entityId != 0 ? new Entity(entityId) : null;
+        }
+    }
+
+    public Transform2D? Child => GetChildAt(0);
+
+    public Transform2D? Parent
+    {
+        get
+        {
+            ulong parentId = InternalCalls.Transform2D_GetParent(RequireComponent<Transform2D>());
+            return parentId != 0 ? new Entity(parentId).GetComponent<Transform2D>() : null;
+        }
+    }
+
+    public int ChildCount => InternalCalls.Transform2D_GetChildCount(RequireComponent<Transform2D>());
+
+    public Transform2D[] GetChilds()
+    {
+        ulong entityId = RequireComponent<Transform2D>();
+        int count = InternalCalls.Transform2D_GetChildCount(entityId);
+        if (count <= 0) return Array.Empty<Transform2D>();
+
+        ulong[] ids = new ulong[count];
+        int actual = InternalCalls.Transform2D_GetChildren(entityId, ids);
+
+        var result = new List<Transform2D>(actual);
+        for (int i = 0; i < actual; i++)
+        {
+            if (ids[i] == 0) continue;
+            Transform2D? child = new Entity(ids[i]).GetComponent<Transform2D>();
+            if (child != null) result.Add(child);
+        }
+        return result.ToArray();
+    }
+
+    public Transform2D? GetChildAt(int index)
+    {
+        if (index < 0) return null;
+        ulong childId = InternalCalls.Transform2D_GetChildAt(RequireComponent<Transform2D>(), index);
+        return childId != 0 ? new Entity(childId).GetComponent<Transform2D>() : null;
+    }
+
+    public bool SetParent(Transform2D? newParent)
+    {
+        ulong entityId = RequireComponent<Transform2D>();
+        ulong parentId = newParent?.RequireComponent<Transform2D>() ?? 0;
+        return InternalCalls.Transform2D_SetParent(entityId, parentId);
+    }
+
     public Vector2 Up
     {
         get => new Vector2(-Mathf.Sin(Rotation), Mathf.Cos(Rotation));

@@ -288,6 +288,24 @@ internal static unsafe class InternalCalls
     internal static void Transform2D_SetRotation(ulong id, float rotation) => NativeCallbacks.Bindings.Transform2D_SetRotation(id, rotation);
     internal static void Transform2D_GetScale(ulong id, out float x, out float y) { float ox, oy; NativeCallbacks.Bindings.Transform2D_GetScale(id, &ox, &oy); x = ox; y = oy; }
     internal static void Transform2D_SetScale(ulong id, float x, float y) => NativeCallbacks.Bindings.Transform2D_SetScale(id, x, y);
+    internal static ulong Transform2D_GetEntity(ulong id) => NativeCallbacks.Bindings.Transform2D_GetEntity(id);
+    internal static void Transform2D_GetLocalPosition(ulong id, out float x, out float y) { float ox, oy; NativeCallbacks.Bindings.Transform2D_GetLocalPosition(id, &ox, &oy); x = ox; y = oy; }
+    internal static void Transform2D_SetLocalPosition(ulong id, float x, float y) => NativeCallbacks.Bindings.Transform2D_SetLocalPosition(id, x, y);
+    internal static float Transform2D_GetLocalRotation(ulong id) => NativeCallbacks.Bindings.Transform2D_GetLocalRotation(id);
+    internal static void Transform2D_SetLocalRotation(ulong id, float rotation) => NativeCallbacks.Bindings.Transform2D_SetLocalRotation(id, rotation);
+    internal static void Transform2D_GetLocalScale(ulong id, out float x, out float y) { float ox, oy; NativeCallbacks.Bindings.Transform2D_GetLocalScale(id, &ox, &oy); x = ox; y = oy; }
+    internal static void Transform2D_SetLocalScale(ulong id, float x, float y) => NativeCallbacks.Bindings.Transform2D_SetLocalScale(id, x, y);
+    internal static ulong Transform2D_GetParent(ulong id) => NativeCallbacks.Bindings.Transform2D_GetParent(id);
+    internal static bool Transform2D_SetParent(ulong id, ulong parentId) => NativeCallbacks.Bindings.Transform2D_SetParent(id, parentId) != 0;
+    internal static int Transform2D_GetChildCount(ulong id) => NativeCallbacks.Bindings.Transform2D_GetChildCount(id);
+    internal static ulong Transform2D_GetChildAt(ulong id, int index) => NativeCallbacks.Bindings.Transform2D_GetChildAt(id, index);
+    internal static int Transform2D_GetChildren(ulong id, Span<ulong> outIDs)
+    {
+        fixed (ulong* idPtr = outIDs)
+        {
+            return NativeCallbacks.Bindings.Transform2D_GetChildren(id, idPtr, outIDs.Length);
+        }
+    }
 
     // ── SpriteRenderer ──────────────────────────────────────────────
 

@@ -71,7 +71,7 @@ namespace Axiom {
         // Info: Basically calls CreateWith<Transform2D, SpriteRenderer>();
         static Entity CreateSpriteEntity();
         static Entity CreateImageEntity(Scene& scene);
-        // Info: Basically calls CreateWith<RectTransform, Image>();
+        // Info: Basically calls CreateWith<RectTransform2D, Image>();
         static Entity CreateImageEntity();
 
         // ── UI presets ─────────────────────────────────────────────
@@ -80,30 +80,30 @@ namespace Axiom {
         // alongside and parented via Entity::SetParent so they show up
         // nested in the editor's hierarchy panel.
 
-        // Empty UI rect (RectTransform + Image as a transparent panel).
+        // Empty UI rect (RectTransform2D + Image as a transparent panel).
         static Entity CreateUIPanel(Scene& scene);
 
-        // Clickable button: RectTransform + Image (background, tinted by
-        // UIEventSystem) + UIInteractable + UIButton + a child TextRenderer
+        // Clickable button: RectTransform2D + Image (background, tinted by
+        // UIEventSystem) + Interactable + Button + a child TextRenderer
         // for the label.
         static Entity CreateUIButton(Scene& scene);
 
-        // Horizontal slider: RectTransform + Image (track) + UIInteractable
-        // + UISlider, with a child Image for the handle (referenced by
-        // UISliderComponent::HandleEntity).
+        // Horizontal slider: RectTransform2D + Image (track) + Interactable
+        // + Slider, with a child Image for the handle (referenced by
+        // SliderComponent::HandleEntity).
         static Entity CreateUISlider(Scene& scene);
 
-        // Single-line text field: RectTransform + Image (background) +
-        // UIInteractable + UIInputField, with a child TextRenderer for
+        // Single-line text field: RectTransform2D + Image (background) +
+        // Interactable + InputField, with a child TextRenderer for
         // the entered text / placeholder.
         static Entity CreateUIInputField(Scene& scene);
 
-        // Dropdown: RectTransform + Image + UIInteractable + UIDropdown
+        // Dropdown: RectTransform2D + Image + Interactable + Dropdown
         // + child TextRenderer showing the current selection.
         static Entity CreateUIDropdown(Scene& scene);
 
-        // Toggle / checkbox: RectTransform + Image (box) + UIInteractable
-        // + UIToggle, with a child Image for the checkmark.
+        // Toggle / checkbox: RectTransform2D + Image (box) + Interactable
+        // + Toggle, with a child Image for the checkmark.
         static Entity CreateUIToggle(Scene& scene);
     };
 

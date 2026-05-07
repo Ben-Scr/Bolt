@@ -160,12 +160,9 @@ namespace Axiom {
 						while (m_FixedUpdateAccumulator >= fixedDt) {
 							if (!IsEnginePaused() && !m_IsGameplayPaused) {
 								BeginFixedFrame();
-								// Index-based with re-check: a layer's OnFixedUpdate
-								// may PushLayer/PopLayer, which would invalidate
-								// a range-for iterator.
-								for (size_t i = 0; i < m_LayerStack.Size(); ++i) {
-									Layer* layer = m_LayerStack.At(i);
-									if (!layer) break;
+								// Snapshot layer order so OnFixedUpdate that pushes/pops
+								// can't shift the indices we're iterating.
+								for (Layer* layer : SnapshotLayerOrder()) {
 									layer->OnFixedUpdate(*this, m_Time.GetUnscaledFixedDeltaTime());
 								}
 								EndFixedFrame();
@@ -276,7 +273,7 @@ namespace Axiom {
 		AIM_INFO_TAG("Window", "Initialization took " + StringHelper::ToString(timer));
 
 		timer.Reset();
-		OpenGL::Initialize(GLInitSpecifications(Color::Background(), GLCullingMode::GLBack));
+		OpenGL::Initialize(GLInitSpecifications(Color::Background(), GLCullingMode::Back));
 		AIM_INFO_TAG("OpenGL", "Initialization took " + StringHelper::ToString(timer));
 
 		if (m_Configuration.EnableRenderer2D) {
@@ -410,10 +407,8 @@ namespace Axiom {
 
 			Update();
 
-			// Index-based: a layer's OnUpdate may PushLayer/PopLayer.
-			for (size_t i = 0; i < m_LayerStack.Size(); ++i) {
-				Layer* layer = m_LayerStack.At(i);
-				if (!layer) break;
+			// Snapshot layer order so OnUpdate that pushes/pops can't shift indices.
+			for (Layer* layer : SnapshotLayerOrder()) {
 				layer->OnUpdate(*this, m_Time.GetDeltaTime());
 			}
 
@@ -423,9 +418,7 @@ namespace Axiom {
 			if (m_PhysicsSystem2D) m_PhysicsSystem2D->Update();
 
 			if (m_SceneManager) m_SceneManager->OnPreRenderScenes();
-			for (size_t i = 0; i < m_LayerStack.Size(); ++i) {
-				Layer* layer = m_LayerStack.At(i);
-				if (!layer) break;
+			for (Layer* layer : SnapshotLayerOrder()) {
 				AXIOM_TRY_CATCH_LOG(layer->OnPreRender(*this));
 			}
 
@@ -471,13 +464,12 @@ namespace Axiom {
 			return false;
 			});
 
-		// Reverse index-based: a layer's OnEvent may PushLayer/PopLayer.
-		for (size_t i = m_LayerStack.Size(); i > 0; --i) {
+		// Snapshot layer order in reverse so OnEvent that pushes/pops can't shift
+		// indices and silently skip a sibling layer (the bug fixed by this snapshot).
+		for (Layer* layer : SnapshotLayerOrderReversed()) {
 			if (event.Handled) {
 				break;
 			}
-			Layer* layer = m_LayerStack.At(i - 1);
-			if (!layer) continue;
 			layer->OnEvent(*this, event);
 		}
 
@@ -548,9 +540,7 @@ namespace Axiom {
 		if (m_Renderer2D)
 			AXIOM_TRY_CATCH_LOG(m_Renderer2D->EndFrame());
 
-		for (size_t i = 0; i < m_LayerStack.Size(); ++i) {
-			Layer* layer = m_LayerStack.At(i);
-			if (!layer) break;
+		for (Layer* layer : SnapshotLayerOrder()) {
 			AXIOM_TRY_CATCH_LOG(layer->OnPostRender(*this));
 		}
 
@@ -585,9 +575,7 @@ namespace Axiom {
 		RefreshRenderGuard guard(*this);
 
 		if (m_SceneManager) AXIOM_TRY_CATCH_LOG(m_SceneManager->OnPreRenderScenes());
-		for (size_t i = 0; i < m_LayerStack.Size(); ++i) {
-			Layer* layer = m_LayerStack.At(i);
-			if (!layer) break;
+		for (Layer* layer : SnapshotLayerOrder()) {
 			AXIOM_TRY_CATCH_LOG(layer->OnPreRender(*this));
 		}
 
@@ -596,9 +584,7 @@ namespace Axiom {
 			AXIOM_TRY_CATCH_LOG(m_Renderer2D->EndFrame());
 		}
 
-		for (size_t i = 0; i < m_LayerStack.Size(); ++i) {
-			Layer* layer = m_LayerStack.At(i);
-			if (!layer) break;
+		for (Layer* layer : SnapshotLayerOrder()) {
 			AXIOM_TRY_CATCH_LOG(layer->OnPostRender(*this));
 		}
 
@@ -628,6 +614,12 @@ namespace Axiom {
 	void Application::ResetTimePoints() {
 		m_LastFrameTime = Clock::now();
 		m_FixedUpdateAccumulator = 0;
+		// Reset m_LastFrameEndTime too: leaving it at the prior frame's stamp meant
+		// the next frame's vsync-bucket calculation (frameStart - m_LastFrameEndTime)
+		// treated the entire delta-spike interval as "vsync wait time", emitting a
+		// misleading multi-second VSync profile mark and dragging the residual
+		// 'Others' bucket into negative-clamped-to-0 territory.
+		m_LastFrameEndTime = Clock::time_point{};
 	}
 
 	void Application::RefreshBackgroundPauseState() {

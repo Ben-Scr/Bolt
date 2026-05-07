@@ -57,6 +57,7 @@ namespace Axiom {
 			case PropertyType::AssetRef:
 			case PropertyType::SceneRef:
 			case PropertyType::PrefabRef:
+			case PropertyType::FontRef:
 				return UIntValue == other.UIntValue;
 			case PropertyType::EntityRef:
 				// EntityRef may also be a prefab reference (StringValue=="prefab")

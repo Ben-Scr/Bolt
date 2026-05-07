@@ -8,6 +8,10 @@
 namespace Axiom {
 
 	static Axiom::AllocationStats s_GlobalStats;
+	// Dedicated stats mutex so the diagnostic snapshot accessor doesn't have to
+	// hand out the per-allocator lock (which is owned by AllocatorData) or risk
+	// reading torn size_t pairs on platforms where the pair isn't atomic.
+	static std::mutex s_GlobalStatsMutex;
 	static thread_local bool s_InInit = false;
 	static std::atomic<bool> s_IsShutdown = false;
 	static std::once_flag s_InitOnce;
@@ -148,7 +152,12 @@ namespace Axiom {
 			Allocation& alloc = data->m_AllocationMap[memory];
 			alloc.Memory = memory;
 			alloc.Size = size;
+		}
 
+		// s_GlobalStats has its own mutex so the diagnostic reader can take a
+		// consistent snapshot without contending the per-allocator data lock.
+		{
+			std::scoped_lock<std::mutex> statsLock(s_GlobalStatsMutex);
 			s_GlobalStats.TotalAllocated += size;
 		}
 
@@ -177,9 +186,13 @@ namespace Axiom {
 			alloc.Size = size;
 			alloc.Category = desc;
 
-			s_GlobalStats.TotalAllocated += size;
 			if (desc)
 				data->m_AllocationStatsMap[desc].TotalAllocated += size;
+		}
+
+		{
+			std::scoped_lock<std::mutex> statsLock(s_GlobalStatsMutex);
+			s_GlobalStats.TotalAllocated += size;
 		}
 
 #if AIM_ENABLE_PROFILING
@@ -207,8 +220,12 @@ namespace Axiom {
 			alloc.Size = size;
 			alloc.Category = file;
 
-			s_GlobalStats.TotalAllocated += size;
 			data->m_AllocationStatsMap[file].TotalAllocated += size;
+		}
+
+		{
+			std::scoped_lock<std::mutex> statsLock(s_GlobalStatsMutex);
+			s_GlobalStats.TotalAllocated += size;
 		}
 
 #if AIM_ENABLE_PROFILING
@@ -231,6 +248,7 @@ namespace Axiom {
 
 		{
 			bool found = false;
+			size_t freedSize = 0;
 			{
 				std::scoped_lock<std::mutex> lock(data->m_Mutex);
 				auto allocMapIt = data->m_AllocationMap.find(memory);
@@ -238,12 +256,19 @@ namespace Axiom {
 				if (found)
 				{
 					const Allocation& alloc = allocMapIt->second;
-					s_GlobalStats.TotalFreed += alloc.Size;
+					freedSize = alloc.Size;
 					if (alloc.Category)
 						data->m_AllocationStatsMap[alloc.Category].TotalFreed += alloc.Size;
 
 					data->m_AllocationMap.erase(memory);
 				}
+			}
+
+			// Update the global counter under its own mutex so readers see a
+			// consistent (TotalAllocated, TotalFreed) pair.
+			if (found) {
+				std::scoped_lock<std::mutex> statsLock(s_GlobalStatsMutex);
+				s_GlobalStats.TotalFreed += freedSize;
 			}
 
 #if AIM_ENABLE_PROFILING
@@ -277,6 +302,17 @@ namespace Axiom {
 
 	namespace Memory {
 		const AllocationStats& GetAllocationStats() { return s_GlobalStats; }
+
+		// Snapshot accessor: take the stats lock so the (TotalAllocated, TotalFreed)
+		// pair is read atomically. The legacy reference accessor above can race
+		// with concurrent allocations and is kept only for source compatibility.
+		AllocationStatsSnapshot GetAllocationStatsSnapshot() {
+			std::scoped_lock<std::mutex> lock(s_GlobalStatsMutex);
+			AllocationStatsSnapshot snapshot;
+			snapshot.TotalAllocated = s_GlobalStats.TotalAllocated;
+			snapshot.TotalFreed = s_GlobalStats.TotalFreed;
+			return snapshot;
+		}
 	}
 }
 

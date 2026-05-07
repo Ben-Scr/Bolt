@@ -189,12 +189,19 @@ namespace Axiom {
 	}
 
 	void Renderer2D::EndFrame() {
-		if (!m_IsEnabled) return;
+		// GpuTimer end MUST run regardless of m_IsEnabled, because BeginFrame
+		// always called BeginFrame() on the timer. Returning early on disabled
+		// frames stranded the in-flight glBeginQuery, leaking GL query objects
+		// and silently breaking the timer (subsequent BeginFrame raises
+		// GL_INVALID_OPERATION because a query of the same target is still active).
 #ifdef AXIOM_PROFILER_ENABLED
 		if (m_GpuTimer) {
 			m_GpuTimer->EndFrame();
 			m_GpuTimer->PollAndPublish();
 		}
+#endif
+		if (!m_IsEnabled) return;
+#ifdef AXIOM_PROFILER_ENABLED
 		// Each instance = 1 quad = 4 verts / 2 tris.
 		AXIOM_PROFILE_VALUE("Batches", float(m_DrawCallsCount));
 		AXIOM_PROFILE_VALUE("Triangles", float(m_RenderedInstancesCount * 2));
@@ -244,7 +251,15 @@ namespace Axiom {
 		auto ptsView = registry.view<ParticleSystem2DComponent>(entt::exclude<DisabledTag>);
 		auto srView = registry.view<Transform2DComponent, SpriteRendererComponent>(entt::exclude<DisabledTag>);
 
-		m_Instances.reserve(ptsView.size_hint() + srView.size_hint());
+		// size_hint() on the particle view counts entities, not particles. Each
+		// system emits one instance per particle, so under-reserving here causes
+		// repeated reallocations inside the inner loop on busy frames. Sum the
+		// per-system particle counts up front so reserve covers the worst case.
+		size_t particleTotal = 0;
+		for (const auto& [ent, particleSystem] : ptsView.each()) {
+			particleTotal += particleSystem.GetParticles().size();
+		}
+		m_Instances.reserve(particleTotal + srView.size_hint());
 
 		for (const auto& [ent, particleSystem] : ptsView.each()) {
 			for (const auto& particle : particleSystem.GetParticles()) {

@@ -25,9 +25,13 @@ namespace Axiom {
 		void SetCenter(const Vec2& center, const Scene& scene);
 		Vec2 GetCenter() const;
 
-		void Destroy();
+		void Destroy() override;
 	private:
 		Vec2 m_LocalSize{ 1.0f, 1.0f };
 		Vec2 m_LastAppliedScale{ 0.0f, 0.0f };
+		// Track the local size used during the last polygon rebuild — without this,
+		// SyncWithTransform short-circuits when only m_LocalSize changes (e.g. via
+		// inspector edits) and the b2Polygon ends up stale.
+		Vec2 m_LastAppliedLocalSize{ 0.0f, 0.0f };
 	};
 }

@@ -69,8 +69,12 @@ namespace Axiom {
 
 		float GetRotationRadiant() const;
 
-		void Destroy();
-		void DestroyShape(bool updateBodyMass = true);
+		// Virtual so derived colliders (BoxCollider2DComponent, ...) can Destroy()-shadow
+		// without slicing — calling Destroy() through a Collider2D* must reach the
+		// derived override (e.g. so derived per-shape members get reset).
+		virtual ~Collider2D() = default;
+		virtual void Destroy();
+		virtual void DestroyShape(bool updateBodyMass = true);
 
 		b2BodyId m_BodyId{ b2_nullBodyId };
 		b2ShapeId m_ShapeId{ b2_nullShapeId };

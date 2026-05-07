@@ -83,38 +83,89 @@ namespace Axiom {
 
 			content.insert(pos, refBlock);
 
-			std::ofstream out(csprojPath);
-			if (!out.is_open()) return false;
-			out << content;
+			// Atomic write through File::WriteAllText (temp + rename), so a crash
+			// mid-write doesn't leave the user's csproj truncated.
+			if (!File::WriteAllText(csprojPath, content)) {
+				AIM_CORE_ERROR_TAG("AxiomPackages", "Failed to write csproj after adding reference: {}", csprojPath);
+				return false;
+			}
 			return true;
 		}
 
-		// Remove a <Reference> from a .csproj file by assembly name
+		// Remove a <Reference Include="..."> ELEMENT (and only that element) from a
+		// .csproj. The previous implementation erased the entire enclosing <ItemGroup>,
+		// which silently deleted any sibling <Reference>s the user had hand-consolidated
+		// — losing user data. This version walks from the matched <Reference> to its
+		// closing </Reference> (or self-closing /> if it has no body) and erases just
+		// that span; the surrounding ItemGroup (and any siblings inside it) are left
+		// intact.
 		static bool RemoveReferenceFromProject(const std::string& csprojPath, const std::string& assemblyName) {
 			std::ifstream in(csprojPath);
 			if (!in.is_open()) return false;
 			std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 			in.close();
 
-			// Find the ItemGroup containing the Reference
-			std::string search = "<Reference Include=\"" + XmlEscape(assemblyName) + "\">";
-			auto refPos = content.find(search);
-			if (refPos == std::string::npos) return true; // Already removed
+			// Find the <Reference Include="..."> opening tag. Tolerate either a body
+			// + closing tag, or a self-closing form (<Reference Include="X"/>).
+			const std::string includeFragment = "Include=\"" + XmlEscape(assemblyName) + "\"";
+			size_t scanFrom = 0;
+			size_t refStart = std::string::npos;
+			while (scanFrom < content.size()) {
+				const size_t tagStart = content.find("<Reference ", scanFrom);
+				if (tagStart == std::string::npos) break;
+				const size_t tagClose = content.find('>', tagStart);
+				if (tagClose == std::string::npos) break;
+				if (content.find(includeFragment, tagStart) < tagClose) {
+					refStart = tagStart;
+					break;
+				}
+				scanFrom = tagClose + 1;
+			}
 
-			// Find the enclosing <ItemGroup>...</ItemGroup>
-			auto igStart = content.rfind("<ItemGroup>", refPos);
-			auto igEnd = content.find("</ItemGroup>", refPos);
-			if (igStart == std::string::npos || igEnd == std::string::npos) return false;
+			if (refStart == std::string::npos) return true; // already removed
 
-			constexpr std::string_view kCloseTag = "</ItemGroup>";
-			igEnd += kCloseTag.size(); // 12 chars — was previously 13, deleting one byte past the tag.
-			if (igEnd < content.size() && content[igEnd] == '\n') igEnd++;
+			// Determine where the element ends: self-closing <Reference .../> ends at
+			// the first '/>' inside the opening tag; otherwise look for </Reference>.
+			const size_t openTagClose = content.find('>', refStart);
+			if (openTagClose == std::string::npos) return false;
+			size_t refEnd = std::string::npos;
+			if (openTagClose > 0 && content[openTagClose - 1] == '/') {
+				refEnd = openTagClose + 1;
+			}
+			else {
+				constexpr std::string_view kClose = "</Reference>";
+				const size_t closePos = content.find(kClose, openTagClose);
+				if (closePos == std::string::npos) return false;
+				refEnd = closePos + kClose.size();
+			}
 
-			content.erase(igStart, igEnd - igStart);
+			// Trim the trailing newline if there's one immediately after.
+			if (refEnd < content.size() && content[refEnd] == '\n') refEnd++;
 
-			std::ofstream out(csprojPath);
-			if (!out.is_open()) return false;
-			out << content;
+			content.erase(refStart, refEnd - refStart);
+
+			// If the <ItemGroup> that contained the reference is now empty (only
+			// whitespace between <ItemGroup> and </ItemGroup>), remove that empty
+			// container too. Use the earlier (now-relocated) refStart as a search
+			// hint into the modified string.
+			const size_t itemGroupOpen = content.rfind("<ItemGroup>", refStart);
+			if (itemGroupOpen != std::string::npos) {
+				const size_t itemGroupClose = content.find("</ItemGroup>", itemGroupOpen);
+				if (itemGroupClose != std::string::npos) {
+					const size_t bodyStart = itemGroupOpen + std::string_view("<ItemGroup>").size();
+					const std::string body = content.substr(bodyStart, itemGroupClose - bodyStart);
+					if (std::all_of(body.begin(), body.end(), [](unsigned char c) { return std::isspace(c) != 0; })) {
+						size_t eraseEnd = itemGroupClose + std::string_view("</ItemGroup>").size();
+						if (eraseEnd < content.size() && content[eraseEnd] == '\n') eraseEnd++;
+						content.erase(itemGroupOpen, eraseEnd - itemGroupOpen);
+					}
+				}
+			}
+
+			if (!File::WriteAllText(csprojPath, content)) {
+				AIM_CORE_ERROR_TAG("AxiomPackages", "Failed to write csproj after removing reference: {}", csprojPath);
+				return false;
+			}
 			return true;
 		}
 	}

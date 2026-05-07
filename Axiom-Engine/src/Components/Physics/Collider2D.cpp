@@ -25,10 +25,12 @@ namespace Axiom {
 		return { position.x, position.y };
 	}
 	float Collider2D::GetRotationDegrees() const {
-		return Degrees<float>(b2Rot_GetAngle(b2Body_GetRotation(m_BodyId)));
+		// Negate to match Rigidbody2DComponent::GetRotation and the engine's b2Rot(cos,-sin)
+		// convention. Without negation, get(set(angle)) would not be the identity.
+		return Degrees<float>(-b2Rot_GetAngle(b2Body_GetRotation(m_BodyId)));
 	}
 	float Collider2D::GetRotationRadiant() const {
-		return  b2Rot_GetAngle(b2Body_GetRotation(m_BodyId));
+		return -b2Rot_GetAngle(b2Body_GetRotation(m_BodyId));
 	}
 
 	void Collider2D::SetRegisterContacts(bool enabled) {
@@ -68,10 +70,15 @@ namespace Axiom {
 	}
 
 	void Collider2D::SetRotation(float radiant) {
-		b2Body_SetTransform(m_BodyId, b2Body_GetPosition(m_BodyId), b2Rot(std::cos(radiant), std::sin(radiant)));
+		// Sign convention matches Rigidbody2DComponent::SetRotation and the canonical
+		// Transform2DComponent::GetB2Rotation used everywhere else in the engine
+		// (b2Rot(cos, -sin)). The original positive-sin version produced a conjugate
+		// b2Rot for the same input, so reading the rotation off the collider,
+		// transforming it, and writing it back to the rigidbody flipped the sign.
+		b2Body_SetTransform(m_BodyId, b2Body_GetPosition(m_BodyId), b2Rot(std::cos(radiant), -std::sin(radiant)));
 	}
 	void Collider2D::SetPositionRotation(const Vec2& position, float radiant) {
-		b2Body_SetTransform(m_BodyId, b2Vec2(position.x, position.y), b2Rot(std::cos(radiant), std::sin(radiant)));
+		b2Body_SetTransform(m_BodyId, b2Vec2(position.x, position.y), b2Rot(std::cos(radiant), -std::sin(radiant)));
 	}
 	void Collider2D::SetPosition(const Vec2& position) {
 		b2Body_SetTransform(m_BodyId, b2Vec2(position.x, position.y), b2Body_GetRotation(m_BodyId));

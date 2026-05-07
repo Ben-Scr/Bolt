@@ -19,6 +19,31 @@
 
 namespace Axiom {
 	namespace {
+		// Instance-id encoding: low 16 bits hold (index + 1) so 0 stays "invalid";
+		// high 16 bits hold the slot's generation so a recycled slot does not silently
+		// alias a stale handle. ~65k generations per slot before wrap; at miniaudio's
+		// MAX_CONCURRENT_SOUNDS = 64 and a worst-case recycle of one per frame, that's
+		// ~1000s per slot before a collision is even theoretically possible.
+		constexpr uint32_t k_AudioInstanceIndexBits = 16u;
+		constexpr uint32_t k_AudioInstanceIndexMask = (1u << k_AudioInstanceIndexBits) - 1u;
+
+		uint32_t EncodeAudioInstanceId(uint32_t index, uint16_t generation) {
+			return (static_cast<uint32_t>(generation) << k_AudioInstanceIndexBits)
+				| ((index + 1u) & k_AudioInstanceIndexMask);
+		}
+
+		uint32_t DecodeAudioInstanceIndex(uint32_t instanceId) {
+			return (instanceId & k_AudioInstanceIndexMask) - 1u;
+		}
+
+		uint16_t DecodeAudioInstanceGeneration(uint32_t instanceId) {
+			return static_cast<uint16_t>(instanceId >> k_AudioInstanceIndexBits);
+		}
+
+		bool DecodedAudioInstanceIsValid(uint32_t instanceId) {
+			return (instanceId & k_AudioInstanceIndexMask) != 0u;
+		}
+
 		std::string NormalizeAudioPath(std::filesystem::path path)
 		{
 			if (path.empty()) {
@@ -554,21 +579,26 @@ namespace Axiom {
 			return 0;
 		}
 
-		uint32_t instanceId;
+		uint32_t index;
+		uint16_t reuseGeneration = 0;
 
 		if (!s_freeInstanceIndices.empty()) {
-			instanceId = s_freeInstanceIndices.back();
+			index = s_freeInstanceIndices.back();
 			s_freeInstanceIndices.pop_back();
-			// Reusing a slot — recreate the heap allocation; the previous unique_ptr
-			// was reset on Recycle so the address would be different anyway.
-			s_soundInstances[instanceId] = std::make_unique<SoundInstance>();
+			// Carry the slot's prior generation across the recycle so a stale handle
+			// minted before this point fails GetSoundInstance.
+			if (index < s_soundInstances.size() && s_soundInstances[index]) {
+				reuseGeneration = s_soundInstances[index]->Generation;
+			}
+			s_soundInstances[index] = std::make_unique<SoundInstance>();
+			s_soundInstances[index]->Generation = reuseGeneration;
 		}
 		else {
-			instanceId = static_cast<uint32_t>(s_soundInstances.size());
+			index = static_cast<uint32_t>(s_soundInstances.size());
 			s_soundInstances.emplace_back(std::make_unique<SoundInstance>());
 		}
 
-		SoundInstance& instance = *s_soundInstances[instanceId];
+		SoundInstance& instance = *s_soundInstances[index];
 		const ma_uint32 dataSourceFlags = MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE;
 		ma_result result = ma_resource_manager_data_source_init(
 			ma_engine_get_resource_manager(&s_Engine),
@@ -578,12 +608,15 @@ namespace Axiom {
 			&instance.DataSource);
 		if (result != MA_SUCCESS) {
 			AIM_CORE_WARN("[{}] AudioManager: Failed to create sound data source. Error: {}", ErrorCodeToString(AxiomErrorCode::LoadFailed), static_cast<int>(result));
-			if (instanceId == s_soundInstances.size() - 1) {
+			if (index == s_soundInstances.size() - 1) {
 				s_soundInstances.pop_back();
 			}
 			else {
-				s_soundInstances[instanceId].reset();
-				s_freeInstanceIndices.push_back(instanceId);
+				// Bump generation before re-queueing so the failed slot can't be confused
+				// with the next caller's freshly-minted handle.
+				s_soundInstances[index]->Generation = static_cast<uint16_t>(reuseGeneration + 1u);
+				s_soundInstances[index].reset();
+				s_freeInstanceIndices.push_back(index);
 			}
 			return 0;
 		}
@@ -594,12 +627,13 @@ namespace Axiom {
 			ma_resource_manager_data_source_uninit(&instance.DataSource);
 			instance.HasDataSource = false;
 			AIM_CORE_WARN("[{}] AudioManager: Failed to create sound instance. Error: {}", ErrorCodeToString(AxiomErrorCode::LoadFailed), static_cast<int>(result));
-			if (instanceId == s_soundInstances.size() - 1) {
+			if (index == s_soundInstances.size() - 1) {
 				s_soundInstances.pop_back();
 			}
 			else {
-				s_soundInstances[instanceId].reset();
-				s_freeInstanceIndices.push_back(instanceId);
+				s_soundInstances[index]->Generation = static_cast<uint16_t>(reuseGeneration + 1u);
+				s_soundInstances[index].reset();
+				s_freeInstanceIndices.push_back(index);
 			}
 			return 0;
 		}
@@ -607,17 +641,23 @@ namespace Axiom {
 		instance.AudioHandle = audioHandle;
 		instance.IsValid = true;
 
-		return instanceId + 1;
+		return EncodeAudioInstanceId(index, instance.Generation);
 	}
 
 	void AudioManager::DestroySoundInstance(uint32_t instanceId) {
-		if (instanceId == 0) {
+		if (!DecodedAudioInstanceIsValid(instanceId)) {
 			return;
 		}
 
-		uint32_t index = instanceId - 1;
-
+		const uint32_t index = DecodeAudioInstanceIndex(instanceId);
 		if (index >= s_soundInstances.size()) {
+			return;
+		}
+
+		// Only recycle when the generation matches; a stale handle pointing at a
+		// recycled slot must be a no-op rather than freeing the live sound.
+		auto& slot = s_soundInstances[index];
+		if (!slot || slot->Generation != DecodeAudioInstanceGeneration(instanceId)) {
 			return;
 		}
 
@@ -625,17 +665,22 @@ namespace Axiom {
 	}
 
 	AudioManager::SoundInstance* AudioManager::GetSoundInstance(uint32_t instanceId) {
-		if (instanceId == 0) {
+		if (!DecodedAudioInstanceIsValid(instanceId)) {
 			return nullptr;
 		}
 
-		uint32_t index = instanceId - 1;
+		const uint32_t index = DecodeAudioInstanceIndex(instanceId);
 		if (index >= s_soundInstances.size()) {
 			return nullptr;
 		}
 
 		auto& slot = s_soundInstances[index];
 		if (!slot || !slot->IsValid) {
+			return nullptr;
+		}
+		// Generation mismatch = the caller's id was minted before this slot was recycled.
+		// Returning nullptr is the whole point of the generation field.
+		if (slot->Generation != DecodeAudioInstanceGeneration(instanceId)) {
 			return nullptr;
 		}
 
@@ -659,9 +704,23 @@ namespace Axiom {
 			ma_resource_manager_data_source_uninit(&instance.DataSource);
 			instance.HasDataSource = false;
 		}
+
+		// Bump generation BEFORE tearing down the unique_ptr, so any handle we just
+		// invalidated is recorded against the stale generation rather than the (zero)
+		// default that a freshly-allocated SoundInstance would have.
+		const uint16_t nextGeneration = static_cast<uint16_t>(instance.Generation + 1u);
+
 		// Reset the unique_ptr so the SoundInstance (and its embedded ma_sound, which
 		// the audio thread was reading) is fully torn down before the slot is reused.
 		slot.reset();
+
+		// Re-allocate an empty sentinel that just carries the bumped generation forward,
+		// so CreateSoundInstance's reuseGeneration read sees the correct value next time.
+		slot = std::make_unique<SoundInstance>();
+		slot->Generation = nextGeneration;
+		// Mark as not-IsValid so anyone holding the old id who slips past the generation
+		// check (they shouldn't) still sees an inert slot.
+		slot->IsValid = false;
 		s_freeInstanceIndices.push_back(index);
 	}
 

@@ -97,7 +97,7 @@ namespace Axiom {
 			item.AddMember("lastOpened", project.LastOpened);
 			root.Append(std::move(item));
 		}
-		File::WriteAllText(path, Json::Stringify(root, true));
+		(void)File::WriteAllText(path, Json::Stringify(root, true));
 	}
 
 	void LauncherRegistry::AddProject(const std::string& name, const std::string& path) {

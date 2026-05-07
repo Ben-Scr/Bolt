@@ -14,7 +14,7 @@ namespace Axiom {
 	//
 	// ValueChangedThisFrame is set on the frame the toggle flips,
 	// cleared at the start of the next tick.
-	struct UIToggleComponent {
+	struct ToggleComponent {
 		bool IsOn = false;
 		EntityHandle CheckmarkEntity = entt::null;
 

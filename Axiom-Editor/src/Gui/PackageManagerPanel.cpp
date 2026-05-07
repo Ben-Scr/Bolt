@@ -66,6 +66,17 @@ namespace Axiom {
 		if (m_DiskInstallWorker.joinable()) {
 			m_DiskInstallWorker.join();
 		}
+		// std::async-policy futures join in their destructors, so a still-running
+		// search or install would otherwise stall the UI thread on shutdown by
+		// blocking until dotnet returns. Drain explicitly here so we know exactly
+		// when the wait happens (and can sequence it before we null out m_Manager,
+		// which the worker may still be touching).
+		if (m_OperationFuture.valid()) {
+			m_OperationFuture.wait();
+		}
+		if (m_SearchFuture.valid()) {
+			m_SearchFuture.wait();
+		}
 		m_Manager = nullptr;
 		m_SearchResults.clear();
 		m_InstalledNuGetPackages.clear();

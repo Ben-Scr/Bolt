@@ -152,6 +152,38 @@ namespace Axiom {
 		}
 
 	private:
+		// Snapshot the current layer order into a local vector. The previous index-based
+		// iteration with re-`.Size()` checks was robust against iterator invalidation on
+		// container reallocation, but NOT against position shifts: PushLayer inserts at
+		// m_InsertIndex, which moves indices >= insertIndex by one, so the next iteration
+		// would land on the wrong slot (skip a sibling on insert, double-visit on pop).
+		// Snapshotting forward and reverse orders into local pointer vectors gives stable
+		// per-call iteration: layers added during the dispatch don't appear until next
+		// frame, layers popped during dispatch are still visited (their `OnX` runs), but
+		// no sibling is ever skipped or duplicated.
+		std::vector<Layer*> SnapshotLayerOrder() const {
+			std::vector<Layer*> out;
+			out.reserve(m_LayerStack.Size());
+			for (size_t i = 0; i < m_LayerStack.Size(); ++i) {
+				if (Layer* layer = const_cast<LayerStack&>(m_LayerStack).At(i)) {
+					out.push_back(layer);
+				}
+			}
+			return out;
+		}
+
+		std::vector<Layer*> SnapshotLayerOrderReversed() const {
+			std::vector<Layer*> out;
+			out.reserve(m_LayerStack.Size());
+			for (size_t i = m_LayerStack.Size(); i > 0; --i) {
+				if (Layer* layer = const_cast<LayerStack&>(m_LayerStack).At(i - 1)) {
+					out.push_back(layer);
+				}
+			}
+			return out;
+		}
+
+	private:
 		std::unique_ptr<Window> m_Window;
 		std::unique_ptr<Renderer2D> m_Renderer2D;
 		std::unique_ptr<GuiRenderer> m_GuiRenderer;
@@ -218,6 +250,18 @@ namespace Axiom {
 			if (s_Instance) {
 				s_Instance->m_WindowHasFocus = focused;
 				s_Instance->RefreshBackgroundPauseState();
+			}
+		}
+
+		// Iconify (minimize) state. Routed from Window's GLFW iconify callback because the
+		// framebuffer-resize-to-(0,0) path that previously fed m_IsMinimized doesn't fire on
+		// every platform / monitor configuration (multi-monitor, DPI-virtualized layouts, X11
+		// with certain WMs). Without this, the engine kept rendering at full target framerate
+		// while invisible — battery drain on laptops + CPU/GPU usage on a window the user
+		// can't see.
+		static void SetWindowMinimized(bool minimized) {
+			if (s_Instance) {
+				s_Instance->m_IsMinimized = minimized;
 			}
 		}
 	};

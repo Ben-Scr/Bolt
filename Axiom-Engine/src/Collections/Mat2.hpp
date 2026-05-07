@@ -11,6 +11,8 @@ namespace  Axiom {
     inline Mat2 Rotation(float radians) noexcept {
         float c = Cos(radians);
         float s = Sin(radians);
-        return Mat2(c, -s, s, c);
+        // glm matrices are column-major. This produces:
+        // x' = c*x - s*y, y' = s*x + c*y.
+        return Mat2(c, s, -s, c);
     }
 }

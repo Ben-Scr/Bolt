@@ -15,6 +15,24 @@
 
 namespace Axiom {
 
+#ifdef AIM_PLATFORM_WINDOWS
+	// Convert UTF-8 → UTF-16 for Windows wide-API calls. The previous byte-wise
+	// `std::wstring(narrow.begin(), narrow.end())` produced one wchar_t per byte,
+	// corrupting any path containing multi-byte UTF-8 (Unicode user folders,
+	// project names with accented characters, etc.). The wide path then failed
+	// to launch the external editor on any non-ASCII install.
+	static std::wstring Utf8ToWide(const std::string& utf8) {
+		if (utf8.empty()) return {};
+		const int needed = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+			static_cast<int>(utf8.size()), nullptr, 0);
+		if (needed <= 0) return {};
+		std::wstring out(static_cast<size_t>(needed), L'\0');
+		MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()),
+			out.data(), needed);
+		return out;
+	}
+#endif
+
 	std::vector<ExternalEditorInfo> ExternalEditor::s_Editors;
 	int ExternalEditor::s_SelectedIndex = 0;
 	bool ExternalEditor::s_Detected = false;
@@ -136,7 +154,7 @@ namespace Axiom {
 
 		Json::Value root = Json::Value::MakeObject();
 		root.AddMember("selectedEditor", selected);
-		File::WriteAllText(path, Json::Stringify(root, true));
+		(void)File::WriteAllText(path, Json::Stringify(root, true));
 	}
 
 	void ExternalEditor::LoadPreferences() {
@@ -209,7 +227,7 @@ namespace Axiom {
 	// to avoid false positives from the Axiom editor or other windows.
 	static bool IsVisualStudioOpen(const std::string& searchTitle) {
 		if (searchTitle.empty()) return false;
-		std::wstring wSearch(searchTitle.begin(), searchTitle.end());
+		std::wstring wSearch = Utf8ToWide(searchTitle);
 		std::wstring wVS = L"Visual Studio";
 		bool found = false;
 
@@ -237,7 +255,7 @@ namespace Axiom {
 		if (s_Editors.empty()) {
 			AIM_CORE_WARN_TAG("ExternalEditor", "No code editor available, falling back to OS default");
 #ifdef AIM_PLATFORM_WINDOWS
-			std::wstring wpath(filePath.begin(), filePath.end());
+			std::wstring wpath = Utf8ToWide(filePath);
 			ShellExecuteW(nullptr, L"open", wpath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 #endif
 			return;
@@ -303,7 +321,7 @@ namespace Axiom {
 				std::thread([devenvPath, sln, file]() {
 					// Step 1: Open the solution
 					std::string cmd1 = "\"" + devenvPath + "\" \"" + sln + "\"";
-					std::wstring wcmd1(cmd1.begin(), cmd1.end());
+					std::wstring wcmd1 = Utf8ToWide(cmd1);
 					std::vector<wchar_t> buf1(wcmd1.begin(), wcmd1.end());
 					buf1.push_back(L'\0');
 
@@ -322,7 +340,7 @@ namespace Axiom {
 					Sleep(4000);
 
 					std::string cmd2 = "\"" + devenvPath + "\" /edit \"" + file + "\"";
-					std::wstring wcmd2(cmd2.begin(), cmd2.end());
+					std::wstring wcmd2 = Utf8ToWide(cmd2);
 					std::vector<wchar_t> buf2(wcmd2.begin(), wcmd2.end());
 					buf2.push_back(L'\0');
 
@@ -369,7 +387,7 @@ namespace Axiom {
 
 		// Launch async so we don't block the engine editor
 		std::thread([fullCmd]() {
-			std::wstring wcmd(fullCmd.begin(), fullCmd.end());
+			std::wstring wcmd = Utf8ToWide(fullCmd);
 			std::vector<wchar_t> buf(wcmd.begin(), wcmd.end());
 			buf.push_back(L'\0');
 

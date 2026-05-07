@@ -42,6 +42,14 @@ namespace Axiom {
 
 	void Camera2DComponent::SetPosition(Vec2 p) {
 		if (auto* transform = TryGetTransform()) {
+			// Route through Transform2DComponent::SetPosition so we update the
+			// authored Local* value. Writing transform->Position directly here
+			// would be silently overwritten by the next TransformHierarchySystem
+			// propagation pass (which derives Position from LocalPosition) and
+			// the camera would snap back.
+			transform->SetPosition(p);
+			// Cache the world value too so UpdateView (and any same-frame
+			// reader) sees the new placement before propagation runs.
 			transform->Position = p;
 			UpdateView();
 		}
@@ -62,6 +70,7 @@ namespace Axiom {
 
 	void Camera2DComponent::SetRotation(float rad) {
 		if (auto* transform = TryGetTransform()) {
+			transform->SetRotation(rad);
 			transform->Rotation = rad;
 			UpdateView();
 		}

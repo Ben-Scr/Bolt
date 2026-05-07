@@ -103,6 +103,7 @@ namespace Axiom {
 		case PropertyType::AudioRef:
 		case PropertyType::AssetRef:
 		case PropertyType::SceneRef:
+		case PropertyType::FontRef:
 			return UIntValue != 0 ? std::to_string(UIntValue) : std::string();
 		case PropertyType::PrefabRef:
 			return UIntValue != 0 ? "prefab:" + std::to_string(UIntValue) : std::string();
@@ -185,6 +186,7 @@ namespace Axiom {
 		case PropertyType::AudioRef:
 		case PropertyType::AssetRef:
 		case PropertyType::SceneRef:
+		case PropertyType::FontRef:
 			v.UIntValue = text.empty() ? 0 : std::strtoull(text.c_str(), nullptr, 10);
 			break;
 		case PropertyType::PrefabRef: {

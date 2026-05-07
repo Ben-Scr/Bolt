@@ -48,11 +48,15 @@ namespace Axiom {
 
 		auto it = s_Icons.find(key);
 		if (it != s_Icons.end())
-			return it->second.Texture.GetHandle();
+			return it->second.Texture.GetHandle();   // 0 for negative-cache entries; caller already treats 0 as "no icon"
 
 		// Lazy-load from AxiomAssets/Textures/Editor/<group>/<name>/<name>_<size>.png
 		std::string editorDir = Path::ResolveAxiomAssets("Textures");
-		if (editorDir.empty()) return 0;
+		if (editorDir.empty()) {
+			// Cache the failure so subsequent frames don't keep retrying.
+			s_Icons[key] = IconEntry{};
+			return 0;
+		}
 
 		std::string filename = name + "_" + std::to_string(snapped) + ".png";
 		std::string fullpath = Path::Combine(editorDir, "Editor", GroupForName(name), name, filename);
@@ -62,7 +66,12 @@ namespace Axiom {
 		entry.Size = snapped;
 
 		if (!entry.Texture.IsValid()) {
+			// Negative-cache: insert an empty entry so the next per-frame call doesn't
+			// retry the load (which constructs a Texture2D, opens stb_image, hits the
+			// missing file, and warn-logs every frame). The cached entry has handle 0
+			// and the cache lookup above hands it back unchanged.
 			AIM_CORE_WARN("Editor icon not found: {}", fullpath);
+			s_Icons[key] = std::move(entry);
 			return 0;
 		}
 

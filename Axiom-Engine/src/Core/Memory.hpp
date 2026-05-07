@@ -20,6 +20,15 @@ namespace Axiom {
 		size_t TotalFreed = 0;
 	};
 
+	// Plain-value snapshot for diagnostic readers. Returned by value under the
+	// stats mutex so the diagnostic panel can't tear-read while a worker thread
+	// is mid-update.
+	struct AllocationStatsSnapshot
+	{
+		size_t TotalAllocated = 0;
+		size_t TotalFreed = 0;
+	};
+
 	struct Allocation
 	{
 		void* Memory = 0;
@@ -29,7 +38,10 @@ namespace Axiom {
 
 	namespace Memory
 	{
+		// Reference-returning legacy accessor: kept for source compatibility but
+		// races with concurrent allocations. Prefer GetAllocationStatsSnapshot.
 		AXIOM_API const AllocationStats& GetAllocationStats();
+		AXIOM_API AllocationStatsSnapshot GetAllocationStatsSnapshot();
 	}
 
 	template <class T>

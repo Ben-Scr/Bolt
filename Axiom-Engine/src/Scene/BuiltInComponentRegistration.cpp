@@ -8,6 +8,7 @@
 #include "Graphics/Text/FontManager.hpp"
 #include "Graphics/TextureManager.hpp"
 #include "Inspector/PropertyRegistration.hpp"
+#include "Math/Trigonometry.hpp"
 #include "Physics/PhysicsTypes.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
@@ -87,38 +88,38 @@ namespace Axiom {
 	void RegisterBuiltInComponents(SceneManager& sceneManager) {
 		// ── General ─────────────────────────────────────────────────
 
+		// The inspector edits the authored Local* values (Unity-style).
+		// For root entities Local matches World, so no visible behavior
+		// change; for children, the inspector now correctly shows the
+		// offset relative to the parent rather than the world snapshot.
 		RegisterComponent<Transform2DComponent>(sceneManager, "Transform 2D",
 			ComponentCategory::Component, "General", "Transform2D",
 			{
 				Properties::MakeWith<Vec2>("Position", "Position",
-					[](const Entity& e) { return e.GetComponent<Transform2DComponent>().Position; },
+					[](const Entity& e) { return e.GetComponent<Transform2DComponent>().LocalPosition; },
 					[](Entity& e, const Vec2& v) {
 						e.GetComponent<Transform2DComponent>().SetPosition(v);
 					}),
 				Properties::MakeWith<float>("Rotation", "Rotation",
-					[](const Entity& e) { return e.GetComponent<Transform2DComponent>().Rotation; },
-					[](Entity& e, float v) {
-						e.GetComponent<Transform2DComponent>().SetRotation(v);
+					[](const Entity& e) {
+						return Degrees(e.GetComponent<Transform2DComponent>().LocalRotation);
 					},
-					[]() { PropertyMetadata m; m.DragSpeed = 0.01f; return m; }()),
+					[](Entity& e, float v) {
+						e.GetComponent<Transform2DComponent>().SetRotation(Radians(v));
+					},
+					[]() { PropertyMetadata m; m.DragSpeed = 1.0f; return m; }()),
 				Properties::MakeWith<Vec2>("Scale", "Scale",
-					[](const Entity& e) { return e.GetComponent<Transform2DComponent>().Scale; },
+					[](const Entity& e) { return e.GetComponent<Transform2DComponent>().LocalScale; },
 					[](Entity& e, const Vec2& v) {
 						e.GetComponent<Transform2DComponent>().SetScale(v);
 					}),
 			});
 
-		RegisterComponent<RectTransformComponent>(sceneManager, "Rect Transform",
-			ComponentCategory::Component, "UI", "RectTransform",
-			{
-				Properties::Make("AnchorMin",        "Anchor Min",        &RectTransformComponent::AnchorMin),
-				Properties::Make("AnchorMax",        "Anchor Max",        &RectTransformComponent::AnchorMax),
-				Properties::Make("Pivot",            "Pivot",             &RectTransformComponent::Pivot),
-				Properties::Make("AnchoredPosition", "Anchored Position", &RectTransformComponent::AnchoredPosition),
-				Properties::Make("SizeDelta",        "Size",              &RectTransformComponent::SizeDelta),
-				Properties::Make("Rotation",         "Rotation",          &RectTransformComponent::Rotation),
-				Properties::Make("Scale",            "Scale",             &RectTransformComponent::Scale),
-			});
+		// Inspector is fully custom (DrawRectTransform2DInspector) so this
+		// component declares no PropertyDescriptors — they would be ignored
+		// anyway since custom drawInspector wins over properties.
+		RegisterComponent<RectTransform2DComponent>(sceneManager, "Rect Transform 2D",
+			ComponentCategory::Component, "UI", "RectTransform2D");
 
 		RegisterComponent<NameComponent>(sceneManager, "Name",
 			ComponentCategory::Component, "General", "name",
@@ -447,51 +448,51 @@ namespace Axiom {
 		// are visual presets that read it. They have no inspector
 		// fields beyond what the struct exposes — defaults are sane.
 
-		RegisterComponent<UIInteractableComponent>(sceneManager, "UI Interactable",
-			ComponentCategory::Component, "UI", "UIInteractable",
+		RegisterComponent<InteractableComponent>(sceneManager, "Interactable",
+			ComponentCategory::Component, "UI", "Interactable",
 			{
-				Properties::Make("Interactable", "Interactable", &UIInteractableComponent::Interactable),
+				Properties::Make("Interactable", "Interactable", &InteractableComponent::Interactable),
 			});
 
-		RegisterComponent<UIButtonComponent>(sceneManager, "UI Button",
-			ComponentCategory::Component, "UI", "UIButton",
+		RegisterComponent<ButtonComponent>(sceneManager, "Button",
+			ComponentCategory::Component, "UI", "Button",
 			{
-				Properties::Make("NormalColor",   "Normal Color",   &UIButtonComponent::NormalColor),
-				Properties::Make("HoveredColor",  "Hovered Color",  &UIButtonComponent::HoveredColor),
-				Properties::Make("PressedColor",  "Pressed Color",  &UIButtonComponent::PressedColor),
-				Properties::Make("DisabledColor", "Disabled Color", &UIButtonComponent::DisabledColor),
+				Properties::Make("NormalColor",   "Normal Color",   &ButtonComponent::NormalColor),
+				Properties::Make("HoveredColor",  "Hovered Color",  &ButtonComponent::HoveredColor),
+				Properties::Make("PressedColor",  "Pressed Color",  &ButtonComponent::PressedColor),
+				Properties::Make("DisabledColor", "Disabled Color", &ButtonComponent::DisabledColor),
 			});
 
-		RegisterComponent<UISliderComponent>(sceneManager, "UI Slider",
-			ComponentCategory::Component, "UI", "UISlider",
+		RegisterComponent<SliderComponent>(sceneManager, "Slider",
+			ComponentCategory::Component, "UI", "Slider",
 			{
 				Properties::MakeWith<float>("Value", "Value",
-					[](const Entity& e) { return e.GetComponent<UISliderComponent>().Value; },
-					[](Entity& e, float v) { e.GetComponent<UISliderComponent>().Value = v; },
+					[](const Entity& e) { return e.GetComponent<SliderComponent>().Value; },
+					[](Entity& e, float v) { e.GetComponent<SliderComponent>().Value = v; },
 					[]() { PropertyMetadata m; m.DragSpeed = 0.01f; return m; }()),
-				Properties::Make("MinValue",     "Min Value",     &UISliderComponent::MinValue),
-				Properties::Make("MaxValue",     "Max Value",     &UISliderComponent::MaxValue),
-				Properties::Make("WholeNumbers", "Whole Numbers", &UISliderComponent::WholeNumbers),
+				Properties::Make("MinValue",     "Min Value",     &SliderComponent::MinValue),
+				Properties::Make("MaxValue",     "Max Value",     &SliderComponent::MaxValue),
+				Properties::Make("WholeNumbers", "Whole Numbers", &SliderComponent::WholeNumbers),
 			});
 
-		RegisterComponent<UIInputFieldComponent>(sceneManager, "UI Input Field",
-			ComponentCategory::Component, "UI", "UIInputField",
+		RegisterComponent<InputFieldComponent>(sceneManager, "Input Field",
+			ComponentCategory::Component, "UI", "InputField",
 			{
-				Properties::Make("Text",            "Text",            &UIInputFieldComponent::Text),
-				Properties::Make("PlaceholderText", "Placeholder",     &UIInputFieldComponent::PlaceholderText),
-				Properties::Make("CharacterLimit",  "Character Limit", &UIInputFieldComponent::CharacterLimit),
+				Properties::Make("Text",            "Text",            &InputFieldComponent::Text),
+				Properties::Make("PlaceholderText", "Placeholder",     &InputFieldComponent::PlaceholderText),
+				Properties::Make("CharacterLimit",  "Character Limit", &InputFieldComponent::CharacterLimit),
 			});
 
-		RegisterComponent<UIDropdownComponent>(sceneManager, "UI Dropdown",
-			ComponentCategory::Component, "UI", "UIDropdown",
+		RegisterComponent<DropdownComponent>(sceneManager, "Dropdown",
+			ComponentCategory::Component, "UI", "Dropdown",
 			{
-				Properties::Make("SelectedIndex", "Selected Index", &UIDropdownComponent::SelectedIndex),
+				Properties::Make("SelectedIndex", "Selected Index", &DropdownComponent::SelectedIndex),
 			});
 
-		RegisterComponent<UIToggleComponent>(sceneManager, "UI Toggle",
-			ComponentCategory::Component, "UI", "UIToggle",
+		RegisterComponent<ToggleComponent>(sceneManager, "Toggle",
+			ComponentCategory::Component, "UI", "Toggle",
 			{
-				Properties::Make("IsOn", "Is On", &UIToggleComponent::IsOn),
+				Properties::Make("IsOn", "Is On", &ToggleComponent::IsOn),
 			});
 
 		// HierarchyComponent is real but managed via Entity::SetParent;
@@ -499,11 +500,25 @@ namespace Axiom {
 		// inspector hides it from the picker.
 		RegisterComponent<HierarchyComponent>(sceneManager, "Hierarchy", ComponentCategory::Tag);
 
+		// ── Scripting ───────────────────────────────────────────────
+		// Engine-side registration so non-editor builds (Runtime, Launcher) include
+		// ScriptComponent in the registry. Without this, generic registry-driven
+		// flows (CopyComponents, future serializer hooks) silently skip scripts
+		// outside the editor. The editor still calls AttachInspector to layer in
+		// the per-script field UI; ComponentRegistry::Register merges drawInspector
+		// from a prior entry so the inspector survives.
+		RegisterComponent<ScriptComponent>(sceneManager, "Scripts",
+			ComponentCategory::Component, "Scripting", "Scripts");
+
 		// ── Conflicts ───────────────────────────────────────────────
 		// One renderer per entity (Tilemap2D adds its own conflicts in its package init).
 		DeclareConflict<SpriteRendererComponent, ParticleSystem2DComponent>(sceneManager);
 		DeclareConflict<SpriteRendererComponent, ImageComponent>(sceneManager);
 		DeclareConflict<ImageComponent, ParticleSystem2DComponent>(sceneManager);
+
+		// One spatial transform per entity — UI rects and world-space transforms
+		// occupy the same role and should not coexist on a single entity.
+		DeclareConflict<Transform2DComponent, RectTransform2DComponent>(sceneManager);
 
 		// Box2D and Axiom-Physics stacks must not be mixed per-entity.
 		DeclareConflict<Rigidbody2DComponent, FastBody2DComponent>(sceneManager);

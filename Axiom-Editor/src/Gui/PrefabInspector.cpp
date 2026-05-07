@@ -58,7 +58,7 @@ namespace Axiom {
 		// Deserialize as a Scene-origin entity (not a Prefab instance) so the
 		// inspector edits a self-contained tree that round-trips back to the
 		// .prefab file via SaveEntityToFile without leaking instance metadata.
-		m_RootEntity = SceneSerializer::DeserializeEntityFromValue(*m_PrefabScene, *entityValue);
+		m_RootEntity = SceneSerializer::DeserializeEntityFromValue(*m_PrefabScene, root);
 		// DeserializeEntityFromValue has already marked the detached scene
 		// dirty as a side effect of creating the entity. Reset so we only
 		// flag dirty on actual user edits.
@@ -193,20 +193,14 @@ namespace Axiom {
 		// instance propagation uses this as the baseline for computing each
 		// instance's per-field overrides — diffing against the new source
 		// after save would lose the user's overrides.
-		Json::Value previousSourceEntity;
+		Json::Value previousSourceRoot;
 		bool havePreviousSource = false;
 		if (File::Exists(m_PrefabPath)) {
 			Json::Value previousRoot;
 			std::string parseError;
 			if (Json::TryParse(File::ReadAllText(m_PrefabPath), previousRoot, &parseError) && previousRoot.IsObject()) {
-				if (const Json::Value* entity = previousRoot.FindMember("Entity")) {
-					previousSourceEntity = *entity;
-					havePreviousSource = true;
-				}
-				else if (const Json::Value* legacy = previousRoot.FindMember("prefab")) {
-					previousSourceEntity = *legacy;
-					havePreviousSource = true;
-				}
+				previousSourceRoot = previousRoot;
+				havePreviousSource = true;
 			}
 		}
 
@@ -217,7 +211,7 @@ namespace Axiom {
 
 		const uint64_t prefabGuid = AssetRegistry::GetOrCreateAssetUUID(m_PrefabPath);
 		if (prefabGuid != 0 && havePreviousSource) {
-			PropagateToLiveInstances(prefabGuid, previousSourceEntity);
+			PropagateToLiveInstances(prefabGuid, previousSourceRoot);
 		}
 		return true;
 	}

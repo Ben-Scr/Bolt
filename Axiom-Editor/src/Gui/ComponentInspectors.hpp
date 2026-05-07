@@ -20,4 +20,12 @@ namespace Axiom {
 	// per-shape conditional UI don't map to declarative properties.
 	void DrawParticleSystem2DInspector(std::span<const Entity> entities);
 
+	// Custom-only inspector — Unity-style RectTransform layout: stacked
+	// column headers ("Pos X / Pos Y", "Width / Height") for the position
+	// + size pair, then a collapsible Anchors group, with the remaining
+	// rows (Pivot, Rotation, Scale) using inline axis labels. Doesn't fit
+	// the declarative property model because it wants per-row sub-labels
+	// and a different layout than the standard "label : Vec2 drag" row.
+	void DrawRectTransform2DInspector(std::span<const Entity> entities);
+
 } // namespace Axiom

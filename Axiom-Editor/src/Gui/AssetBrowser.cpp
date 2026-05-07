@@ -144,7 +144,8 @@ namespace Axiom {
 		if (ext == ".cs")                                                    return "file_cs";
 		if (ext == ".cpp" || ext == ".c" || ext == ".h" || ext == ".hpp")    return "file_fallback";
 		if (ext == ".scene" || ext == ".axiom")                               return "file_scene";
-		if (ext == ".prefab")                                                return "file_fallback";
+		if (ext == ".prefab")                                                return "file_prefab";
+		if (ext == ".shader")                                                return "file_shader";
 		if (ext == ".json")                                                  return "file_json";
 		if (ext == ".xml")                                                   return "file_xml";
 		if (ext == ".bin")                                                   return "file_bin";

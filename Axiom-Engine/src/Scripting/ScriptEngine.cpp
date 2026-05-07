@@ -52,6 +52,17 @@ namespace Axiom {
 
 	void ScriptEngine::LoadCoreAssembly(const std::string& path)
 	{
+		// Hard idempotency: re-running the host bridge Initialize would re-populate
+		// s_Callbacks while old GCHandles from the previous Initialize are still
+		// live, leaking those handles permanently. Re-init is unsupported — Shutdown
+		// can't undo CoreCLR initialization, so the only safe path is "init exactly
+		// once per process".
+		if (s_Initialized)
+		{
+			AIM_CORE_WARN_TAG("ScriptEngine", "LoadCoreAssembly called after engine already initialized; ignoring (re-init is unsupported).");
+			return;
+		}
+
 		s_CoreAssemblyPath = path;
 
 		if (!std::filesystem::exists(path))

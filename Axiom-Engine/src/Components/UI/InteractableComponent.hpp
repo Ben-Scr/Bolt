@@ -5,7 +5,7 @@ namespace Axiom {
 	// Drives one frame of UI input state for an entity that wants to react
 	// to mouse events. UIEventSystem updates these flags every frame from
 	// the global Input state plus a hit-test against the entity's
-	// RectTransform bounds. Game code (scripts, native systems) reads them
+	// RectTransform2D bounds. Game code (scripts, native systems) reads them
 	// for the same kind of "if hovered, show tooltip" / "if clicked, do
 	// thing" logic that's idiomatic in any UI toolkit.
 	//
@@ -28,7 +28,7 @@ namespace Axiom {
 	//
 	// Set Interactable = false to opt out of input entirely (greyed-out
 	// disabled state, modal blocking, etc.) without removing the component.
-	struct UIInteractableComponent {
+	struct InteractableComponent {
 		bool Interactable = true;
 
 		bool IsHovered = false;

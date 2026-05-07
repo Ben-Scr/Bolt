@@ -172,7 +172,9 @@ namespace Axiom {
 			ImGui::Text("Time Scale:  %.2f", time.GetTimeScale());
 
 			if (ImGui::CollapsingHeader("Memory")) {
-				auto stats = Memory::GetAllocationStats();
+				// Snapshot under lock — the legacy reference accessor races with
+				// allocations on other threads and can yield torn size_t pairs.
+				const AllocationStatsSnapshot stats = Memory::GetAllocationStatsSnapshot();
 				size_t activeMem = stats.TotalAllocated - stats.TotalFreed;
 
 				if (ImGui::BeginTable("MemoryTable", 2)) {

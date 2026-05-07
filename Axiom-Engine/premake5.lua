@@ -253,6 +253,12 @@ project "Axiom-Engine"
     filter "files:**/DotNetHost.cpp"
         flags { "NoPCH" }
 
+    -- BuiltInComponentRegistration.cpp pulls heavy template instantiations from every
+    -- registered component's Properties::Make / inspector descriptors, blowing past
+    -- the COFF section limit on MSVC without /bigobj.
+    filter "files:**/BuiltInComponentRegistration.cpp"
+        buildoptions { "/bigobj" }
+
     filter "system:windows"
         systemversion "latest"
 

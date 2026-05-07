@@ -63,6 +63,48 @@ namespace Axiom {
 			}
 		}
 
+		// Snapshot all registered begin/end/hit callbacks for a shape into a pod struct
+		// the caller can restore later. Used to bridge BoxCollider2DComponent::SetSensor:
+		// the underlying b2Shape gets recreated (changing its id), but the user-
+		// registered collision callbacks should survive. Caller pattern is
+		//   auto saved = dispatcher.SnapshotCallbacks(oldShape);
+		//   ... DestroyShape() / CreateShape() ...
+		//   dispatcher.RestoreCallbacks(newShape, std::move(saved));
+		struct CallbackSnapshot {
+			std::vector<ContactBeginCallback> Begin;
+			std::vector<ContactEndCallback> End;
+			std::vector<ContactHitCallback> Hit;
+		};
+
+		CallbackSnapshot SnapshotCallbacks(b2ShapeId id) {
+			CallbackSnapshot snapshot;
+			if (auto it = m_begin.find(id); it != m_begin.end()) snapshot.Begin = std::move(it->second);
+			if (auto it = m_end.find(id);   it != m_end.end())   snapshot.End   = std::move(it->second);
+			if (auto it = m_hit.find(id);   it != m_hit.end())   snapshot.Hit   = std::move(it->second);
+			return snapshot;
+		}
+
+		void RestoreCallbacks(b2ShapeId id, CallbackSnapshot&& snapshot) {
+			if (!snapshot.Begin.empty()) {
+				auto& dest = m_begin[id];
+				dest.insert(dest.end(),
+					std::make_move_iterator(snapshot.Begin.begin()),
+					std::make_move_iterator(snapshot.Begin.end()));
+			}
+			if (!snapshot.End.empty()) {
+				auto& dest = m_end[id];
+				dest.insert(dest.end(),
+					std::make_move_iterator(snapshot.End.begin()),
+					std::make_move_iterator(snapshot.End.end()));
+			}
+			if (!snapshot.Hit.empty()) {
+				auto& dest = m_hit[id];
+				dest.insert(dest.end(),
+					std::make_move_iterator(snapshot.Hit.begin()),
+					std::make_move_iterator(snapshot.Hit.end()));
+			}
+		}
+
 		void Clear() {
 			m_begin.clear();
 			m_end.clear();

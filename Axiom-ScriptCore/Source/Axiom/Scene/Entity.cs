@@ -183,6 +183,18 @@ public class Entity : IEquatable<Entity>
         }
     }
 
+    // Hot-reload support: the AssemblyLoadContext that owns user-defined Component
+    // subclasses can only unload once *every* instance is unreachable. Component
+    // entries in s_ManagedComponentStore reference user types and therefore root
+    // the context — clearing this dictionary on assembly unload is required for
+    // the ALC to actually collect and free its types.
+    internal static void ClearManagedComponentStore()
+    {
+        foreach (var component in s_ManagedComponentStore.Values)
+            component.Invalidate();
+        s_ManagedComponentStore.Clear();
+    }
+
     public T? AddComponent<T>() where T : Component, new()
     {
         if (IsPrefabAsset)

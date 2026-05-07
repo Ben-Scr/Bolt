@@ -17,8 +17,9 @@
 #include "Components/Physics/Rigidbody2DComponent.hpp"
 #include "Components/Physics/BoxCollider2DComponent.hpp"
 #include "Components/Audio/AudioSourceComponent.hpp"
-#include "Components/General/RectTransformComponent.hpp"
+#include "Components/General/RectTransform2DComponent.hpp"
 #include "Components/General/HierarchyComponent.hpp"
+#include "Components/General/PrefabInstanceComponent.hpp"
 #include "Components/Graphics/ImageComponent.hpp"
 #include "Components/Graphics/ParticleSystem2DComponent.hpp"
 #include "Components/General/UUIDComponent.hpp"
@@ -31,12 +32,16 @@
 #include "Graphics/TextureManager.hpp"
 #include "Audio/AudioManager.hpp"
 #include "Physics/PhysicsTypes.hpp"
+#include "Core/Application.hpp"
 #include "Core/Log.hpp"
 
 #include <cmath>
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Axiom {
@@ -79,8 +84,22 @@ namespace Axiom {
 			RemoveObjectMember(value, "uuid");
 		}
 
+		void RemovePrefabRuntimeIdentityMembers(Value& value) {
+			RemoveObjectMember(value, "Origin");
+			RemoveObjectMember(value, "RuntimeID");
+			RemoveObjectMember(value, "EntityID");
+			RemoveObjectMember(value, "SceneGUID");
+			RemoveObjectMember(value, "PrefabGUID");
+		}
+
 		bool JsonEquivalent(const Value& left, const Value& right) {
-			return Json::Stringify(left, false) == Json::Stringify(right, false);
+			// Structural equality via Json::operator==, NOT stringify-and-compare. The
+			// previous Stringify approach allocated two strings per leaf comparison;
+			// BuildOverridePatch invokes JsonEquivalent O(N) times per save, and the
+			// editor's prefab inspector calls ComputeInstanceOverrides every frame on
+			// each prefab instance — so the per-leaf allocations were a real hot-path
+			// hazard.
+			return left == right;
 		}
 
 		void BuildOverridePatch(const Value& prefabValue, const Value& instanceValue, const std::string& prefix, Value& overrides) {
@@ -105,7 +124,41 @@ namespace Axiom {
 			}
 		}
 
-		bool LoadPrefabEntityValue(uint64_t prefabGuid, Value& outEntityValue) {
+		bool ReadPrefabEntityValuesFromRoot(const Value& root, std::vector<Value>& outEntities) {
+			outEntities.clear();
+			if (!root.IsObject()) {
+				return false;
+			}
+
+			if (const Value* entities = GetArrayMember(root, "Entities")) {
+				for (const Value& entityValue : entities->GetArray()) {
+					if (entityValue.IsObject()) {
+						outEntities.push_back(entityValue);
+					}
+				}
+				if (!outEntities.empty()) {
+					return true;
+				}
+			}
+
+			if (const Value* entityValue = GetObjectMember(root, "Entity")) {
+				outEntities.push_back(*entityValue);
+				return true;
+			}
+			if (const Value* entityValue = GetObjectMember(root, "prefab")) {
+				outEntities.push_back(*entityValue);
+				return true;
+			}
+
+			if (root.FindMember("Transform2D") || root.FindMember("Scripts") || root.FindMember("Name")) {
+				outEntities.push_back(root);
+				return true;
+			}
+
+			return false;
+		}
+
+		bool LoadPrefabEntityValues(uint64_t prefabGuid, std::vector<Value>& outEntities) {
 			const std::string prefabPath = AssetRegistry::ResolvePath(prefabGuid);
 			if (prefabPath.empty() || !File::Exists(prefabPath)) {
 				return false;
@@ -118,24 +171,249 @@ namespace Axiom {
 				return false;
 			}
 
-			if (const Value* entityValue = GetObjectMember(root, "Entity")) {
-				outEntityValue = *entityValue;
-				return true;
-			}
-			if (const Value* entityValue = GetObjectMember(root, "prefab")) {
-				outEntityValue = *entityValue;
-				return true;
+			return ReadPrefabEntityValuesFromRoot(root, outEntities);
+		}
+
+		bool LoadPrefabEntityValue(uint64_t prefabGuid, Value& outEntityValue) {
+			std::vector<Value> entities;
+			if (!LoadPrefabEntityValues(prefabGuid, entities) || entities.empty()) {
+				return false;
 			}
 
-			if (root.FindMember("Transform2D") || root.FindMember("Scripts") || root.FindMember("Name")) {
-				outEntityValue = root;
-				return true;
-			}
-
-			return false;
+			outEntityValue = entities.front();
+			return true;
 		}
 
 		Value SerializeEntity(Scene& scene, EntityHandle entity);
+		void SerializePrefabSourceTree(Scene& scene, EntityHandle root, Value& outRootEntity, Value& outEntities);
+		void SerializeClipboardEntityTree(Scene& scene, EntityHandle root, Value& outRootEntity, Value& outEntities);
+
+		uint64_t GetPrefabSourceEntityId(Scene& scene, EntityHandle entity) {
+			auto& registry = scene.GetRegistry();
+			if (registry.all_of<PrefabInstanceComponent>(entity)) {
+				const auto& prefabInstance = registry.get<PrefabInstanceComponent>(entity);
+				if (prefabInstance.SourceEntityId != 0) {
+					return prefabInstance.SourceEntityId;
+				}
+			}
+
+			if (registry.all_of<UUIDComponent>(entity)) {
+				return static_cast<uint64_t>(registry.get<UUIDComponent>(entity).Id);
+			}
+
+			const UUID generatedId;
+			registry.emplace_or_replace<UUIDComponent>(entity, generatedId);
+			return static_cast<uint64_t>(generatedId);
+		}
+
+		std::vector<EntityHandle> CollectEntitySubtree(Scene& scene, EntityHandle root) {
+			std::vector<EntityHandle> entities;
+			auto& registry = scene.GetRegistry();
+			std::unordered_set<uint32_t> visited;
+
+			std::function<void(EntityHandle)> visit = [&](EntityHandle entity) {
+				if (entity == entt::null || !registry.valid(entity)) {
+					return;
+				}
+
+				const uint32_t key = static_cast<uint32_t>(entity);
+				if (!visited.insert(key).second) {
+					return;
+				}
+
+				entities.push_back(entity);
+				if (!registry.all_of<HierarchyComponent>(entity)) {
+					return;
+				}
+
+				const auto children = registry.get<HierarchyComponent>(entity).Children;
+				for (EntityHandle child : children) {
+					visit(child);
+				}
+			};
+
+			visit(root);
+			return entities;
+		}
+
+		bool IsNestedPrefabInstanceChild(Scene& scene, EntityHandle entity) {
+			if (scene.GetEntityOrigin(entity) != EntityOrigin::Prefab) {
+				return false;
+			}
+
+			auto& registry = scene.GetRegistry();
+			if (!registry.all_of<HierarchyComponent>(entity)) {
+				return false;
+			}
+
+			const EntityHandle parent = registry.get<HierarchyComponent>(entity).Parent;
+			return parent != entt::null
+				&& registry.valid(parent)
+				&& scene.GetEntityOrigin(parent) == EntityOrigin::Prefab
+				&& static_cast<uint64_t>(scene.GetPrefabGUID(parent)) == static_cast<uint64_t>(scene.GetPrefabGUID(entity));
+		}
+
+		void RemoveEntityComparisonIdentityMembers(Value& value) {
+			RemoveEntityIdentityMembers(value);
+			RemoveObjectMember(value, "parentUuid");
+		}
+
+		std::unordered_map<uint64_t, const Value*> BuildSourceEntityMap(const std::vector<Value>& entities) {
+			std::unordered_map<uint64_t, const Value*> bySourceId;
+			bySourceId.reserve(entities.size());
+			for (const Value& entityValue : entities) {
+				const uint64_t sourceId = GetUInt64Member(entityValue, "uuid", 0);
+				if (sourceId != 0) {
+					bySourceId[sourceId] = &entityValue;
+				}
+			}
+			return bySourceId;
+		}
+
+		void BuildPrefabOverrideSet(
+			Scene& scene,
+			EntityHandle entity,
+			const std::vector<Value>& sourceEntities,
+			Value& outRootOverrides,
+			Value& outEntityOverrides) {
+			outRootOverrides = Value::MakeObject();
+			outEntityOverrides = Value::MakeObject();
+			if (sourceEntities.empty()) {
+				return;
+			}
+
+			Value currentRoot;
+			Value currentEntitiesValue;
+			SerializePrefabSourceTree(scene, entity, currentRoot, currentEntitiesValue);
+
+			Value sourceRoot = sourceEntities.front();
+			RemoveEntityComparisonIdentityMembers(sourceRoot);
+			Value currentRootComparable = currentRoot;
+			RemoveEntityComparisonIdentityMembers(currentRootComparable);
+			BuildOverridePatch(sourceRoot, currentRootComparable, {}, outRootOverrides);
+
+			const auto sourceById = BuildSourceEntityMap(sourceEntities);
+			if (!currentEntitiesValue.IsArray()) {
+				return;
+			}
+
+			for (const Value& currentEntityValue : currentEntitiesValue.GetArray()) {
+				const uint64_t sourceId = GetUInt64Member(currentEntityValue, "uuid", 0);
+				if (sourceId == 0) {
+					continue;
+				}
+
+				const auto sourceIt = sourceById.find(sourceId);
+				if (sourceIt == sourceById.end() || !sourceIt->second) {
+					continue;
+				}
+
+				Value sourceComparable = *sourceIt->second;
+				Value currentComparable = currentEntityValue;
+				RemoveEntityComparisonIdentityMembers(sourceComparable);
+				RemoveEntityComparisonIdentityMembers(currentComparable);
+
+				Value entityOverrides = Value::MakeObject();
+				BuildOverridePatch(sourceComparable, currentComparable, {}, entityOverrides);
+				if (!entityOverrides.GetObject().empty()) {
+					outEntityOverrides.AddMember(std::to_string(sourceId), std::move(entityOverrides));
+				}
+			}
+		}
+
+		void SerializePrefabSourceTree(Scene& scene, EntityHandle root, Value& outRootEntity, Value& outEntities) {
+			outRootEntity = Value::MakeObject();
+			outEntities = Value::MakeArray();
+
+			const std::vector<EntityHandle> subtree = CollectEntitySubtree(scene, root);
+			if (subtree.empty()) {
+				return;
+			}
+
+			auto& registry = scene.GetRegistry();
+			std::unordered_map<uint32_t, uint64_t> sourceIds;
+			sourceIds.reserve(subtree.size());
+			for (EntityHandle entity : subtree) {
+				sourceIds[static_cast<uint32_t>(entity)] = GetPrefabSourceEntityId(scene, entity);
+			}
+
+			for (EntityHandle entity : subtree) {
+				Value entityValue = SerializeEntity(scene, entity);
+				RemovePrefabRuntimeIdentityMembers(entityValue);
+
+				const uint64_t sourceId = sourceIds[static_cast<uint32_t>(entity)];
+				if (sourceId != 0) {
+					entityValue.AddMember("uuid", Value(std::to_string(sourceId)));
+				}
+
+				if (entity == root) {
+					RemoveObjectMember(entityValue, "parentUuid");
+				}
+				else {
+					EntityHandle parent = entt::null;
+					if (registry.all_of<HierarchyComponent>(entity)) {
+						parent = registry.get<HierarchyComponent>(entity).Parent;
+					}
+
+					const auto parentIt = sourceIds.find(static_cast<uint32_t>(parent));
+					if (parentIt != sourceIds.end() && parentIt->second != 0) {
+						entityValue.AddMember("parentUuid", Value(std::to_string(parentIt->second)));
+					}
+					else {
+						RemoveObjectMember(entityValue, "parentUuid");
+					}
+				}
+
+				if (entity == root) {
+					outRootEntity = entityValue;
+				}
+				outEntities.Append(std::move(entityValue));
+			}
+		}
+
+		void SerializeClipboardEntityTree(Scene& scene, EntityHandle root, Value& outRootEntity, Value& outEntities) {
+			outRootEntity = Value::MakeObject();
+			outEntities = Value::MakeArray();
+
+			const std::vector<EntityHandle> subtree = CollectEntitySubtree(scene, root);
+			if (subtree.empty()) {
+				return;
+			}
+
+			auto& registry = scene.GetRegistry();
+			std::unordered_map<uint32_t, uint64_t> clipboardIds;
+			clipboardIds.reserve(subtree.size());
+			uint64_t nextClipboardId = 1;
+			for (EntityHandle entity : subtree) {
+				clipboardIds[static_cast<uint32_t>(entity)] = nextClipboardId++;
+			}
+
+			for (EntityHandle entity : subtree) {
+				Value entityValue = SerializeEntity(scene, entity);
+				RemoveEntityIdentityMembers(entityValue);
+				RemoveObjectMember(entityValue, "parentUuid");
+
+				const uint64_t clipboardId = clipboardIds[static_cast<uint32_t>(entity)];
+				entityValue.AddMember("uuid", Value(std::to_string(clipboardId)));
+
+				if (entity != root) {
+					EntityHandle parent = entt::null;
+					if (registry.all_of<HierarchyComponent>(entity)) {
+						parent = registry.get<HierarchyComponent>(entity).Parent;
+					}
+
+					const auto parentIt = clipboardIds.find(static_cast<uint32_t>(parent));
+					if (parentIt != clipboardIds.end() && parentIt->second != 0) {
+						entityValue.AddMember("parentUuid", Value(std::to_string(parentIt->second)));
+					}
+				}
+
+				if (entity == root) {
+					outRootEntity = entityValue;
+				}
+				outEntities.Append(std::move(entityValue));
+			}
+		}
 
 		Value SerializePrefabInstance(Scene& scene, EntityHandle entity) {
 			Value instanceValue = Value::MakeObject();
@@ -143,18 +421,35 @@ namespace Axiom {
 			instanceValue.AddMember("Origin", Value("Prefab"));
 			instanceValue.AddMember("PrefabGUID", Value(std::to_string(prefabGuid)));
 
-			Value prefabEntityValue;
-			if (prefabGuid == 0 || !LoadPrefabEntityValue(prefabGuid, prefabEntityValue)) {
+			auto& registry = scene.GetRegistry();
+			if (registry.all_of<UUIDComponent>(entity)) {
+				const uint64_t uuid = static_cast<uint64_t>(registry.get<UUIDComponent>(entity).Id);
+				instanceValue.AddMember("uuid", Value(std::to_string(uuid)));
+			}
+
+			if (registry.all_of<HierarchyComponent>(entity)) {
+				const auto& hierarchy = registry.get<HierarchyComponent>(entity);
+				if (hierarchy.Parent != entt::null
+					&& registry.valid(hierarchy.Parent)
+					&& registry.all_of<UUIDComponent>(hierarchy.Parent))
+				{
+					const uint64_t parentUuid = static_cast<uint64_t>(registry.get<UUIDComponent>(hierarchy.Parent).Id);
+					instanceValue.AddMember("parentUuid", Value(std::to_string(parentUuid)));
+				}
+			}
+
+			std::vector<Value> prefabEntities;
+			if (prefabGuid == 0 || !LoadPrefabEntityValues(prefabGuid, prefabEntities)) {
 				return instanceValue;
 			}
 
-			Value currentEntityValue = SerializeEntity(scene, entity);
-			RemoveEntityIdentityMembers(prefabEntityValue);
-			RemoveEntityIdentityMembers(currentEntityValue);
-
-			Value overrides = Value::MakeObject();
-			BuildOverridePatch(prefabEntityValue, currentEntityValue, {}, overrides);
+			Value overrides;
+			Value entityOverrides;
+			BuildPrefabOverrideSet(scene, entity, prefabEntities, overrides, entityOverrides);
 			instanceValue.AddMember("Overrides", std::move(overrides));
+			if (!entityOverrides.GetObject().empty()) {
+				instanceValue.AddMember("EntityOverrides", std::move(entityOverrides));
+			}
 			return instanceValue;
 		}
 
@@ -324,11 +619,15 @@ namespace Axiom {
 			if (registry.all_of<Transform2DComponent>(entity)) {
 				const auto& transform = registry.get<Transform2DComponent>(entity);
 				Value transformValue = Value::MakeObject();
-				transformValue.AddMember("posX", Value(transform.Position.x));
-				transformValue.AddMember("posY", Value(transform.Position.y));
-				transformValue.AddMember("rotation", Value(transform.Rotation));
-				transformValue.AddMember("scaleX", Value(transform.Scale.x));
-				transformValue.AddMember("scaleY", Value(transform.Scale.y));
+				// Local* are the authored fields. The legacy "posX/posY/rotation
+				// /scaleX/scaleY" keys are still written so older builds and
+				// external tools that read the JSON keep working — for root
+				// entities they hold the same value as the Local* keys.
+				transformValue.AddMember("posX", Value(transform.LocalPosition.x));
+				transformValue.AddMember("posY", Value(transform.LocalPosition.y));
+				transformValue.AddMember("rotation", Value(transform.LocalRotation));
+				transformValue.AddMember("scaleX", Value(transform.LocalScale.x));
+				transformValue.AddMember("scaleY", Value(transform.LocalScale.y));
 				entityValue.AddMember("Transform2D", std::move(transformValue));
 			}
 
@@ -536,8 +835,8 @@ namespace Axiom {
 				entityValue.AddMember("ParticleSystem2D", std::move(particleValue));
 			}
 
-			if (registry.all_of<RectTransformComponent>(entity)) {
-				const auto& rectTransform = registry.get<RectTransformComponent>(entity);
+			if (registry.all_of<RectTransform2DComponent>(entity)) {
+				const auto& rectTransform = registry.get<RectTransform2DComponent>(entity);
 				Value rectValue = Value::MakeObject();
 				rectValue.AddMember("anchorMinX", Value(rectTransform.AnchorMin.x));
 				rectValue.AddMember("anchorMinY", Value(rectTransform.AnchorMin.y));
@@ -552,7 +851,7 @@ namespace Axiom {
 				rectValue.AddMember("rotation", Value(rectTransform.Rotation));
 				rectValue.AddMember("scaleX", Value(rectTransform.Scale.x));
 				rectValue.AddMember("scaleY", Value(rectTransform.Scale.y));
-				entityValue.AddMember("RectTransform", std::move(rectValue));
+				entityValue.AddMember("RectTransform2D", std::move(rectValue));
 			}
 
 			if (registry.all_of<ImageComponent>(entity)) {
@@ -607,9 +906,9 @@ namespace Axiom {
 			}
 
 			// Registry-driven serialize for package components (mirror of deserialize sweep).
-			{
+			if (Application* app = Application::GetInstance(); app && app->GetSceneManager()) {
 				Entity entityWrapper = scene.GetEntity(entity);
-				SceneManager::Get().GetComponentRegistry().ForEachComponentInfo(
+				app->GetSceneManager()->GetComponentRegistry().ForEachComponentInfo(
 					[&](const std::type_index&, const ComponentInfo& info) {
 						if (!info.serialize || !info.has || info.serializedName.empty()) return;
 						if (!info.has(entityWrapper)) return;
@@ -632,6 +931,41 @@ namespace Axiom {
 		}
 	} // namespace
 
+	// External-linkage adapters so SceneSerializerDeserialize.cpp (and any other TU)
+	// can use the canonical helpers without re-implementing them. The helper bodies
+	// live in the anonymous namespace above (so they keep their internal-linkage
+	// optimization opportunities); the Detail:: wrappers below are the only thing
+	// other TUs see. Declarations live in SceneSerializerShared.hpp.
+	namespace Detail {
+		Json::Value SerializeEntity(Scene& scene, EntityHandle entity) {
+			// Unqualified lookup walks back into the surrounding Axiom namespace and
+			// finds the anonymous-namespace SerializeEntity above through that namespace's
+			// implicit using-directive on the enclosing namespace (this works in this TU
+			// because the anonymous namespace is defined right above us).
+			return ::Axiom::SerializeEntity(scene, entity);
+		}
+
+		bool JsonEquivalent(const Json::Value& a, const Json::Value& b) {
+			return ::Axiom::JsonEquivalent(a, b);
+		}
+
+		void BuildOverridePatch(
+			const Json::Value& prefabValue,
+			const Json::Value& instanceValue,
+			const std::string& prefix,
+			Json::Value& overrides) {
+			::Axiom::BuildOverridePatch(prefabValue, instanceValue, prefix, overrides);
+		}
+
+		void RemoveObjectMember(Json::Value& value, std::string_view key) {
+			::Axiom::RemoveObjectMember(value, key);
+		}
+
+		void RemoveEntityIdentityMembers(Json::Value& value) {
+			::Axiom::RemoveEntityIdentityMembers(value);
+		}
+	}
+
 	Json::Value SceneSerializer::SerializeScene(Scene& scene) {
 		Value root = Value::MakeObject();
 		root.AddMember("version", Value(SCENE_FORMAT_VERSION));
@@ -652,6 +986,10 @@ namespace Axiom {
 		std::vector<entt::entity> entities(view.begin(), view.end());
 
 		for (const entt::entity entity : entities) {
+			if (IsNestedPrefabInstanceChild(scene, entity)) {
+				continue;
+			}
+
 			const EntityOrigin origin = scene.GetEntityOrigin(entity);
 			switch (origin) {
 			case EntityOrigin::Scene:
@@ -676,8 +1014,13 @@ namespace Axiom {
 				std::filesystem::create_directories(parentDir);
 			}
 
-			File::WriteAllText(path, Json::Stringify(SerializeScene(scene), true));
+			if (!File::WriteAllText(path, Json::Stringify(SerializeScene(scene), true))) {
+				AIM_CORE_ERROR_TAG("SceneSerializer", "Save failed (write error): {}", path);
+				return false;
+			}
 			AssetRegistry::GetOrCreateAssetUUID(path);
+			// Only clear the dirty flag once persistence is confirmed; otherwise a failed
+			// write would silently desync the editor's "saved" state from the disk file.
 			scene.ClearDirty();
 			AIM_CORE_INFO_TAG("SceneSerializer", "Saved scene: {}", scene.GetName());
 			return true;
@@ -701,9 +1044,18 @@ namespace Axiom {
 			return Value::MakeObject();
 		}
 
-		Value entityValue = SerializeEntity(scene, entity);
-		RemoveEntityIdentityMembers(entityValue);
-		return entityValue;
+		Value rootEntity;
+		Value entities;
+		SerializeClipboardEntityTree(scene, entity, rootEntity, entities);
+		if (!entities.IsArray() || entities.GetArray().empty()) {
+			return Value::MakeObject();
+		}
+
+		Value clipboardEntity = Value::MakeObject();
+		clipboardEntity.AddMember("ClipboardEntity", Value(true));
+		clipboardEntity.AddMember("Entity", std::move(rootEntity));
+		clipboardEntity.AddMember("Entities", std::move(entities));
+		return clipboardEntity;
 	}
 
 	Json::Value SceneSerializer::SerializeComponent(Scene& scene, EntityHandle entity, std::string_view componentName) {
@@ -726,8 +1078,9 @@ namespace Axiom {
 				std::filesystem::create_directories(parentDir);
 			}
 
-			Value prefabEntity = SerializeEntity(scene, entity);
-			RemoveEntityIdentityMembers(prefabEntity);
+			Value prefabEntity;
+			Value prefabEntities;
+			SerializePrefabSourceTree(scene, entity, prefabEntity, prefabEntities);
 
 			// AssetRegistry::GetOrCreateAssetUUID derives the GUID from the path,
 			// not the file content, so we can ask for the GUID before writing the
@@ -746,7 +1099,11 @@ namespace Axiom {
 			// compatibility with existing prefab files; the deserializer accepts either.
 			root.AddMember("Entity", prefabEntity);
 			root.AddMember("prefab", prefabEntity);
-			File::WriteAllText(path, Json::Stringify(root, true));
+			root.AddMember("Entities", std::move(prefabEntities));
+			if (!File::WriteAllText(path, Json::Stringify(root, true))) {
+				AIM_CORE_ERROR_TAG("SceneSerializer", "Save prefab failed (write error): {}", path);
+				return false;
+			}
 
 			std::string name = "Entity";
 			if (scene.GetRegistry().all_of<NameComponent>(entity)) {

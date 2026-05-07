@@ -19,6 +19,7 @@
 #include "Project/ProjectManager.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
+#include "Systems/TransformHierarchySystem.hpp"
 
 #include <algorithm>
 #include <array>
@@ -43,7 +44,8 @@ namespace Axiom {
 
 	void ImGuiEditorLayer::RenderSceneIntoFBO(ViewportFBO& fbo, Scene& scene,
 		const glm::mat4& vp, const AABB& viewportAABB,
-		bool withGizmos, bool sharedGizmosOnly, const Color& clearColor)
+		bool withGizmos, bool sharedGizmosOnly, const Color& clearColor,
+		bool onlyPassedScene)
 	{
 		auto* app = Application::GetInstance();
 		if (!app) return;
@@ -58,9 +60,14 @@ namespace Axiom {
 		glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		SceneManager::Get().ForeachLoadedScene([&](Scene& s) {
-			renderer->RenderSceneWithVP(s, vp, viewportAABB);
-			});
+		if (onlyPassedScene) {
+			renderer->RenderSceneWithVP(scene, vp, viewportAABB);
+		}
+		else {
+			SceneManager::Get().ForeachLoadedScene([&](Scene& s) {
+				renderer->RenderSceneWithVP(s, vp, viewportAABB);
+				});
+		}
 
 		if (withGizmos && Gizmo::IsEnabled()) {
 			const GizmoLayerMask layerMask = sharedGizmosOnly ? GizmoLayerMask::Shared : GizmoLayerMask::All;
@@ -173,6 +180,26 @@ namespace Axiom {
 			return;
 		}
 
+		// Inspector edits and other panels run earlier in this same OnPreRender
+		// phase — AFTER the scene system's OnPreRender propagation already
+		// fired — so re-propagate here before either the gizmo pass or the
+		// FBO render samples Position/Scale/Rotation. Without this, an edit
+		// to a Local* field would only show up one frame later.
+		if (IsInPrefabEditMode()) {
+			TransformHierarchySystem::Propagate(*m_PrefabEditScene);
+		}
+		else {
+			SceneManager::Get().ForeachLoadedScene([](Scene& s) {
+				TransformHierarchySystem::Propagate(s);
+				});
+		}
+
+		// In prefab-edit mode, every reference to the inspector's "scene"
+		// in this function points at the detached prefab scene. We don't
+		// want gizmos / camera icons / framebuffer renders to leak the
+		// active scene's contents into the prefab viewport.
+		Scene* renderScene = IsInPrefabEditMode() ? m_PrefabEditScene.get() : &scene;
+
 		const ImVec2 viewportSize = ImGui::GetContentRegionAvail();
 		const int fbW = static_cast<int>(viewportSize.x);
 		const int fbH = static_cast<int>(viewportSize.y);
@@ -201,10 +228,12 @@ namespace Axiom {
 				glm::mat4 vp = m_EditorCamera.GetViewProjectionMatrix();
 				AABB viewAABB = m_EditorCamera.GetViewportAABB();
 				Gizmo::SetViewportAABBOverride(viewAABB);
-				DrawEditorComponentGizmos(scene);
+				DrawEditorComponentGizmos(*renderScene);
 
 				static const Color k_EditorClearColor(0.18f, 0.18f, 0.20f, 1.0f);
-				RenderSceneIntoFBO(m_EditorViewFBO, scene, vp, viewAABB, true, false, k_EditorClearColor);
+				const Color k_PrefabClearColor(k_PrefabEditClearR, k_PrefabEditClearG, k_PrefabEditClearB, 1.0f);
+				const Color& clearColor = IsInPrefabEditMode() ? k_PrefabClearColor : k_EditorClearColor;
+				RenderSceneIntoFBO(m_EditorViewFBO, *renderScene, vp, viewAABB, true, false, clearColor, IsInPrefabEditMode());
 				Gizmo::ClearViewportAABBOverride();
 
 				ImGui::Image(
@@ -217,7 +246,7 @@ namespace Axiom {
 
 				const float iconSize = 24.0f;
 				const float halfIcon = iconSize * 0.5f;
-				auto camView = scene.GetRegistry().view<Camera2DComponent, Transform2DComponent>();
+				auto camView = renderScene->GetRegistry().view<Camera2DComponent, Transform2DComponent>();
 				for (auto [ent, cam, transform] : camView.each()) {
 					glm::vec4 worldPos(transform.Position.x, transform.Position.y, 0.0f, 1.0f);
 					glm::vec4 clipPos = vp * worldPos;
@@ -266,6 +295,12 @@ namespace Axiom {
 			ApplicationEditorAccess::SetGameInputEnabled(false);
 			return;
 		}
+
+		// Same rationale as RenderEditorView — propagate any inspector edits
+		// from earlier in this OnPreRender phase before reading transforms.
+		SceneManager::Get().ForeachLoadedScene([](Scene& s) {
+			TransformHierarchySystem::Propagate(s);
+			});
 
 		const int aspectPresetIndex = std::clamp(m_GameViewAspectPresetIndex, 0, static_cast<int>(k_GameViewAspectPresets.size()) - 1);
 		m_GameViewAspectPresetIndex = aspectPresetIndex;

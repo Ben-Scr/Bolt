@@ -166,6 +166,10 @@ namespace Axiom {
 						continue;
 					}
 
+					// Copy the callback before invoking. Subscribe() pushes directly
+					// into m_Listeners, which can reallocate; if a listener subscribes
+					// during dispatch, holding a reference into the vector would dangle.
+					// The copy is the price of supporting subscribe-during-dispatch.
 					Callback listener = m_Listeners[i].Listener;
 					listener(event);
 				}

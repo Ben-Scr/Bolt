@@ -139,6 +139,39 @@ namespace Axiom {
 	// the Buffer variants below so returned strings are copied into caller-owned memory.
 	thread_local std::string s_StringReturnBuffer;
 
+	// C++ exceptions MUST NOT propagate across the C++/C# boundary — managed code
+	// invokes these via [UnmanagedCallersOnly] function pointers, and an exception
+	// unwinding through CoreCLR-managed frames is undefined behavior. Many bindings
+	// allocate (std::string, std::vector, JSON parse), and any of those can throw
+	// std::bad_alloc on a near-OOM editor. The macros below give us a uniform way
+	// to swallow exceptions at every binding boundary while still logging them.
+	//
+	// Usage:
+	//   static T MyBinding(args...) {
+	//       AIM_BINDING_TRY {
+	//           ... body that may allocate ...
+	//           return result;
+	//       } AIM_BINDING_CATCH(default_return_value);
+	//   }
+	#define AIM_BINDING_TRY try
+	#define AIM_BINDING_CATCH(default_return)                                                  \
+		catch (const std::exception& _aim_ex) {                                                \
+			AIM_CORE_ERROR_TAG("ScriptBinding", "exception in {}: {}", __func__, _aim_ex.what()); \
+			return default_return;                                                             \
+		}                                                                                      \
+		catch (...) {                                                                          \
+			AIM_CORE_ERROR_TAG("ScriptBinding", "unknown exception in {}", __func__);          \
+			return default_return;                                                             \
+		}
+	// Void-return variant (no return statement in catch).
+	#define AIM_BINDING_CATCH_VOID                                                             \
+		catch (const std::exception& _aim_ex) {                                                \
+			AIM_CORE_ERROR_TAG("ScriptBinding", "exception in {}: {}", __func__, _aim_ex.what()); \
+		}                                                                                      \
+		catch (...) {                                                                          \
+			AIM_CORE_ERROR_TAG("ScriptBinding", "unknown exception in {}", __func__);          \
+		}
+
 	static int CopyStringToBuffer(std::string_view value, char* outBuffer, int capacity)
 	{
 		const int requiredBytes = static_cast<int>(std::min(
@@ -226,31 +259,33 @@ namespace Axiom {
 
 	static const char* Axiom_Entity_GetManagedComponentFields(uint64_t entityID, const char* componentName)
 	{
-		s_StringReturnBuffer = "{}";
-		Scene* scene = nullptr;
-		EntityHandle handle = entt::null;
-		const std::string className = componentName ? componentName : "";
-		if (className.empty() || !ResolveEntityReference(entityID, scene, handle)
-			|| !scene->HasComponent<ScriptComponent>(handle)) {
-			return s_StringReturnBuffer.c_str();
-		}
-
-		const auto& scriptComponent = scene->GetComponent<ScriptComponent>(handle);
-		if (!scriptComponent.HasManagedComponent(className)) {
-			return s_StringReturnBuffer.c_str();
-		}
-
-		Json::Value root = Json::Value::MakeObject();
-		const std::string prefix = className + ".";
-		for (const auto& [key, value] : scriptComponent.PendingFieldValues) {
-			if (key.rfind(prefix, 0) != 0) {
-				continue;
+		AIM_BINDING_TRY {
+			s_StringReturnBuffer = "{}";
+			Scene* scene = nullptr;
+			EntityHandle handle = entt::null;
+			const std::string className = componentName ? componentName : "";
+			if (className.empty() || !ResolveEntityReference(entityID, scene, handle)
+				|| !scene->HasComponent<ScriptComponent>(handle)) {
+				return s_StringReturnBuffer.c_str();
 			}
-			root.AddMember(key.substr(prefix.size()), Json::Value(value));
-		}
 
-		s_StringReturnBuffer = Json::Stringify(root, false);
-		return s_StringReturnBuffer.c_str();
+			const auto& scriptComponent = scene->GetComponent<ScriptComponent>(handle);
+			if (!scriptComponent.HasManagedComponent(className)) {
+				return s_StringReturnBuffer.c_str();
+			}
+
+			Json::Value root = Json::Value::MakeObject();
+			const std::string prefix = className + ".";
+			for (const auto& [key, value] : scriptComponent.PendingFieldValues) {
+				if (key.rfind(prefix, 0) != 0) {
+					continue;
+				}
+				root.AddMember(key.substr(prefix.size()), Json::Value(value));
+			}
+
+			s_StringReturnBuffer = Json::Stringify(root, false);
+			return s_StringReturnBuffer.c_str();
+		} AIM_BINDING_CATCH("{}");
 	}
 
 	static int Axiom_Entity_GetManagedComponentFieldsBuffer(uint64_t entityID, const char* componentName, char* outBuffer, int capacity)
@@ -450,10 +485,12 @@ namespace Axiom {
 	// ── Scene ───────────────────────────────────────────────────────────
 
 	static const char* Axiom_Scene_GetActiveSceneName() {
-		Scene* scene = GetScene();
-		if (!scene) { s_StringReturnBuffer.clear(); return s_StringReturnBuffer.c_str(); }
-		s_StringReturnBuffer = scene->GetName();
-		return s_StringReturnBuffer.c_str();
+		AIM_BINDING_TRY {
+			Scene* scene = GetScene();
+			if (!scene) { s_StringReturnBuffer.clear(); return s_StringReturnBuffer.c_str(); }
+			s_StringReturnBuffer = scene->GetName();
+			return s_StringReturnBuffer.c_str();
+		} AIM_BINDING_CATCH("");
 	}
 
 	static int Axiom_Scene_GetActiveSceneNameBuffer(char* outBuffer, int capacity)
@@ -651,11 +688,15 @@ namespace Axiom {
 	}
 
 	static int Axiom_Scene_QueryEntities(const char* componentNames, uint64_t* outEntityIDs, int maxOut) {
-		return QueryEntitiesInScene(GetScene(), componentNames, outEntityIDs, maxOut);
+		AIM_BINDING_TRY {
+			return QueryEntitiesInScene(GetScene(), componentNames, outEntityIDs, maxOut);
+		} AIM_BINDING_CATCH(0);
 	}
 
 	static int Axiom_Scene_QueryEntitiesInScene(const char* sceneName, const char* componentNames, uint64_t* outEntityIDs, int maxOut) {
-		return QueryEntitiesInScene(ResolveLoadedSceneForQuery(sceneName), componentNames, outEntityIDs, maxOut);
+		AIM_BINDING_TRY {
+			return QueryEntitiesInScene(ResolveLoadedSceneForQuery(sceneName), componentNames, outEntityIDs, maxOut);
+		} AIM_BINDING_CATCH(0);
 	}
 
 	static int Axiom_Asset_IsValid(uint64_t assetId)
@@ -674,8 +715,10 @@ namespace Axiom {
 
 	static const char* Axiom_Asset_GetPath(uint64_t assetId)
 	{
-		s_StringReturnBuffer = AssetRegistry::ResolvePath(assetId);
-		return s_StringReturnBuffer.c_str();
+		AIM_BINDING_TRY {
+			s_StringReturnBuffer = AssetRegistry::ResolvePath(assetId);
+			return s_StringReturnBuffer.c_str();
+		} AIM_BINDING_CATCH("");
 	}
 
 	static int Axiom_Asset_GetPathBuffer(uint64_t assetId, char* outBuffer, int capacity)
@@ -685,8 +728,10 @@ namespace Axiom {
 
 	static const char* Axiom_Asset_GetDisplayName(uint64_t assetId)
 	{
-		s_StringReturnBuffer = AssetRegistry::GetDisplayName(assetId);
-		return s_StringReturnBuffer.c_str();
+		AIM_BINDING_TRY {
+			s_StringReturnBuffer = AssetRegistry::GetDisplayName(assetId);
+			return s_StringReturnBuffer.c_str();
+		} AIM_BINDING_CATCH("");
 	}
 
 	static int Axiom_Asset_GetDisplayNameBuffer(uint64_t assetId, char* outBuffer, int capacity)
@@ -701,15 +746,17 @@ namespace Axiom {
 
 	static const char* Axiom_Asset_FindAll(const char* pathPrefix, int kind)
 	{
-		Json::Value ids = Json::Value::MakeArray();
-		for (const AssetRegistry::Record& record : AssetRegistry::FindAll(
-				 static_cast<AssetKind>(kind),
-				 pathPrefix ? pathPrefix : "")) {
-			ids.Append(Json::Value(std::to_string(record.Id)));
-		}
+		AIM_BINDING_TRY {
+			Json::Value ids = Json::Value::MakeArray();
+			for (const AssetRegistry::Record& record : AssetRegistry::FindAll(
+					 static_cast<AssetKind>(kind),
+					 pathPrefix ? pathPrefix : "")) {
+				ids.Append(Json::Value(std::to_string(record.Id)));
+			}
 
-		s_StringReturnBuffer = Json::Stringify(ids, false);
-		return s_StringReturnBuffer.c_str();
+			s_StringReturnBuffer = Json::Stringify(ids, false);
+			return s_StringReturnBuffer.c_str();
+		} AIM_BINDING_CATCH("[]");
 	}
 
 	static int Axiom_Asset_FindAllBuffer(const char* pathPrefix, int kind, char* outBuffer, int capacity)
@@ -919,6 +966,126 @@ namespace Axiom {
 	{
 		GET_COMPONENT(Transform2DComponent, entityID, );
 		comp.SetScale({ x, y });
+	}
+
+	static uint64_t Axiom_Transform2D_GetEntity(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+		if (!scene->HasComponent<Transform2DComponent>(handle)) return 0;
+		return GetEntityScriptId(*scene, handle);
+	}
+
+	static void Axiom_Transform2D_GetLocalPosition(uint64_t entityID, float* outX, float* outY)
+	{
+		GET_COMPONENT(Transform2DComponent, entityID, (void)(*outX = 0, *outY = 0));
+		*outX = comp.LocalPosition.x; *outY = comp.LocalPosition.y;
+	}
+
+	static void Axiom_Transform2D_SetLocalPosition(uint64_t entityID, float x, float y)
+	{
+		GET_COMPONENT(Transform2DComponent, entityID, );
+		comp.SetPosition({ x, y });
+	}
+
+	static float Axiom_Transform2D_GetLocalRotation(uint64_t entityID)
+	{
+		GET_COMPONENT(Transform2DComponent, entityID, 0.0f);
+		return comp.LocalRotation;
+	}
+
+	static void Axiom_Transform2D_SetLocalRotation(uint64_t entityID, float rotation)
+	{
+		GET_COMPONENT(Transform2DComponent, entityID, );
+		comp.SetRotation(rotation);
+	}
+
+	static void Axiom_Transform2D_GetLocalScale(uint64_t entityID, float* outX, float* outY)
+	{
+		GET_COMPONENT(Transform2DComponent, entityID, (void)(*outX = 1, *outY = 1));
+		*outX = comp.LocalScale.x; *outY = comp.LocalScale.y;
+	}
+
+	static void Axiom_Transform2D_SetLocalScale(uint64_t entityID, float x, float y)
+	{
+		GET_COMPONENT(Transform2DComponent, entityID, );
+		comp.SetScale({ x, y });
+	}
+
+	static uint64_t Axiom_Transform2D_GetParent(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+
+		Entity parent = scene->GetEntity(handle).GetParent();
+		if (!parent.IsValid()) return 0;
+		return GetEntityScriptId(*scene, parent.GetHandle());
+	}
+
+	static int Axiom_Transform2D_SetParent(uint64_t entityID, uint64_t parentEntityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+
+		Entity entity = scene->GetEntity(handle);
+
+		if (parentEntityID == 0) {
+			entity.SetParent(Entity::Null);
+			return 1;
+		}
+
+		Scene* parentScene = nullptr;
+		EntityHandle parentHandle = entt::null;
+		if (!ResolveEntityReference(parentEntityID, parentScene, parentHandle)) return 0;
+
+		// Cross-scene parenting would silently corrupt the parent's HierarchyComponent
+		// (the child's handle wouldn't resolve in the parent's registry), so refuse it.
+		if (parentScene != scene) {
+			AIM_CORE_WARN_TAG("ScriptBinding", "Transform2D.SetParent across scenes is not supported");
+			return 0;
+		}
+
+		entity.SetParent(scene->GetEntity(parentHandle));
+		return 1;
+	}
+
+	static int Axiom_Transform2D_GetChildCount(uint64_t entityID)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+		return static_cast<int>(scene->GetEntity(handle).GetChildren().size());
+	}
+
+	static uint64_t Axiom_Transform2D_GetChildAt(uint64_t entityID, int index)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+
+		const auto& children = scene->GetEntity(handle).GetChildren();
+		if (index < 0 || static_cast<size_t>(index) >= children.size()) return 0;
+		return GetEntityScriptId(*scene, children[static_cast<size_t>(index)]);
+	}
+
+	static int Axiom_Transform2D_GetChildren(uint64_t entityID, uint64_t* outIDs, int maxOut)
+	{
+		Scene* scene = nullptr;
+		EntityHandle handle = entt::null;
+		if (!ResolveEntityReference(entityID, scene, handle)) return 0;
+
+		const auto& children = scene->GetEntity(handle).GetChildren();
+		const int total = static_cast<int>(children.size());
+		if (!outIDs || maxOut <= 0) return total;
+
+		const int writeCount = std::min(total, maxOut);
+		for (int i = 0; i < writeCount; ++i) {
+			outIDs[i] = GetEntityScriptId(*scene, children[static_cast<size_t>(i)]);
+		}
+		return total;
 	}
 
 	// ── SpriteRenderer ──────────────────────────────────────────────────
@@ -1561,14 +1728,18 @@ namespace Axiom {
 		b.Entity_HasComponent = &Axiom_Entity_HasComponent;
 		b.Entity_AddComponent = &Axiom_Entity_AddComponent;
 		b.Entity_RemoveComponent = &Axiom_Entity_RemoveComponent;
-		b.Entity_GetManagedComponentFields = &Axiom_Entity_GetManagedComponentFields;
+		// Deprecated: legacy non-buffer slot returns a pointer to a static thread-local
+		// scratch buffer that races across calls. Managed code only uses the *Buffer
+		// variant; keep wired commented-out so this trap is never set again.
+		// b.Entity_GetManagedComponentFields = &Axiom_Entity_GetManagedComponentFields;
 		b.Entity_GetManagedComponentFieldsBuffer = &Axiom_Entity_GetManagedComponentFieldsBuffer;
 		b.Entity_GetIsStatic = &Axiom_Entity_GetIsStatic;
 		b.Entity_SetIsStatic = &Axiom_Entity_SetIsStatic;
 		b.Entity_GetIsEnabled = &Axiom_Entity_GetIsEnabled;
 		b.Entity_SetIsEnabled = &Axiom_Entity_SetIsEnabled;
 
-		b.NameComponent_GetName = &Axiom_NameComponent_GetName;
+		// Deprecated: legacy non-buffer string slot — see Entity_GetManagedComponentFields above.
+		// b.NameComponent_GetName = &Axiom_NameComponent_GetName;
 		b.NameComponent_GetNameBuffer = &Axiom_NameComponent_GetNameBuffer;
 		b.NameComponent_SetName = &Axiom_NameComponent_SetName;
 
@@ -1578,6 +1749,18 @@ namespace Axiom {
 		b.Transform2D_SetRotation = &Axiom_Transform2D_SetRotation;
 		b.Transform2D_GetScale = &Axiom_Transform2D_GetScale;
 		b.Transform2D_SetScale = &Axiom_Transform2D_SetScale;
+		b.Transform2D_GetEntity = &Axiom_Transform2D_GetEntity;
+		b.Transform2D_GetLocalPosition = &Axiom_Transform2D_GetLocalPosition;
+		b.Transform2D_SetLocalPosition = &Axiom_Transform2D_SetLocalPosition;
+		b.Transform2D_GetLocalRotation = &Axiom_Transform2D_GetLocalRotation;
+		b.Transform2D_SetLocalRotation = &Axiom_Transform2D_SetLocalRotation;
+		b.Transform2D_GetLocalScale = &Axiom_Transform2D_GetLocalScale;
+		b.Transform2D_SetLocalScale = &Axiom_Transform2D_SetLocalScale;
+		b.Transform2D_GetParent = &Axiom_Transform2D_GetParent;
+		b.Transform2D_SetParent = &Axiom_Transform2D_SetParent;
+		b.Transform2D_GetChildCount = &Axiom_Transform2D_GetChildCount;
+		b.Transform2D_GetChildAt = &Axiom_Transform2D_GetChildAt;
+		b.Transform2D_GetChildren = &Axiom_Transform2D_GetChildren;
 
 		b.SpriteRenderer_GetColor = &Axiom_SpriteRenderer_GetColor;
 		b.SpriteRenderer_SetColor = &Axiom_SpriteRenderer_SetColor;
@@ -1588,7 +1771,8 @@ namespace Axiom {
 		b.SpriteRenderer_GetSortingLayer = &Axiom_SpriteRenderer_GetSortingLayer;
 		b.SpriteRenderer_SetSortingLayer = &Axiom_SpriteRenderer_SetSortingLayer;
 
-		b.TextRenderer_GetText = &Axiom_TextRenderer_GetText;
+		// Deprecated: legacy non-buffer string slot — see Entity_GetManagedComponentFields above.
+		// b.TextRenderer_GetText = &Axiom_TextRenderer_GetText;
 		b.TextRenderer_GetTextBuffer = &Axiom_TextRenderer_GetTextBuffer;
 		b.TextRenderer_SetText = &Axiom_TextRenderer_SetText;
 		b.TextRenderer_GetFont = &Axiom_TextRenderer_GetFont;
@@ -1662,7 +1846,8 @@ namespace Axiom {
 		b.FastCircleCollider2D_GetRadius = &Axiom_FastCircleCollider2D_GetRadius;
 		b.FastCircleCollider2D_SetRadius = &Axiom_FastCircleCollider2D_SetRadius;
 
-		b.Scene_GetActiveSceneName = &Axiom_Scene_GetActiveSceneName;
+		// Deprecated: legacy non-buffer string slot — see Entity_GetManagedComponentFields above.
+		// b.Scene_GetActiveSceneName = &Axiom_Scene_GetActiveSceneName;
 		b.Scene_GetActiveSceneNameBuffer = &Axiom_Scene_GetActiveSceneNameBuffer;
 		b.Scene_GetEntityCount = &Axiom_Scene_GetEntityCount;
 		b.Scene_GetEntityCountByName = &Axiom_Scene_GetEntityCountByName;
@@ -1677,7 +1862,8 @@ namespace Axiom {
 		b.Scene_GetLoadedCount = &Axiom_Scene_GetLoadedCount;
 		b.Scene_GetLoadedSceneNameAt = &Axiom_Scene_GetLoadedSceneNameAt;
 		b.Scene_GetLoadedSceneNameAtBuffer = &Axiom_Scene_GetLoadedSceneNameAtBuffer;
-		b.Scene_GetEntityNameByUUID = &Axiom_Scene_GetEntityNameByUUID;
+		// Deprecated: legacy non-buffer string slot — see Entity_GetManagedComponentFields above.
+		// b.Scene_GetEntityNameByUUID = &Axiom_Scene_GetEntityNameByUUID;
 		b.Scene_GetEntityNameByUUIDBuffer = &Axiom_Scene_GetEntityNameByUUIDBuffer;
 		b.Scene_QueryEntities = &Axiom_Scene_QueryEntities;
 		b.Scene_QueryEntitiesFiltered = &Axiom_Scene_QueryEntitiesFiltered;
@@ -1686,12 +1872,13 @@ namespace Axiom {
 
 		b.Asset_IsValid = &Axiom_Asset_IsValid;
 		b.Asset_GetOrCreateUUIDFromPath = &Axiom_Asset_GetOrCreateUUIDFromPath;
-		b.Asset_GetPath = &Axiom_Asset_GetPath;
+		// Deprecated: legacy non-buffer string slots — see Entity_GetManagedComponentFields above.
+		// b.Asset_GetPath = &Axiom_Asset_GetPath;
 		b.Asset_GetPathBuffer = &Axiom_Asset_GetPathBuffer;
-		b.Asset_GetDisplayName = &Axiom_Asset_GetDisplayName;
+		// b.Asset_GetDisplayName = &Axiom_Asset_GetDisplayName;
 		b.Asset_GetDisplayNameBuffer = &Axiom_Asset_GetDisplayNameBuffer;
 		b.Asset_GetKind = &Axiom_Asset_GetKind;
-		b.Asset_FindAll = &Axiom_Asset_FindAll;
+		// b.Asset_FindAll = &Axiom_Asset_FindAll;
 		b.Asset_FindAllBuffer = &Axiom_Asset_FindAllBuffer;
 		b.Texture_LoadAsset = &Axiom_Texture_LoadAsset;
 		b.Texture_GetWidth = &Axiom_Texture_GetWidth;

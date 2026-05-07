@@ -282,25 +282,15 @@ namespace Axiom {
 
         m_Vertices.clear();
         m_Runs.clear();
+        // Reuse m_Pending's capacity across frames — the per-frame text-list size
+        // is roughly stable, and the inner clear() keeps capacity intact so we
+        // avoid the per-frame heap churn of a fresh local vector.
+        m_Pending.clear();
 
         // Walk all visible TextRendererComponents, sorted by atlas/layer for
         // batching. We collect per-text quads first into m_Vertices,
         // then emit one draw call per atlas+layer change in a final
         // pass — same shape as Renderer2D's batch loop.
-        struct PendingText {
-            Font* FontPtr = nullptr;
-            const std::string* Text = nullptr;
-            float WorldX = 0.0f;
-            float WorldY = 0.0f;
-            float Scale = 1.0f;
-            float LetterSpacing = 0.0f;
-            Color Tint{};
-            TextAlignment Align = TextAlignment::Left;
-            int16_t SortingOrder = 0;
-            uint8_t SortingLayer = 0;
-        };
-
-        std::vector<PendingText> pending;
         entt::registry& registry = scene.GetRegistry();
 
         auto view = registry.view<TextRendererComponent, Transform2DComponent>(entt::exclude<DisabledTag>);
@@ -347,35 +337,35 @@ namespace Axiom {
             p.Align = text.HAlign;
             p.SortingOrder = text.SortingOrder;
             p.SortingLayer = text.SortingLayer;
-            pending.push_back(p);
+            m_Pending.push_back(p);
         }
 
         // Sort: layer → order → atlas. Atlas changes drive draw-call
         // splits, so grouping by atlas after layer/order minimizes flips
         // while preserving render order.
-        std::sort(pending.begin(), pending.end(), [](const PendingText& a, const PendingText& b) {
+        std::sort(m_Pending.begin(), m_Pending.end(), [](const PendingText& a, const PendingText& b) {
             if (a.SortingLayer != b.SortingLayer) return a.SortingLayer < b.SortingLayer;
             if (a.SortingOrder != b.SortingOrder) return a.SortingOrder < b.SortingOrder;
             return a.FontPtr < b.FontPtr;
         });
 
         // Build vertex buffer + per-run records.
-        for (size_t i = 0; i < pending.size(); ) {
+        for (size_t i = 0; i < m_Pending.size(); ) {
             GlyphRun run;
-            run.Key.AtlasTexture = pending[i].FontPtr->GetAtlasTexture();
-            run.Key.SortingOrder = pending[i].SortingOrder;
-            run.Key.SortingLayer = pending[i].SortingLayer;
+            run.Key.AtlasTexture = m_Pending[i].FontPtr->GetAtlasTexture();
+            run.Key.SortingOrder = m_Pending[i].SortingOrder;
+            run.Key.SortingLayer = m_Pending[i].SortingLayer;
             run.VertexStart = m_Vertices.size();
 
             size_t j = i;
-            while (j < pending.size()
-                && pending[j].FontPtr->GetAtlasTexture() == run.Key.AtlasTexture
-                && pending[j].SortingOrder == run.Key.SortingOrder
-                && pending[j].SortingLayer == run.Key.SortingLayer) {
-                EmitText(*pending[j].FontPtr, *pending[j].Text,
-                    pending[j].WorldX, pending[j].WorldY,
-                    pending[j].Scale, pending[j].Tint, pending[j].Align,
-                    pending[j].LetterSpacing);
+            while (j < m_Pending.size()
+                && m_Pending[j].FontPtr->GetAtlasTexture() == run.Key.AtlasTexture
+                && m_Pending[j].SortingOrder == run.Key.SortingOrder
+                && m_Pending[j].SortingLayer == run.Key.SortingLayer) {
+                EmitText(*m_Pending[j].FontPtr, *m_Pending[j].Text,
+                    m_Pending[j].WorldX, m_Pending[j].WorldY,
+                    m_Pending[j].Scale, m_Pending[j].Tint, m_Pending[j].Align,
+                    m_Pending[j].LetterSpacing);
                 ++j;
             }
 

@@ -342,7 +342,10 @@ namespace Axiom {
 			}
 
 			content.insert(pos, importLine + "\n");
-			File::WriteAllText(csprojPath, content);
+			if (!File::WriteAllText(csprojPath, content)) {
+				AIM_ERROR_TAG("AxiomPackages", "Failed to patch {} (write error)", csprojPath);
+				return;
+			}
 			AIM_INFO_TAG("AxiomPackages", "Patched {} to import AxiomPackages.props", csprojPath);
 		}
 	}
@@ -469,7 +472,7 @@ namespace Axiom {
 		const std::string content = BuildPackagesPropsContent(project, manifests);
 
 		std::filesystem::path propsPath = std::filesystem::path(project.PackagesDirectory) / "AxiomPackages.props";
-		File::WriteAllText(propsPath.generic_string(), content);
+		(void)File::WriteAllText(propsPath.generic_string(), content);
 
 		EnsureCsprojImportsPackagesProps(project.CsprojPath);
 

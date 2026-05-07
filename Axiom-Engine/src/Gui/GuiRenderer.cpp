@@ -6,7 +6,7 @@
 #include "Graphics/TextureManager.hpp"
 
 #include "Components/Graphics/ImageComponent.hpp"
-#include "Components/General/RectTransformComponent.hpp"
+#include "Components/General/RectTransform2DComponent.hpp"
 #include "Components/Graphics/Camera2DComponent.hpp"
 #include <Components/Tags.hpp>
 
@@ -88,7 +88,7 @@ namespace Axiom {
 		m_SpriteShader.SetMVP(glm::ortho(-halfW, +halfW, -halfH, +halfH, zNear, zFar));
 
 		m_InstancesScratch.clear();
-		auto guiImageView = scene.GetRegistry().view<RectTransformComponent, ImageComponent>(entt::exclude<DisabledTag>);
+		auto guiImageView = scene.GetRegistry().view<RectTransform2DComponent, ImageComponent>(entt::exclude<DisabledTag>);
 		m_InstancesScratch.reserve(guiImageView.size_hint());
 
 		for (const auto& [ent, rt, guiImage] : guiImageView.each()) {

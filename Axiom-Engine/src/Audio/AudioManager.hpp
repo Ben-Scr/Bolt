@@ -65,6 +65,10 @@ namespace Axiom {
 			ma_resource_manager_data_source DataSource{};
 			ma_sound Sound{};
 			AudioHandle AudioHandle;
+			// Bumped on every Recycle so a stale handle to this slot fails GetSoundInstance.
+			// Without this, a recycled index silently aliases a different sound (the bug that
+			// produced the audit's CR2).
+			uint16_t Generation = 0;
 			bool HasDataSource = false;
 			bool IsValid = false;
 		};

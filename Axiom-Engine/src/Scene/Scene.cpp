@@ -33,6 +33,7 @@
 #include <exception>
 #include <limits>
 #include <typeinfo>
+#include <unordered_set>
 #include <utility>
 
 namespace Axiom {
@@ -474,6 +475,20 @@ namespace Axiom {
 			m_Systems.push_back(std::move(managedReordered[i]));
 		}
 
+		// Any unique_ptr left behind in managedExtracted (no matching name in the
+		// reorder) is about to be destroyed when this scope exits. m_AwakenedSystems
+		// stores raw ISystem* — purge any pointers that match the soon-to-be-deleted
+		// systems before they dangle. (Without this, OnDestroy on an unrelated scene
+		// teardown would dereference freed memory.)
+		std::erase_if(m_AwakenedSystems, [&](ISystem* awakened) {
+			for (const auto& leftover : managedExtracted) {
+				if (leftover && leftover.get() == awakened) {
+					return true;
+				}
+			}
+			return false;
+		});
+
 		MarkDirty();
 		return true;
 	}
@@ -589,19 +604,26 @@ namespace Axiom {
 			m_Dirty = true;
 		}
 
-		// Cascade-destroy any children, and unhook from the parent's
-		// child list, before destroying this entity. Snapshotting the
-		// children vector first so the inner destroy calls don't
-		// invalidate the iterator we're recursing through.
+		// Cascade-destroy any children, and unhook from the parent's child list, before
+		// destroying this entity. Snapshot Children + Parent into locals first: EnTT's default
+		// pool is swap-and-pop, so a recursive child-destroy can relocate this entity's own
+		// HierarchyComponent (or the parent's). Holding a HierarchyComponent& across the
+		// recursion would dangle.
 		if (m_Registry.all_of<HierarchyComponent>(nativeEntity)) {
-			HierarchyComponent& hc = m_Registry.get<HierarchyComponent>(nativeEntity);
+			std::vector<EntityHandle> childrenSnapshot;
+			EntityHandle parent = entt::null;
+			{
+				const HierarchyComponent& hc = m_Registry.get<HierarchyComponent>(nativeEntity);
+				childrenSnapshot = hc.Children;
+				parent = hc.Parent;
+			}
 
-			std::vector<EntityHandle> childrenSnapshot = hc.Children;
 			for (EntityHandle child : childrenSnapshot) {
 				DestroyEntityInternal(child, false);
 			}
 
-			const EntityHandle parent = hc.Parent;
+			// Re-fetch the parent's HierarchyComponent after the recursive destroys; any
+			// reference taken before the loop may now be moved-from.
 			if (parent != entt::null
 				&& m_Registry.valid(parent)
 				&& m_Registry.all_of<HierarchyComponent>(parent))
@@ -707,18 +729,33 @@ namespace Axiom {
 		std::vector<ISystem*> systemsToDestroy;
 		systemsToDestroy.reserve(m_Systems.size());
 
+		// Walk m_Systems as the superset and dedup against m_AwakenedSystems by raw
+		// pointer. Systems added after AwakeSystems (e.g. via AddGameSystem mid-play)
+		// are appended to m_Systems but not to m_AwakenedSystems, so a m_AwakenedSystems-
+		// only walk would silently skip OnDestroy on them and leak their resources.
+		std::unordered_set<ISystem*> alreadyQueued;
+		alreadyQueued.reserve(m_AwakenedSystems.size());
+
 		if (!m_AwakenedSystems.empty()) {
 			const size_t count = std::min(enabledSystemCount, m_AwakenedSystems.size());
-			systemsToDestroy.insert(systemsToDestroy.end(), m_AwakenedSystems.begin(), m_AwakenedSystems.begin() + static_cast<std::ptrdiff_t>(count));
+			for (size_t i = 0; i < count; ++i) {
+				ISystem* sys = m_AwakenedSystems[i];
+				systemsToDestroy.push_back(sys);
+				alreadyQueued.insert(sys);
+			}
 		}
-		else {
+
+		if (systemsToDestroy.size() < enabledSystemCount) {
 			for (const auto& systemPointer : m_Systems) {
-				ISystem& system = *systemPointer;
-				if (!system.IsEnabled()) {
+				ISystem* system = systemPointer.get();
+				if (alreadyQueued.contains(system)) {
+					continue;
+				}
+				if (!system->IsEnabled()) {
 					continue;
 				}
 
-				systemsToDestroy.push_back(&system);
+				systemsToDestroy.push_back(system);
 				if (systemsToDestroy.size() >= enabledSystemCount) {
 					break;
 				}
@@ -881,6 +918,12 @@ namespace Axiom {
 
 	void Scene::OnCamera2DComponentConstruct(entt::registry& registry, EntityHandle entity)
 	{
+		// Match every other heavy on_construct hook in this file: detached editor
+		// scenes are scratch copies (e.g. play-mode preview rollback) and must not
+		// allocate FBOs / register the entity as a render camera. Doing so leaks
+		// GL resources and confuses RefreshMainCameraSelection across two scenes.
+		if (m_IsDetached) return;
+
 		if (!registry.all_of<Transform2DComponent>(entity)) {
 			AIM_CORE_WARN_TAG("Scene", "Adding missing Transform2DComponent before creating Camera2D for entity {}", static_cast<uint32_t>(entity));
 			registry.emplace<Transform2DComponent>(entity);
@@ -915,6 +958,23 @@ namespace Axiom {
 		}
 
 		ApplyEntityEnabledState(registry, entity, false);
+
+		// Propagate to direct children — each child's own on_construct hook
+		// recurses further into the subtree, so we only emplace one level deep
+		// here. Snapshot the children list before iterating because emplace
+		// may reorder pool storage internally.
+		// Note: this is destructive (a previously user-disabled child re-emerges
+		// enabled when the parent is later re-enabled). The simpler model wins
+		// over a separate InheritedDisabled tag because every system already
+		// filters on DisabledTag and would otherwise need a coordinated update.
+		if (registry.all_of<HierarchyComponent>(entity)) {
+			std::vector<EntityHandle> children = registry.get<HierarchyComponent>(entity).Children;
+			for (EntityHandle child : children) {
+				if (registry.valid(child) && !registry.all_of<DisabledTag>(child)) {
+					registry.emplace<DisabledTag>(child);
+				}
+			}
+		}
 	}
 
 	void Scene::OnDisabledTagDestroy(entt::registry& registry, EntityHandle entity)
@@ -924,6 +984,17 @@ namespace Axiom {
 		}
 
 		ApplyEntityEnabledState(registry, entity, true);
+
+		// Mirror the construct-time cascade: each child's own on_destroy hook
+		// continues the descent.
+		if (registry.all_of<HierarchyComponent>(entity)) {
+			std::vector<EntityHandle> children = registry.get<HierarchyComponent>(entity).Children;
+			for (EntityHandle child : children) {
+				if (registry.valid(child) && registry.all_of<DisabledTag>(child)) {
+					registry.remove<DisabledTag>(child);
+				}
+			}
+		}
 	}
 
 	void Scene::OnStaticTagDestroy(entt::registry& registry, EntityHandle entity)

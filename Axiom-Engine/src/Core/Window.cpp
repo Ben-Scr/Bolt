@@ -79,6 +79,14 @@ namespace Axiom {
 		glfwTerminate();
 	}
 
+	void Window::IconifyCallback(GLFWwindow* /*window*/, int iconified) {
+		// Authoritative source for the engine's "minimized" state. The framebuffer-resize-
+		// to-(0,0) path that used to set this flag doesn't fire on every platform; iconify
+		// is the explicit signal. Window is friend-declared in Application so this member
+		// callback can reach Application::SetWindowMinimized (private accessor).
+		Application::SetWindowMinimized(static_cast<bool>(iconified));
+	}
+
 	void Window::FocusCallback(GLFWwindow* window, int focused) {
 		Window* win = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
 		Application::SetWindowFocused(static_cast<bool>(focused));
@@ -134,6 +142,7 @@ namespace Axiom {
 		glfwSetWindowFocusCallback(m_GLFWwindow, FocusCallback);
 
 		glfwSetFramebufferSizeCallback(m_GLFWwindow, SetWindowResizedCallback);
+		glfwSetWindowIconifyCallback(m_GLFWwindow, &Window::IconifyCallback);
 
 		glfwSetDropCallback(m_GLFWwindow, SetDropCallback);
 		glfwSetWindowRefreshCallback(m_GLFWwindow, RefreshCallback);

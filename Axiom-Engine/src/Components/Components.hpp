@@ -1,7 +1,7 @@
 #pragma once
 
 #include "General/Transform2DComponent.hpp"
-#include "General/RectTransformComponent.hpp"
+#include "General/RectTransform2DComponent.hpp"
 #include "General/NameComponent.hpp"
 #include "General/UUIDComponent.hpp"
 #include "General/EntityMetaDataComponent.hpp"
@@ -24,11 +24,11 @@
 #include "Audio/AudioSourceComponent.hpp"
 #include "Scripting/ScriptComponent.hpp"
 
-#include "UI/UIInteractableComponent.hpp"
-#include "UI/UIButtonComponent.hpp"
-#include "UI/UISliderComponent.hpp"
-#include "UI/UIInputFieldComponent.hpp"
-#include "UI/UIDropdownComponent.hpp"
-#include "UI/UIToggleComponent.hpp"
+#include "UI/InteractableComponent.hpp"
+#include "UI/ButtonComponent.hpp"
+#include "UI/SliderComponent.hpp"
+#include "UI/InputFieldComponent.hpp"
+#include "UI/DropdownComponent.hpp"
+#include "UI/ToggleComponent.hpp"
 
 #include "Tags.hpp"

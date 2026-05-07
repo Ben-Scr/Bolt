@@ -206,14 +206,24 @@ namespace Axiom {
 				contact.penetration
 			};
 
+			// Copy the std::function objects out of the map BEFORE invoking. A callback
+			// can call UnregisterContactCallback (or destroy its own entity, which routes
+			// here too); erasing the map entry mid-call would destroy the std::function
+			// while its operator() is still on the stack. CollisionDispatcher::DispatchSafe
+			// uses the same pattern.
+			AxiomContactCallback cbA;
+			AxiomContactCallback cbB;
 			if (entityA != entt::null) {
 				auto cbIt = m_ContactCallbacks.find(static_cast<uint32_t>(entityA));
-				if (cbIt != m_ContactCallbacks.end()) cbIt->second(axiomContact);
+				if (cbIt != m_ContactCallbacks.end()) cbA = cbIt->second;
 			}
 			if (entityB != entt::null) {
 				auto cbIt = m_ContactCallbacks.find(static_cast<uint32_t>(entityB));
-				if (cbIt != m_ContactCallbacks.end()) cbIt->second(axiomContact);
+				if (cbIt != m_ContactCallbacks.end()) cbB = cbIt->second;
 			}
+
+			if (cbA) cbA(axiomContact);
+			if (cbB) cbB(axiomContact);
 		}
 	}
 

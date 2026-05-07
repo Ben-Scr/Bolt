@@ -14,7 +14,7 @@ namespace Axiom {
 	// SelectedIndex is the persisted choice. SelectionChangedThisFrame
 	// is set by UIEventSystem on the frame the user picks a new option,
 	// then cleared at the start of the next tick.
-	struct UIDropdownComponent {
+	struct DropdownComponent {
 		std::vector<std::string> Options;
 		int SelectedIndex = 0;
 

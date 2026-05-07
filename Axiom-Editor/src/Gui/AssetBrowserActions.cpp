@@ -769,6 +769,16 @@ namespace Axiom {
 				return;
 			}
 
+			if (ext == ".prefab")
+			{
+				// Defer: ImGuiEditorLayer drains this in OnPreRender and
+				// swaps into prefab-edit mode (detached scene + blue
+				// background). Routing through here keeps double-click
+				// behaviour for prefabs in the same place as scenes.
+				m_PendingPrefabEdit = entry.Path;
+				return;
+			}
+
 			if (ExternalEditor::IsScriptExtension(ext))
 			{
 				std::filesystem::path scriptPath = entry.Path;

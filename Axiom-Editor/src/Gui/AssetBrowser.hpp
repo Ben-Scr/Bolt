@@ -23,6 +23,16 @@ namespace Axiom {
 			return p;
 		}
 
+		// Drained once per frame by ImGuiEditorLayer to enter prefab-edit
+		// mode. Set by OpenAssetExternal when the user double-clicks a
+		// .prefab; deferred so the actual scene swap happens outside the
+		// asset-browser draw call (mirrors TakePendingSceneLoad).
+		std::string TakePendingPrefabEdit() {
+			std::string p = std::move(m_PendingPrefabEdit);
+			m_PendingPrefabEdit.clear();
+			return p;
+		}
+
 		/// Call this when external files are dropped onto the window.
 		void OnExternalFileDrop(const std::vector<std::string>& paths);
 
@@ -119,6 +129,7 @@ namespace Axiom {
 
 		bool m_ItemRightClicked = false;
 		std::string m_PendingSceneLoad;
+		std::string m_PendingPrefabEdit;
 		std::vector<std::string> m_AssetClipboardPaths;
 		bool m_AssetClipboardCut = false;
 

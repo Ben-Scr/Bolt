@@ -60,11 +60,14 @@ namespace Axiom {
 		if (!m_Initialized) return;
 		if (m_FrameOpen) return; // mismatched call — drop silently
 
-		// Ring full: drop oldest pending query to keep cadence stable.
+		// Ring full: drop oldest pending query to keep cadence stable. The previous
+		// order incremented m_NextRead BEFORE clearing Pending, marking the
+		// next-oldest slot as cleared while leaving the actual oldest stuck Pending
+		// forever. Subsequent glBeginQuery on a still-Pending query returns
+		// GL_INVALID_OPERATION and the GPU sample silently stops updating.
 		if (m_PendingCount >= kFrameRingSize) {
-			// Drop oldest without reading.
-			m_NextRead = (m_NextRead + 1) % kFrameRingSize;
-			m_Frames[m_NextRead].Pending = false;
+			m_Frames[m_NextRead].Pending = false;          // clear the OLDEST first
+			m_NextRead = (m_NextRead + 1) % kFrameRingSize; // then advance
 			m_PendingCount--;
 		}
 

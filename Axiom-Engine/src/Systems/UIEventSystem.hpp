@@ -7,20 +7,20 @@
 namespace Axiom {
 
 	// Per-frame UI input state-machine. Walks every entity that has a
-	// RectTransformComponent + UIInteractableComponent and:
+	// RectTransform2DComponent + InteractableComponent and:
 	//   - hit-tests the mouse against the rect (in GuiRenderer's
-	//     centred screen space — same convention RectTransform's
+	//     centred screen space — same convention RectTransform2D's
 	//     AnchoredPosition uses today),
 	//   - tracks press / release transitions so the IsClicked one-frame
 	//     edge fires only when press AND release happened on the same
 	//     entity (the standard "real click" semantics),
-	//   - applies the per-state tint preset for UIButtonComponent,
-	//   - updates UISliderComponent::Value while dragging,
-	//   - toggles UIToggleComponent::IsOn / shows/hides its checkmark,
-	//   - manages UIInputFieldComponent::IsFocused on click,
-	//   - opens / closes UIDropdownComponent::IsOpen on click.
+	//   - applies the per-state tint preset for ButtonComponent,
+	//   - updates SliderComponent::Value while dragging,
+	//   - toggles ToggleComponent::IsOn / shows/hides its checkmark,
+	//   - manages InputFieldComponent::IsFocused on click,
+	//   - opens / closes DropdownComponent::IsOpen on click.
 	//
-	// Game code reads UIInteractableComponent's IsClicked / IsHovered /
+	// Game code reads InteractableComponent's IsClicked / IsHovered /
 	// IsPressed flags every frame to drive its own logic — UIEventSystem
 	// only owns the input-state mechanics.
 	class UIEventSystem : public ISystem {

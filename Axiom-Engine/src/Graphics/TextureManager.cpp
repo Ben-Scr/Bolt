@@ -198,6 +198,16 @@ namespace Axiom {
 
 			if (!entry.Texture.IsValid()) {
 				AIM_CORE_ERROR("[{}] Failed to load texture with path '{}'", ErrorCodeToString(AxiomErrorCode::LoadFailed), fullpath);
+				// Re-queue the slot we popped so it isn't permanently orphaned. Without
+				// this, every failed load burns one slot — eventually crossing the
+				// k_InvalidIndex (65535) cap and rejecting all new loads. Bump generation
+				// so any handle minted against this slot before now can't re-validate
+				// against a future occupant.
+				entry.IsValid = false;
+				if (entry.Generation < std::numeric_limits<uint16_t>::max()) {
+					entry.Generation++;
+				}
+				s_FreeIndices.push(index);
 				return TextureHandle::Invalid();
 			}
 
@@ -431,11 +441,15 @@ namespace Axiom {
 
 			if (!entry.Texture.IsValid()) {
 				AIM_CORE_ERROR("[{}] Failed to load default texture at path: {}", ErrorCodeToString(AxiomErrorCode::LoadFailed), texPath);
-				// Push the invalid entry AND queue its slot for reuse so future
-				// LoadTexture calls can recycle it. Without this, every failed
-				// default-texture load permanently leaks a slot.
+				// Keep the slot reserved (occupied with IsValid=false) but DO NOT
+				// queue it for reuse. The first 9 indices are sacred: GetDefaultTexture
+				// looks them up by enum, PurgeUnreferenced skips them, and UnloadTexture
+				// rejects unloads against them. If we recycled this slot, a user
+				// LoadTexture call would overwrite a "default" slot — silently swapping
+				// the engine's fallback texture for an arbitrary user one, and locking
+				// the user texture against future unloads.
+				entry.IsValid = false;
 				s_Textures.push_back(std::move(entry));
-				s_FreeIndices.push(static_cast<uint16_t>(s_Textures.size() - 1));
 				continue;
 			}
 

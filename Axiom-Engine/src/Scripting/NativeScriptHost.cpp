@@ -132,17 +132,20 @@ namespace Axiom {
 			std::filesystem::remove(shadowPath, ec);
 		}
 
-		bool TryInvokeNativeHostCallback(const char* callbackName, NativeScript* script)
+		// Renamed (was TryInvokeNativeHostCallback) to match what it actually does:
+		// the body unconditionally called OnDestroy regardless of the passed
+		// callback name, so the parameter was a misleading lie.
+		bool TryInvokeOnDestroy(NativeScript* script)
 		{
 			try {
 				script->OnDestroy();
 				return true;
 			}
 			catch (const std::exception& e) {
-				AIM_CORE_ERROR_TAG("NativeScriptHost", "Native script failed during {}: {}", callbackName, e.what());
+				AIM_CORE_ERROR_TAG("NativeScriptHost", "Native script failed during OnDestroy: {}", e.what());
 			}
 			catch (...) {
-				AIM_CORE_ERROR_TAG("NativeScriptHost", "Native script failed during {} with an unknown exception", callbackName);
+				AIM_CORE_ERROR_TAG("NativeScriptHost", "Native script failed during OnDestroy with an unknown exception");
 			}
 
 			return false;
@@ -156,6 +159,36 @@ namespace Axiom {
 		{
 			AIM_CORE_ERROR_TAG("NativeScriptHost", "Failed to load DLL: {}", sourcePath.string());
 			return false;
+		}
+
+		// Reload sequences leak orphaned shadow copies if the previous run
+		// crashed (UnloadDLL never ran) or if RemoveShadowCopy raced a Windows
+		// file lock. Sweep stale copies sharing this DLL's stem before adding a
+		// fresh one so the temp directory doesn't accumulate forever.
+		{
+			std::error_code sweepErr;
+			std::filesystem::path shadowDirectory = std::filesystem::temp_directory_path(sweepErr);
+			if (!sweepErr && !shadowDirectory.empty()) {
+				shadowDirectory /= "AxiomNativeScriptHost";
+				if (std::filesystem::exists(shadowDirectory, sweepErr)) {
+					const std::string targetStem = sourcePath.stem().string();
+					for (const auto& entry : std::filesystem::directory_iterator(shadowDirectory, sweepErr)) {
+						if (sweepErr) break;
+						const std::filesystem::path& entryPath = entry.path();
+						if (entryPath == m_LoadedDllPath) {
+							continue; // never delete the currently-loaded DLL
+						}
+						const std::string entryStem = entryPath.stem().string();
+						// Stem looks like "<originalStem>-<timestamp>"; match prefix.
+						if (entryStem.rfind(targetStem + "-", 0) != 0) {
+							continue;
+						}
+						std::error_code removeErr;
+						std::filesystem::remove(entryPath, removeErr);
+						// Best-effort: ignore failures (file still locked by another process).
+					}
+				}
+			}
 		}
 
 		const std::filesystem::path shadowPath = CreateShadowCopyPath(sourcePath);
@@ -272,7 +305,7 @@ namespace Axiom {
 	void NativeScriptHost::DestroyInstance(NativeScript* script)
 	{
 		if (!script) return;
-		TryInvokeNativeHostCallback("OnDestroy", script);
+		TryInvokeOnDestroy(script);
 
 		auto it = std::find(m_LiveInstances.begin(), m_LiveInstances.end(), script);
 		if (it != m_LiveInstances.end())
@@ -288,15 +321,24 @@ namespace Axiom {
 
 	void NativeScriptHost::DestroyAllInstances()
 	{
-		for (auto* script : m_LiveInstances)
+		// Snapshot the live-instance pointers and clear the master vector BEFORE
+		// invoking any user OnDestroy. A user OnDestroy can re-enter and call
+		// DestroyInstance(other), which erases from m_LiveInstances mid-iteration
+		// — corrupting our walk. By moving out the vector first, the re-entrant
+		// erase becomes a no-op (the snapshot is independent), and we still
+		// guarantee that every live instance gets exactly one OnDestroy + DestroyFn.
+		std::vector<NativeScript*> snapshot = std::move(m_LiveInstances);
+		m_LiveInstances.clear();
+
+		for (auto* script : snapshot)
 		{
-			TryInvokeNativeHostCallback("OnDestroy", script);
+			if (!script) continue;
+			TryInvokeOnDestroy(script);
 			script->m_EntityID = 0;
 			script->m_Entity = entt::null;
 			script->m_Scene = nullptr;
 			if (m_DestroyFn) m_DestroyFn(script);
 		}
-		m_LiveInstances.clear();
 	}
 
 	bool NativeScriptHost::HasClass(const std::string& className)

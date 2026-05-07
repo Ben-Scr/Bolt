@@ -50,9 +50,12 @@ namespace Axiom {
 				return true;
 			}
 
-			for (const auto& [path, writeTime] : nextSnapshot) {
+			// Compare on the (mtime, size) tuple — relying on mtime alone misses the
+			// save-via-rename pattern when filesystem timestamp granularity is coarser
+			// than the rename window (common on FAT/NTFS for rapid editor saves).
+			for (const auto& [path, fingerprint] : nextSnapshot) {
 				const auto it = currentSnapshot.find(path);
-				if (it == currentSnapshot.end() || it->second != writeTime) {
+				if (it == currentSnapshot.end() || it->second != fingerprint) {
 					return true;
 				}
 			}
@@ -294,9 +297,13 @@ namespace Axiom {
 			}
 			const std::string key = NormalizeKey(entry.path());
 			const std::filesystem::file_time_type writeTime = entry.last_write_time(ec);
-			if (!ec) {
-				snapshot[key] = writeTime;
+			if (ec) {
+				ec.clear();
+				return;
 			}
+			std::error_code sizeEc;
+			const std::uintmax_t size = entry.file_size(sizeEc);
+			snapshot[key] = FileFingerprint{ writeTime, sizeEc ? std::uintmax_t{ 0 } : size };
 			ec.clear();
 		};
 
@@ -350,9 +357,12 @@ namespace Axiom {
 			}
 
 			const std::filesystem::file_time_type writeTime = std::filesystem::last_write_time(target.Path, ec);
-			if (!ec) {
-				snapshot[NormalizeKey(target.Path)] = writeTime;
+			if (ec) {
+				continue;
 			}
+			std::error_code sizeEc;
+			const std::uintmax_t size = std::filesystem::file_size(target.Path, sizeEc);
+			snapshot[NormalizeKey(target.Path)] = FileFingerprint{ writeTime, sizeEc ? std::uintmax_t{ 0 } : size };
 		}
 
 		return snapshot;

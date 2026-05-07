@@ -115,7 +115,10 @@ namespace Axiom {
 		void EnsureNativeScriptProjectFiles() const;
 		bool HasNativeScriptSources() const;
 
-		void Save() const;
+		// Returns true on a confirmed atomic write to disk. Callers that depend on the
+		// project file having reached the disk (e.g. before clearing dirty state, before
+		// triggering project regen) MUST check the return value.
+		bool Save() const;
 
 		static std::string GetActiveBuildConfiguration();
 		static std::string GetActiveBuildDefineConstant();

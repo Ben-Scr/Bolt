@@ -179,6 +179,15 @@ namespace Axiom {
 		auto& parentHc = m_Registry->get<HierarchyComponent>(parentHandle);
 		parentHc.Children.push_back(m_EntityHandle);
 		myHc.Parent = parentHandle;
+
+		// Inherit disable from the new parent. The reverse direction (un-disable
+		// when reparented to an enabled parent) intentionally is NOT applied —
+		// dropping into an enabled subtree shouldn't override the user's intent
+		// to keep the moved entity disabled. AddComponent fires the
+		// OnDisabledTagConstruct hook which cascades down this entity's subtree.
+		if (m_Registry->all_of<DisabledTag>(parentHandle) && !HasComponent<DisabledTag>()) {
+			AddComponent<DisabledTag>();
+		}
 	}
 
 	Entity Entity::GetParent() const {

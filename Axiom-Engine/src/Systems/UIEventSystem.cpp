@@ -3,16 +3,16 @@
 
 #include "Collections/Viewport.hpp"
 #include "Components/General/HierarchyComponent.hpp"
-#include "Components/General/RectTransformComponent.hpp"
+#include "Components/General/RectTransform2DComponent.hpp"
 #include "Components/Graphics/Camera2DComponent.hpp"
 #include "Components/Graphics/ImageComponent.hpp"
 #include "Components/Tags.hpp"
-#include "Components/UI/UIButtonComponent.hpp"
-#include "Components/UI/UIDropdownComponent.hpp"
-#include "Components/UI/UIInputFieldComponent.hpp"
-#include "Components/UI/UIInteractableComponent.hpp"
-#include "Components/UI/UISliderComponent.hpp"
-#include "Components/UI/UIToggleComponent.hpp"
+#include "Components/UI/ButtonComponent.hpp"
+#include "Components/UI/DropdownComponent.hpp"
+#include "Components/UI/InputFieldComponent.hpp"
+#include "Components/UI/InteractableComponent.hpp"
+#include "Components/UI/SliderComponent.hpp"
+#include "Components/UI/ToggleComponent.hpp"
 #include "Core/Application.hpp"
 #include "Core/Input.hpp"
 #include "Core/Log.hpp"
@@ -35,8 +35,8 @@ namespace Axiom {
 		}
 
 		// Resolve a button's visual color for the current state.
-		Color ResolveButtonTint(const UIButtonComponent& btn,
-			const UIInteractableComponent& interact)
+		Color ResolveButtonTint(const ButtonComponent& btn,
+			const InteractableComponent& interact)
 		{
 			if (!interact.Interactable) return btn.DisabledColor;
 			if (interact.IsPressed)     return btn.PressedColor;
@@ -71,7 +71,7 @@ namespace Axiom {
 		//    sprite sorting, so we just take the last one in iteration
 		//    order — matches GuiRenderer's draw order.
 		EntityHandle hovered = entt::null;
-		auto hitView = registry.view<RectTransformComponent, UIInteractableComponent>(entt::exclude<DisabledTag>);
+		auto hitView = registry.view<RectTransform2DComponent, InteractableComponent>(entt::exclude<DisabledTag>);
 		for (auto&& [entity, rect, interact] : hitView.each()) {
 			if (!interact.Interactable) continue;
 			if (rect.ContainsPoint(mouseUi)) {
@@ -129,17 +129,17 @@ namespace Axiom {
 		}
 
 		// ── 3. Visual presets: tint Image colors per state for buttons.
-		auto buttonView = registry.view<UIInteractableComponent, UIButtonComponent, ImageComponent>(entt::exclude<DisabledTag>);
+		auto buttonView = registry.view<InteractableComponent, ButtonComponent, ImageComponent>(entt::exclude<DisabledTag>);
 		for (auto&& [entity, interact, btn, image] : buttonView.each()) {
 			image.Color = ResolveButtonTint(btn, interact);
 		}
 
 		// ── 4. Sliders: while pressed, map cursor X across the track to
 		//    the slider's [Min, Max] range. The track is the entity's
-		//    own RectTransform; the optional handle is just visualised
+		//    own RectTransform2D; the optional handle is just visualised
 		//    by stretching its anchor. We update the handle entity's
 		//    AnchoredPosition.x every frame so it tracks the value.
-		auto sliderView = registry.view<UIInteractableComponent, UISliderComponent, RectTransformComponent>(entt::exclude<DisabledTag>);
+		auto sliderView = registry.view<InteractableComponent, SliderComponent, RectTransform2DComponent>(entt::exclude<DisabledTag>);
 		for (auto&& [entity, interact, slider, rect] : sliderView.each()) {
 			const float prevValue = slider.Value;
 			slider.ValueChangedThisFrame = false;
@@ -165,9 +165,9 @@ namespace Axiom {
 			// Update handle entity's position.
 			if (slider.HandleEntity != entt::null
 				&& registry.valid(slider.HandleEntity)
-				&& registry.all_of<RectTransformComponent>(slider.HandleEntity))
+				&& registry.all_of<RectTransform2DComponent>(slider.HandleEntity))
 			{
-				auto& handleRect = registry.get<RectTransformComponent>(slider.HandleEntity);
+				auto& handleRect = registry.get<RectTransform2DComponent>(slider.HandleEntity);
 				const float range = slider.MaxValue - slider.MinValue;
 				const float t = (range != 0.0f) ? (slider.Value - slider.MinValue) / range : 0.0f;
 				const float trackWidth = rect.GetSize().x;
@@ -179,7 +179,13 @@ namespace Axiom {
 		}
 
 		// ── 5. Toggles: flip on click, sync checkmark visibility.
-		auto toggleView = registry.view<UIInteractableComponent, UIToggleComponent>(entt::exclude<DisabledTag>);
+		// Defer DisabledTag mutations until iteration finishes — emplace<>/remove<>
+		// during a view that excludes the same component reorganises storage and
+		// invalidates iterators (the toggle's CheckmarkEntity may carry the same
+		// component types we're iterating over). Collect (entity, desiredEnabled)
+		// pairs and apply post-loop.
+		auto toggleView = registry.view<InteractableComponent, ToggleComponent>(entt::exclude<DisabledTag>);
+		std::vector<std::pair<EntityHandle, bool>> deferredCheckmarkEnable;
 		for (auto&& [entity, interact, toggle] : toggleView.each()) {
 			toggle.ValueChangedThisFrame = false;
 			if (interact.IsClicked) {
@@ -188,20 +194,24 @@ namespace Axiom {
 			}
 
 			if (toggle.CheckmarkEntity != entt::null && registry.valid(toggle.CheckmarkEntity)) {
-				const bool currentlyDisabled = registry.all_of<DisabledTag>(toggle.CheckmarkEntity);
-				if (toggle.IsOn && currentlyDisabled) {
-					registry.remove<DisabledTag>(toggle.CheckmarkEntity);
-				}
-				else if (!toggle.IsOn && !currentlyDisabled) {
-					registry.emplace<DisabledTag>(toggle.CheckmarkEntity);
-				}
+				deferredCheckmarkEnable.emplace_back(toggle.CheckmarkEntity, toggle.IsOn);
+			}
+		}
+		for (const auto& [checkmark, desiredEnabled] : deferredCheckmarkEnable) {
+			if (!registry.valid(checkmark)) continue;
+			const bool currentlyDisabled = registry.all_of<DisabledTag>(checkmark);
+			if (desiredEnabled && currentlyDisabled) {
+				registry.remove<DisabledTag>(checkmark);
+			}
+			else if (!desiredEnabled && !currentlyDisabled) {
+				registry.emplace<DisabledTag>(checkmark);
 			}
 		}
 
 		// ── 6. Input fields: focus management. Click inside focuses;
 		//    click outside (anywhere mouseDown happened this frame
 		//    that wasn't an input field) defocuses.
-		auto inputView = registry.view<UIInteractableComponent, UIInputFieldComponent>(entt::exclude<DisabledTag>);
+		auto inputView = registry.view<InteractableComponent, InputFieldComponent>(entt::exclude<DisabledTag>);
 		bool clickedAnyInputField = false;
 		for (auto&& [entity, interact, field] : inputView.each()) {
 			field.SubmittedThisFrame = false;
@@ -217,7 +227,7 @@ namespace Axiom {
 		}
 
 		// ── 7. Dropdowns: click toggles open/close.
-		auto dropdownView = registry.view<UIInteractableComponent, UIDropdownComponent>(entt::exclude<DisabledTag>);
+		auto dropdownView = registry.view<InteractableComponent, DropdownComponent>(entt::exclude<DisabledTag>);
 		for (auto&& [entity, interact, dropdown] : dropdownView.each()) {
 			dropdown.SelectionChangedThisFrame = false;
 			if (interact.IsClicked) {

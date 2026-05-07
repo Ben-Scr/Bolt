@@ -4,6 +4,7 @@
 #include "Scene/EntityHandle.hpp"
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Axiom {
 
@@ -62,6 +63,12 @@ namespace Axiom {
 			const Json::Value& entityValue,
 			EntityOrigin origin,
 			uint64_t prefabGuid = 0);
+		static EntityHandle DeserializeEntityTree(
+			Scene& scene,
+			const std::vector<Json::Value>& entityValues,
+			EntityOrigin origin,
+			uint64_t prefabGuid = 0,
+			bool preserveSerializedIdentity = true);
 		static EntityHandle DeserializePrefabInstance(Scene& scene, const Json::Value& entityValue);
 	};
 

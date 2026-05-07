@@ -206,10 +206,15 @@ namespace Axiom {
 		}
 	}
 
+	// TODO: assert main thread when Application::IsMainThread() lands.
+	// Box2D queries below touch the live world while FixedUpdate may be
+	// stepping it on another thread; calling these from a worker race-reads
+	// b2Body internals.
 	std::optional<EntityHandle> Physics2D::OverlapCircle(const Vec2& center, float radius, OverlapMode mode) {
 		return ToEntityHandle(OverlapCircleRef(center, radius, mode));
 	}
 	std::optional<PhysicsBodyRef2D> Physics2D::OverlapCircleRef(const Vec2& center, float radius, OverlapMode mode) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		b2ShapeProxy proxy{};
 		proxy.count = 1;
 		proxy.points[0] = { center.x, center.y };
@@ -218,9 +223,11 @@ namespace Axiom {
 		return QueryProxyRef(center, proxy, mode);
 	}
 	std::optional<EntityHandle> Physics2D::OverlapBox(const Vec2& center, const Vec2& halfExtents, float degrees, OverlapMode mode) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return ToEntityHandle(OverlapBoxRef(center, halfExtents, degrees, mode));
 	}
 	std::optional<PhysicsBodyRef2D> Physics2D::OverlapBoxRef(const Vec2& center, const Vec2& halfExtents, float degrees, OverlapMode mode) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		float radians = Radians<float>(degrees);
 
 		Vec2 corners[4] = {
@@ -245,9 +252,11 @@ namespace Axiom {
 		return QueryProxyRef(center, proxy, mode);
 	}
 	std::optional<EntityHandle> Physics2D::OverlapPolygon(const Vec2& center, const std::vector<Vec2>& points, OverlapMode mode) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return ToEntityHandle(OverlapPolygonRef(center, points, mode));
 	}
 	std::optional<PhysicsBodyRef2D> Physics2D::OverlapPolygonRef(const Vec2& center, const std::vector<Vec2>& points, OverlapMode mode) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		if (points.size() < 3 || points.size() > B2_MAX_POLYGON_VERTICES) {
 			return std::nullopt;
 		}
@@ -262,12 +271,15 @@ namespace Axiom {
 		return QueryProxyRef(center, proxy, mode);
 	}
 	std::optional<EntityHandle> Physics2D::ContainsPoint(const Vec2& point, OverlapMode mode) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return ToEntityHandle(ContainsPointRef(point, mode));
 	}
 	std::optional<PhysicsBodyRef2D> Physics2D::ContainsPointRef(const Vec2& point, OverlapMode mode) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return QueryPointRef(point, mode);
 	}
 	std::optional<RaycastHit2D> Physics2D::Raycast(const Vec2& origin,const Vec2& direction, float maxDistance) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		if (!PhysicsSystem2D::IsInitialized() || !PhysicsSystem2D::IsEnabled() || maxDistance <= 0.0f) {
 			return std::nullopt;
 		}
@@ -307,9 +319,11 @@ namespace Axiom {
 	}
 
 	std::vector<EntityHandle> Physics2D::OverlapCircleAll(const Vec2& center, float radius) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return ToEntityHandles(OverlapCircleAllRefs(center, radius));
 	}
 	std::vector<PhysicsBodyRef2D> Physics2D::OverlapCircleAllRefs(const Vec2& center, float radius) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		b2ShapeProxy proxy{};
 		proxy.count = 1;
 		proxy.points[0] = { center.x, center.y };
@@ -318,9 +332,11 @@ namespace Axiom {
 		return QueryProxyAllRefs(proxy);
 	}
 	std::vector<EntityHandle> Physics2D::OverlapBoxAll(const Vec2& center, const Vec2& halfExtents, float degrees) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return ToEntityHandles(OverlapBoxAllRefs(center, halfExtents, degrees));
 	}
 	std::vector<PhysicsBodyRef2D> Physics2D::OverlapBoxAllRefs(const Vec2& center, const Vec2& halfExtents, float degrees) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		float radians = Radians<float>(degrees);
 
 		Vec2 corners[4] = {
@@ -345,9 +361,11 @@ namespace Axiom {
 		return QueryProxyAllRefs(proxy);
 	}
 	std::vector<EntityHandle> Physics2D::OverlapPolygonAll(const Vec2& center, const std::vector<Vec2>& points) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return ToEntityHandles(OverlapPolygonAllRefs(center, points));
 	}
 	std::vector<PhysicsBodyRef2D> Physics2D::OverlapPolygonAllRefs(const Vec2& center, const std::vector<Vec2>& points) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		if (points.size() < 3 || points.size() > B2_MAX_POLYGON_VERTICES) {
 			return {};
 		}
@@ -362,9 +380,11 @@ namespace Axiom {
 		return QueryProxyAllRefs(proxy);
 	}
 	std::vector<EntityHandle> Physics2D::ContainsPointAll(const Vec2& point) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return ToEntityHandles(ContainsPointAllRefs(point));
 	}
 	std::vector<PhysicsBodyRef2D> Physics2D::ContainsPointAllRefs(const Vec2& point) {
+		// TODO: assert main thread when Application::IsMainThread() lands.
 		return QueryPointAllRefs(point);
 	}
 }

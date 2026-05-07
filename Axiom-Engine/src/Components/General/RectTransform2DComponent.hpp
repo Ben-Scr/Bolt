@@ -21,7 +21,7 @@ namespace Axiom {
 	//   SizeDelta — additional size on top of the stretched anchor span.
 	//     For point anchors (min == max) this *is* the size.
 	//
-	// World-space placement (no parent or parent has no RectTransform):
+	// World-space placement (no parent or parent has no RectTransform2D):
 	//     bottomLeft = AnchoredPosition - Pivot * SizeDelta
 	//     topRight   = bottomLeft + SizeDelta
 	//
@@ -29,7 +29,7 @@ namespace Axiom {
 	// kept so existing scenes/inspectors keep working — internally they
 	// shadow AnchoredPosition / SizeDelta. Newer code should prefer the
 	// anchor-aware API.
-	struct RectTransformComponent {
+	struct RectTransform2DComponent {
 		// Anchored layout (Unity-style). Defaults match a centred,
 		// 100x100 rect with a centred pivot — the common "drop in a
 		// button" case.

@@ -7,6 +7,7 @@
 #include "Graphics/Texture2D.hpp"
 #include "Gui/ImGuiUtils.hpp"
 #include "Inspector/PropertyDrawer.hpp"
+#include "Math/Trigonometry.hpp"
 #include "Scene/ComponentRegistry.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneManager.hpp"
@@ -14,6 +15,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
 #include <type_traits>
 #include <variant>
 
@@ -31,6 +33,132 @@ namespace Axiom {
 			const auto* info = SceneManager::Get().GetComponentRegistry().GetInfo<TComponent>();
 			if (!info || info->properties.empty()) return;
 			PropertyDrawer::DrawAll(entities, info->properties, info->displayName);
+		}
+
+		// ── RectTransform2D layout helpers ───────────────────────────────
+		// Sample N channels across `entities` via getChan(entity, channel).
+		// Out: per-channel value of entities[0] + per-channel mixed mask.
+		// Used by both DrawColumnLabeledFloatRow and DrawAxisLabeledVecMulti.
+		template <int N, typename ChannelGet>
+		void SampleVecChannels(std::span<const Entity> entities, ChannelGet&& getChan,
+			float (&outValues)[N], bool (&outMixed)[N])
+		{
+			for (int c = 0; c < N; ++c) { outValues[c] = 0.0f; outMixed[c] = false; }
+			if (entities.empty()) return;
+			for (int c = 0; c < N; ++c) outValues[c] = getChan(entities[0], c);
+			for (std::size_t i = 1; i < entities.size(); ++i) {
+				for (int c = 0; c < N; ++c) {
+					if (!outMixed[c] && getChan(entities[i], c) != outValues[c]) {
+						outMixed[c] = true;
+					}
+				}
+			}
+		}
+
+		// Layout: full inspector width split into N columns; each column is
+		// a stacked (header text, drag-float) pair (Unity's Pos X / Pos Y).
+		// On edit, only the touched channel is written per entity so
+		// untouched channels survive across the selection.
+		template <int N, typename ChannelGet, typename ChannelSet>
+		bool DrawColumnLabeledFloatRow(const char* rowId,
+			const char* (&columnLabels)[N],
+			std::span<const Entity> entities,
+			ChannelGet&& getChan, ChannelSet&& setChan,
+			float speed = 0.5f, const char* format = "%.3f")
+		{
+			float values[N];
+			bool  mixed[N];
+			SampleVecChannels<N>(entities, getChan, values, mixed);
+
+			ImGui::PushID(rowId);
+
+			const ImGuiStyle& style = ImGui::GetStyle();
+			const float fullWidth = ImGui::GetContentRegionAvail().x;
+			const float spacing = style.ItemInnerSpacing.x;
+			const float colWidth = std::max(1.0f, std::floor(
+				(fullWidth - spacing * static_cast<float>(N - 1)) / static_cast<float>(N)));
+
+			// Header row — labels positioned at each column's left edge.
+			const float startX = ImGui::GetCursorPosX();
+			for (int c = 0; c < N; ++c) {
+				if (c > 0) ImGui::SameLine();
+				ImGui::SetCursorPosX(startX + static_cast<float>(c) * (colWidth + spacing));
+				ImGui::TextUnformatted(columnLabels[c]);
+			}
+			// Cursor naturally advances to a new line for the value row.
+
+			bool anyChanged = false;
+			for (int c = 0; c < N; ++c) {
+				if (c > 0) ImGui::SameLine(0.0f, spacing);
+				ImGui::PushID(c);
+				ImGui::SetNextItemWidth(colWidth);
+				float channelValue = values[c];
+				const char* fmt = mixed[c] ? "-" : format;
+				if (ImGui::DragFloat("##c", &channelValue, speed, 0.0f, 0.0f, fmt)) {
+					for (const Entity& e : entities) setChan(e, c, channelValue);
+					ImGuiUtils::MarkSelectionDirty(entities);
+					anyChanged = true;
+				}
+				ImGui::PopID();
+			}
+
+			ImGui::PopID();
+			return anyChanged;
+		}
+
+		// Layout: standard inspector row (label column + value column), with
+		// the value column carrying N (axis-letter, drag-float) pairs side
+		// by side. Used for the Min / Max / Pivot / Scale rows where the
+		// row's identity comes from the left label.
+		template <int N, typename ChannelGet, typename ChannelSet>
+		bool DrawAxisLabeledVecMulti(const char* rowLabel,
+			const char* (&axisLabels)[N],
+			std::span<const Entity> entities,
+			ChannelGet&& getChan, ChannelSet&& setChan,
+			float speed = 0.01f, const char* format = "%.3f")
+		{
+			float values[N];
+			bool  mixed[N];
+			SampleVecChannels<N>(entities, getChan, values, mixed);
+
+			ImGui::PushID(rowLabel);
+			ImGuiUtils::BeginInspectorFieldRow(rowLabel);
+
+			const ImGuiStyle& style = ImGui::GetStyle();
+			const float fullWidth = ImGui::GetContentRegionAvail().x;
+			const float spacing = style.ItemInnerSpacing.x;
+
+			float labelWidths[N];
+			float totalLabelWidth = 0.0f;
+			for (int c = 0; c < N; ++c) {
+				labelWidths[c] = ImGui::CalcTextSize(axisLabels[c]).x;
+				totalLabelWidth += labelWidths[c];
+			}
+			// (label + spacing + field) per cell, plus spacing between cells.
+			const float remaining = fullWidth - totalLabelWidth
+				- spacing * static_cast<float>(2 * N - 1);
+			const float fieldWidth = std::max(1.0f, std::floor(remaining / static_cast<float>(N)));
+
+			bool anyChanged = false;
+			for (int c = 0; c < N; ++c) {
+				if (c > 0) ImGui::SameLine(0.0f, spacing);
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(axisLabels[c]);
+				ImGui::SameLine(0.0f, spacing);
+				ImGui::PushID(c);
+				ImGui::SetNextItemWidth(fieldWidth);
+				float channelValue = values[c];
+				const char* fmt = mixed[c] ? "-" : format;
+				if (ImGui::DragFloat("##c", &channelValue, speed, 0.0f, 0.0f, fmt)) {
+					for (const Entity& e : entities) setChan(e, c, channelValue);
+					ImGuiUtils::MarkSelectionDirty(entities);
+					anyChanged = true;
+				}
+				ImGui::PopID();
+			}
+
+			ImGui::PopID();
+			return anyChanged;
 		}
 
 	} // namespace
@@ -287,6 +415,109 @@ namespace Axiom {
 			}
 			ImGui::PopID();
 		}
+	}
+
+	// ── RectTransform2D ──────────────────────────────────────────────
+	// Unity-style layout: stacked-header columns for Position + Size, then
+	// a collapsible Anchors group with Min / Max, followed by Pivot,
+	// Rotation, and Scale. The auto-drawer fallback can't express the
+	// per-row sub-labels or the column-header-above-value rows, so this
+	// component opts into a fully custom drawer (its property descriptors
+	// are dropped — custom drawer wins over properties anyway).
+	void DrawRectTransform2DInspector(std::span<const Entity> entities)
+	{
+		using RTC = RectTransform2DComponent;
+
+		// Position (Pos X / Pos Y) — column-header-above-value layout.
+		const char* posLabels[] = { "Pos X", "Pos Y" };
+		DrawColumnLabeledFloatRow<2>("##Position", posLabels, entities,
+			[](const Entity& e, int c) -> float {
+				const Vec2& p = e.GetComponent<RTC>().AnchoredPosition;
+				return c == 0 ? p.x : p.y;
+			},
+			[](const Entity& e, int c, float v) {
+				Vec2& p = const_cast<Entity&>(e).GetComponent<RTC>().AnchoredPosition;
+				(c == 0 ? p.x : p.y) = v;
+			});
+
+		// Size (Width / Height) — same column-header layout. Drag speed of
+		// 1.0f matches the integer-pixel feel users expect for size fields.
+		const char* sizeLabels[] = { "Width", "Height" };
+		DrawColumnLabeledFloatRow<2>("##Size", sizeLabels, entities,
+			[](const Entity& e, int c) -> float {
+				const Vec2& s = e.GetComponent<RTC>().SizeDelta;
+				return c == 0 ? s.x : s.y;
+			},
+			[](const Entity& e, int c, float v) {
+				Vec2& s = const_cast<Entity&>(e).GetComponent<RTC>().SizeDelta;
+				(c == 0 ? s.x : s.y) = v;
+			},
+			1.0f);
+
+		// Axis sub-labels reused by every "label + Vec2" row below.
+		const char* xyLabels[] = { "X", "Y" };
+
+		// Anchors group — collapsible to mirror Unity's foldout. Slow drag
+		// speed because anchors live in [0, 1].
+		if (ImGui::CollapsingHeader("Anchors", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::PushID("Anchors");
+			ImGui::Indent(8.0f);
+
+			DrawAxisLabeledVecMulti<2>("Min", xyLabels, entities,
+				[](const Entity& e, int c) -> float {
+					const Vec2& a = e.GetComponent<RTC>().AnchorMin;
+					return c == 0 ? a.x : a.y;
+				},
+				[](const Entity& e, int c, float v) {
+					Vec2& a = const_cast<Entity&>(e).GetComponent<RTC>().AnchorMin;
+					(c == 0 ? a.x : a.y) = v;
+				});
+
+			DrawAxisLabeledVecMulti<2>("Max", xyLabels, entities,
+				[](const Entity& e, int c) -> float {
+					const Vec2& a = e.GetComponent<RTC>().AnchorMax;
+					return c == 0 ? a.x : a.y;
+				},
+				[](const Entity& e, int c, float v) {
+					Vec2& a = const_cast<Entity&>(e).GetComponent<RTC>().AnchorMax;
+					(c == 0 ? a.x : a.y) = v;
+				});
+
+			ImGui::Unindent(8.0f);
+			ImGui::PopID();
+		}
+
+		DrawAxisLabeledVecMulti<2>("Pivot", xyLabels, entities,
+			[](const Entity& e, int c) -> float {
+				const Vec2& p = e.GetComponent<RTC>().Pivot;
+				return c == 0 ? p.x : p.y;
+			},
+			[](const Entity& e, int c, float v) {
+				Vec2& p = const_cast<Entity&>(e).GetComponent<RTC>().Pivot;
+				(c == 0 ? p.x : p.y) = v;
+			});
+
+		// Rotation: 2D engines only need the Z component, edited in degrees
+		// to match the Transform2D inspector (component stores radians).
+		ImGuiUtils::DragFloatMulti("Rotation", entities,
+			[](const Entity& e) -> float {
+				return Degrees(e.GetComponent<RTC>().Rotation);
+			},
+			[](const Entity& e, float v) {
+				const_cast<Entity&>(e).GetComponent<RTC>().Rotation = Radians(v);
+			},
+			1.0f);
+
+		DrawAxisLabeledVecMulti<2>("Scale", xyLabels, entities,
+			[](const Entity& e, int c) -> float {
+				const Vec2& s = e.GetComponent<RTC>().Scale;
+				return c == 0 ? s.x : s.y;
+			},
+			[](const Entity& e, int c, float v) {
+				Vec2& s = const_cast<Entity&>(e).GetComponent<RTC>().Scale;
+				(c == 0 ? s.x : s.y) = v;
+			},
+			0.1f);
 	}
 
 } // namespace Axiom

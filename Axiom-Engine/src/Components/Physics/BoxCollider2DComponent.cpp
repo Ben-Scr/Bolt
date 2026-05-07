@@ -28,6 +28,7 @@ namespace Axiom {
 		b2Polygon polygon = b2MakeOffsetBox(tr->Scale.x * scale.x * 0.5f, tr->Scale.y * scale.y * 0.5f, b2Vec2(center.x, center.y), b2Rot_identity);
 		b2Shape_SetPolygon(m_ShapeId, &polygon);
 		m_LastAppliedScale = tr->Scale;
+		m_LastAppliedLocalSize = m_LocalSize;
 	}
 
 	void BoxCollider2DComponent::SetEnabled(bool enabled) {
@@ -50,8 +51,19 @@ namespace Axiom {
 		const bool enabled = IsEnabled();
 		const bool registerContacts = CanRegisterContacts();
 
+		// Snapshot collision callbacks BEFORE DestroyShape so the recreated b2Shape (with
+		// a fresh id) inherits the user's OnCollisionEnter/Exit/Hit handlers. Without
+		// this, every registered collision callback would silently disappear on an
+		// IsTrigger toggle — a footgun for any gameplay code that flips trigger state
+		// at runtime. DestroyShape internally calls dispatcher.UnregisterShape, which
+		// is why we must snapshot first; the snapshot moves the entries out, the
+		// UnregisterShape that follows is a no-op for the already-emptied buckets,
+		// and RestoreCallbacks re-binds them to the new shape id.
+		auto& dispatcher = PhysicsSystem2D::GetMainPhysicsWorld().GetDispatcher();
+		auto savedCallbacks = dispatcher.SnapshotCallbacks(m_ShapeId);
 		DestroyShape(false);
 		m_ShapeId = PhysicsSystem2D::GetMainPhysicsWorld().CreateShape(m_EntityHandle, scene, m_BodyId, ShapeType::Square, sensor);
+		dispatcher.RestoreCallbacks(m_ShapeId, std::move(savedCallbacks));
 		SetCenter(center, scene);
 		SetScale(localScale, scene);
 		SetFriction(friction);
@@ -85,7 +97,10 @@ namespace Axiom {
 	void BoxCollider2DComponent::SyncWithTransform(const Scene& scene) {
 		const Transform2DComponent* tr = TryGetTransform(scene, m_EntityHandle, "SyncWithTransform");
 		if (!tr) return;
-		if (tr->Scale == m_LastAppliedScale) return;
+		// Re-sync when either the entity's transform scale OR the inspector-edited
+		// local size has changed — checking only Scale missed inspector tweaks to
+		// m_LocalSize, leaving the b2Polygon visibly out of sync with the rendered box.
+		if (tr->Scale == m_LastAppliedScale && m_LocalSize == m_LastAppliedLocalSize) return;
 		if (!b2Shape_IsValid(m_ShapeId)) return;
 
 		Vec2 center = this->GetCenter();
@@ -96,6 +111,7 @@ namespace Axiom {
 			b2Rot_identity);
 		b2Shape_SetPolygon(m_ShapeId, &polygon);
 		m_LastAppliedScale = tr->Scale;
+		m_LastAppliedLocalSize = m_LocalSize;
 	}
 
 	void BoxCollider2DComponent::SetCenter(const Vec2& center, const Scene& scene) {
@@ -110,6 +126,7 @@ namespace Axiom {
 			b2Rot_identity);
 		b2Shape_SetPolygon(m_ShapeId, &polygon);
 		m_LastAppliedScale = tr->Scale;
+		m_LastAppliedLocalSize = m_LocalSize;
 	}
 
 	Vec2 BoxCollider2DComponent::GetCenter() const {

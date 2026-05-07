@@ -20,8 +20,10 @@ void main()
 {
     float c = cos(iRotation);
     float s = sin(iRotation);
-    mat2 R = mat2(c, -s, 
-                  s,  c);
+    // GLSL mat constructors are column-major. This layout matches
+    // Transform2DComponent::Rotate / TransformPoint on the CPU.
+    mat2 R = mat2(c,  s,
+                 -s,  c);
 
     vec2 worldPos = (R * (aPos * iScale)) + iSpritePos;
 

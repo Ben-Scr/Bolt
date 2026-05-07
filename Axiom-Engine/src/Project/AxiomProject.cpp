@@ -237,7 +237,7 @@ AXIOM_NATIVE_SCRIPT_EXPORT void AxiomDestroyScript(Axiom::NativeScript* script) 
 				return;
 			}
 
-			File::WriteAllText(exportsPath.string(), BuildNativeScriptExportsSource());
+			(void)File::WriteAllText(exportsPath.string(), BuildNativeScriptExportsSource());
 		}
 
 		bool IsNativeScriptBootstrapFile(const std::filesystem::path& path) {
@@ -439,7 +439,7 @@ endforeach()
 				return;
 			}
 
-			File::WriteAllText(cmakeListsPath.string(), BuildNativeScriptCMakeLists(project));
+			(void)File::WriteAllText(cmakeListsPath.string(), BuildNativeScriptCMakeLists(project));
 		}
 	}
 
@@ -721,8 +721,8 @@ endforeach()
 		return HasNativeScriptSourceFiles(std::filesystem::path(NativeSourceDir));
 	}
 
-	void AxiomProject::Save() const {
-		File::WriteAllText(ProjectFilePath, Json::Stringify(BuildProjectJson(*this), true));
+	bool AxiomProject::Save() const {
+		return File::WriteAllText(ProjectFilePath, Json::Stringify(BuildProjectJson(*this), true));
 	}
 
 	std::string AxiomProject::GetDefaultProjectsDir() {
@@ -959,8 +959,10 @@ endforeach()
 		{
 			ReportCreateProgress(progressCallback, 0.48f, "Writing project configuration...");
 			Json::Value root = BuildProjectJson(project);
-			root.AddMember("createdAt", NowISO8601());
-			File::WriteAllText(project.ProjectFilePath, Json::Stringify(root, true));
+			// Note: 'createdAt' is intentionally not written. Load() never reads it back, and
+			// BuildProjectJson never re-emits it, so writing it here would be silently dropped
+			// on the first Save() and create the illusion of persistent provenance metadata.
+			(void)File::WriteAllText(project.ProjectFilePath, Json::Stringify(root, true));
 		}
 
 		// Generate starter scene
@@ -971,7 +973,7 @@ endforeach()
 			sceneRoot.AddMember("name", project.StartupScene);
 			sceneRoot.AddMember("systems", Json::Value::MakeArray());
 			sceneRoot.AddMember("entities", Json::Value::MakeArray());
-			File::WriteAllText(project.GetSceneFilePath(project.StartupScene), Json::Stringify(sceneRoot, true));
+			(void)File::WriteAllText(project.GetSceneFilePath(project.StartupScene), Json::Stringify(sceneRoot, true));
 		}
 
 		// Preserve existing NuGet PackageReference entries if .csproj already exists
@@ -1046,7 +1048,7 @@ endforeach()
 )CS" + existingPackageRefs + R"CS(
 </Project>
 )CS";
-		File::WriteAllText(project.CsprojPath, csproj);
+		(void)File::WriteAllText(project.CsprojPath, csproj);
 
 		// Axiom-ScriptCore is linked via DLL reference in the .csproj — no project entry needed.
 		ReportCreateProgress(progressCallback, 0.72f, "Generating solution and starter scripts...");
@@ -1076,7 +1078,7 @@ Global
 	EndGlobalSection
 EndGlobal
 )";
-		File::WriteAllText(project.SlnPath, sln);
+		(void)File::WriteAllText(project.SlnPath, sln);
 
 		// Generate starter script
 		std::string starterScript = R"(using Axiom;
@@ -1093,19 +1095,19 @@ public class GameScript : EntityScript
     }
 }
 )";
-		File::WriteAllText(Path::Combine(project.ScriptsDirectory, "GameScript.cs"), starterScript);
+		(void)File::WriteAllText(Path::Combine(project.ScriptsDirectory, "GameScript.cs"), starterScript);
 
 		// Generate .vscode/settings.json
 		std::string vsCodeSettings = R"({
     "omnisharp.projectFilesExcludePattern": [],
     "dotnet.defaultSolution": ")" + name + R"(.sln"
 })";
-		File::WriteAllText(Path::Combine(project.RootDirectory, ".vscode", "settings.json"), vsCodeSettings);
+		(void)File::WriteAllText(Path::Combine(project.RootDirectory, ".vscode", "settings.json"), vsCodeSettings);
 
 		project.EnsureNativeScriptProjectFiles();
 
 		// Generate .gitignore
-		File::WriteAllText(Path::Combine(project.RootDirectory, ".gitignore"),
+		(void)File::WriteAllText(Path::Combine(project.RootDirectory, ".gitignore"),
 			"bin/\nobj/\n.vs/\n*.user\nNativeScripts/build/\nPackages/\n");
 
 		ReportCreateProgress(progressCallback, 0.82f, "Project files ready.");

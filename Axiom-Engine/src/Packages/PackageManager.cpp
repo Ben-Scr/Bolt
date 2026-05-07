@@ -96,6 +96,10 @@ namespace Axiom {
 		m_SharedState->IsReady.store(false, std::memory_order_release);
 		m_SharedState->NeedsReload.store(false, std::memory_order_release);
 		m_ToolExePath.clear();
+		// Re-init must drop the previous run's source list. Without this clear,
+		// reopening a project (or any caller that calls Initialize twice) gets a
+		// duplicated source set and double-loaded packages.
+		m_Sources.clear();
 
 		// Build candidate paths — always try canonical resolution
 		auto exeDir = std::filesystem::path(Path::ExecutableDir());

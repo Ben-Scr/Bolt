@@ -63,10 +63,22 @@ namespace Axiom::Json {
 		uint64_t AsUInt64Or(uint64_t fallback) const;
 		std::string AsStringOr(std::string fallback = {}) const;
 
+		// Read-only accessors. Return a static empty container if the value
+		// holds the wrong kind so callers don't accidentally retype the value
+		// just by reading it. Use EnsureObject/EnsureArray when you intend to
+		// mutate the value into that kind.
 		Object& GetObject();
 		const Object& GetObject() const;
 		Array& GetArray();
 		const Array& GetArray() const;
+
+		// Make-or-get mutators: convert this value into Object/Array kind (if
+		// it isn't already) and return a mutable reference. This is what the
+		// non-const GetObject/GetArray used to do; that silent retyping caused
+		// data loss when callers happened to reach them in a non-mutating
+		// context.
+		Object& EnsureObject();
+		Array& EnsureArray();
 
 		Value* FindMember(std::string_view key);
 		const Value* FindMember(std::string_view key) const;
